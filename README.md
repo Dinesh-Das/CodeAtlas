@@ -35,7 +35,7 @@ of returning incomplete or ungrounded data.
 
 ## Requirements
 
-- Node.js 22.12 or newer (Node.js 24 LTS recommended)
+- Node.js 24 LTS or newer
 - Git
 - npm
 

@@ -17,6 +17,7 @@ All notable changes follow semantic versioning.
 
 - Initial and incremental indexing now writes AST entities transactionally.
 - `status`, `doctor`, and CLI summaries report structural parser information.
+- The runtime baseline now follows the specification's current-LTS target: Node.js 24.
 
 ## 0.1.0 - 2026-08-26
 
