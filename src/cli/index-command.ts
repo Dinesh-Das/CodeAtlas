@@ -19,7 +19,8 @@ export function formatIndexResult(result: IndexResult): string {
     `✓ Indexed ${result.files} files`,
     `✓ Updated ${result.changedFiles} files`,
     result.deletedFiles > 0 ? `✓ Removed ${result.deletedFiles} deleted files` : null,
-    `✓ Graph contains ${result.nodes} nodes and ${result.edges} relationships`,
+    `✓ Graph contains ${result.symbols} symbols and ${result.edges} relationships`,
+    result.parseErrors > 0 ? `! ${result.parseErrors} files contain parse errors` : null,
   ]
     .filter((line): line is string => line !== null)
     .join("\n");

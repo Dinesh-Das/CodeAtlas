@@ -26,5 +26,7 @@ export function upsertEdge(database: AtlasDatabase, edge: GraphEdge, timestamp: 
 }
 
 export function clearContainmentEdges(database: AtlasDatabase): void {
-  database.prepare("DELETE FROM edges WHERE edge_type = 'CONTAINS'").run();
+  database
+    .prepare("DELETE FROM edges WHERE edge_type = 'CONTAINS' AND source_type = 'git'")
+    .run();
 }

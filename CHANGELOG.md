@@ -2,6 +2,22 @@
 
 All notable changes follow semantic versioning.
 
+## 0.2.0 - 2026-08-26
+
+### Added
+
+- Phase 2 Tree-sitter structural indexing for TypeScript, JavaScript, TSX, JSX, and Python.
+- Deterministic module, class, interface, function, method, and variable graph nodes.
+- Provenance-bearing containment and export relationships.
+- Normalized transient import/export references for Phase 3 resolution.
+- Literal-redacted signatures and parser diagnostics.
+- Per-language fixture repositories and exact normalized graph snapshots.
+
+### Changed
+
+- Initial and incremental indexing now writes AST entities transactionally.
+- `status`, `doctor`, and CLI summaries report structural parser information.
+
 ## 0.1.0 - 2026-08-26
 
 ### Added

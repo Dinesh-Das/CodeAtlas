@@ -21,6 +21,7 @@ export interface StatusResult {
   dirty: boolean;
   files: number;
   nodes: number;
+  symbols: number;
   edges: number;
   features: number;
   lastIndexedAt: string | null;
@@ -52,10 +53,12 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
         `SELECT
           (SELECT count(*) FROM files) AS files,
           (SELECT count(*) FROM nodes) AS nodes,
+          (SELECT count(*) FROM nodes
+            WHERE kind NOT IN ('repository', 'directory', 'file', 'module')) AS symbols,
           (SELECT count(*) FROM edges) AS edges,
           (SELECT count(*) FROM nodes WHERE kind = 'feature') AS features`,
       )
-      .get() as { files: number; nodes: number; edges: number; features: number };
+      .get() as { files: number; nodes: number; symbols: number; edges: number; features: number };
     const indexedFingerprint = state.dirty_fingerprint ?? null;
     const configIsCurrent = state.config_hash === sha256(JSON.stringify(config));
 
@@ -69,6 +72,7 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
       dirty,
       files: counts.files,
       nodes: counts.nodes,
+      symbols: counts.symbols,
       edges: counts.edges,
       features: counts.features,
       lastIndexedAt: state.last_indexed_at ?? null,
@@ -90,7 +94,7 @@ export function formatStatus(result: StatusResult): string {
     "Index:",
     `  Status: ${result.synchronized ? "up to date" : "out of date"}`,
     `  Files: ${result.files}`,
-    `  Nodes: ${result.nodes}`,
+    `  Symbols: ${result.symbols}`,
     `  Relationships: ${result.edges}`,
     `  Features: ${result.features}`,
     "",

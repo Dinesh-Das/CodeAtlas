@@ -4,6 +4,7 @@ import { workspaceExists, workspacePaths } from "../core/workspace.js";
 import { detectRepository } from "../git/repository.js";
 import { getJournalMode, openDatabase, verifyDatabase } from "../storage/database.js";
 import { SCHEMA_VERSION } from "../version.js";
+import { availableLanguageAdapters } from "../parser/registry.js";
 
 export interface DoctorCheck {
   name: string;
@@ -23,6 +24,34 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
     ok: supportedNode,
     detail: `${process.version}${supportedNode ? "" : " (Node.js 22.12 or newer is required)"}`,
   });
+
+  try {
+    const adapters = availableLanguageAdapters();
+    for (const adapter of adapters) {
+      const parsed = adapter.parseFile({
+        repositoryId: "doctor",
+        repositoryRoot: ".",
+        relativeFilePath: `doctor.${adapter.language}`,
+        language: adapter.language,
+        content: "",
+        contentHash: "doctor",
+      });
+      if (parsed.nodes.length !== 1 || parsed.nodes[0]?.kind !== "module") {
+        throw new Error(`${adapter.language} returned an invalid smoke-test graph.`);
+      }
+    }
+    checks.push({
+      name: "Tree-sitter parsers",
+      ok: true,
+      detail: adapters.map((adapter) => adapter.language).join(", "),
+    });
+  } catch (error) {
+    checks.push({
+      name: "Tree-sitter parsers",
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   let repository;
   try {

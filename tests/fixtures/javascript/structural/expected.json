@@ -1,0 +1,22 @@
+{
+  "nodes": [
+    "module|src/input.js|1|-|-|ast|1",
+    "variable|filesystem|1|const filesystem|module|ast|1",
+    "class|Worker|3|class Worker|module|ast|1",
+    "method|Worker.run|4|run(value = <literal>)|public|ast|1",
+    "function|Worker.run.normalize|5|normalize(input)|local|ast|1",
+    "function|makeWorker|10|makeWorker()|module|ast|1"
+  ],
+  "edges": [
+    "CONTAINS|file:src/input.js|module:src/input.js|1|ast|1",
+    "CONTAINS|module:src/input.js|variable:filesystem|1|ast|1",
+    "CONTAINS|module:src/input.js|class:Worker|3|ast|1",
+    "CONTAINS|class:Worker|method:Worker.run|4|ast|1",
+    "CONTAINS|method:Worker.run|function:Worker.run.normalize|5|ast|1",
+    "CONTAINS|module:src/input.js|function:makeWorker|10|ast|1",
+    "EXPORTS|module:src/input.js|class:Worker|12|ast|1",
+    "EXPORTS|module:src/input.js|function:makeWorker|13|ast|1"
+  ],
+  "unresolvedReferences": ["import|node:fs|1|27|ast"],
+  "errors": []
+}

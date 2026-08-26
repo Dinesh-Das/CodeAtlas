@@ -1,0 +1,24 @@
+{
+  "nodes": [
+    "module|src/input.py|1|-|-|ast|1",
+    "class|Service|4|class Service|module|ast|1",
+    "variable|Service.token|5|token: str|public|ast|1",
+    "method|Service.run|7|async def run(self, value: str = <literal>) -> bool|public|ast|1",
+    "function|Service.run.normalize|8|def normalize(item: str) -> str|public|ast|1",
+    "function|helper|14|def helper(value: int) -> int|module|ast|1",
+    "variable|__all__|18|__all__|protected|ast|1"
+  ],
+  "edges": [
+    "CONTAINS|file:src/input.py|module:src/input.py|1|ast|1",
+    "CONTAINS|module:src/input.py|class:Service|4|ast|1",
+    "CONTAINS|class:Service|variable:Service.token|5|ast|1",
+    "CONTAINS|class:Service|method:Service.run|7|ast|1",
+    "CONTAINS|method:Service.run|function:Service.run.normalize|8|ast|1",
+    "CONTAINS|module:src/input.py|function:helper|14|ast|1",
+    "CONTAINS|module:src/input.py|variable:__all__|18|ast|1",
+    "EXPORTS|module:src/input.py|class:Service|18|ast|1",
+    "EXPORTS|module:src/input.py|function:helper|18|ast|1"
+  ],
+  "unresolvedReferences": ["import|app.dependency|1|5|ast"],
+  "errors": []
+}

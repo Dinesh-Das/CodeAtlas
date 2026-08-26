@@ -1,0 +1,32 @@
+{
+  "nodes": [
+    "module|src/input.ts|1|-|-|ast|1",
+    "interface|Processor|3|interface Processor|public|ast|1",
+    "variable|Processor.id|4|id: string|public|ast|1",
+    "method|Processor.execute|5|execute(input: string): Promise<boolean>|public|ast|1",
+    "class|Service|8|class Service|public|ast|1",
+    "variable|Service.token|9|token: string|private|ast|1",
+    "method|Service.run|11|public async run(input: string = <literal>): Promise<boolean>|public|ast|1",
+    "function|Service.run.normalize|12|normalize(value: string)|local|ast|1",
+    "variable|localValue|17|const localValue|module|ast|1",
+    "function|helper|18|helper(value: number): number|public|ast|1"
+  ],
+  "edges": [
+    "CONTAINS|file:src/input.ts|module:src/input.ts|1|ast|1",
+    "CONTAINS|module:src/input.ts|interface:Processor|3|ast|1",
+    "EXPORTS|module:src/input.ts|interface:Processor|3|ast|1",
+    "CONTAINS|interface:Processor|variable:Processor.id|4|ast|1",
+    "CONTAINS|interface:Processor|method:Processor.execute|5|ast|1",
+    "CONTAINS|module:src/input.ts|class:Service|8|ast|1",
+    "EXPORTS|module:src/input.ts|class:Service|8|ast|1",
+    "CONTAINS|class:Service|variable:Service.token|9|ast|1",
+    "CONTAINS|class:Service|method:Service.run|11|ast|1",
+    "CONTAINS|method:Service.run|function:Service.run.normalize|12|ast|1",
+    "CONTAINS|module:src/input.ts|variable:localValue|17|ast|1",
+    "CONTAINS|module:src/input.ts|function:helper|18|ast|1",
+    "EXPORTS|module:src/input.ts|function:helper|18|ast|1",
+    "EXPORTS|module:src/input.ts|variable:localValue|19|ast|1"
+  ],
+  "unresolvedReferences": ["import|./dependency|1|34|ast"],
+  "errors": []
+}

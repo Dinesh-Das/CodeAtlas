@@ -1,0 +1,13 @@
+{
+  "nodes": [
+    "module|src/input.jsx|1|-|-|ast|1",
+    "function|App|3|App()|public|ast|1"
+  ],
+  "edges": [
+    "CONTAINS|file:src/input.jsx|module:src/input.jsx|1|ast|1",
+    "CONTAINS|module:src/input.jsx|function:App|3|ast|1",
+    "EXPORTS|module:src/input.jsx|function:App|3|ast|1"
+  ],
+  "unresolvedReferences": ["import|react|1|18|ast"],
+  "errors": []
+}

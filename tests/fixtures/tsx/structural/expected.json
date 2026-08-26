@@ -1,0 +1,20 @@
+{
+  "nodes": [
+    "module|src/input.tsx|1|-|-|ast|1",
+    "interface|CardProps|1|interface CardProps|public|ast|1",
+    "variable|CardProps.title|2|title: string|public|ast|1",
+    "function|Card|5|function Card({ title }: CardProps)|public|ast|1",
+    "function|Card.renderTitle|6|renderTitle()|local|ast|1"
+  ],
+  "edges": [
+    "CONTAINS|file:src/input.tsx|module:src/input.tsx|1|ast|1",
+    "CONTAINS|module:src/input.tsx|interface:CardProps|1|ast|1",
+    "EXPORTS|module:src/input.tsx|interface:CardProps|1|ast|1",
+    "CONTAINS|interface:CardProps|variable:CardProps.title|2|ast|1",
+    "CONTAINS|module:src/input.tsx|function:Card|5|ast|1",
+    "EXPORTS|module:src/input.tsx|function:Card|5|ast|1",
+    "CONTAINS|function:Card|function:Card.renderTitle|6|ast|1"
+  ],
+  "unresolvedReferences": [],
+  "errors": []
+}

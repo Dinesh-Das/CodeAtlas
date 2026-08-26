@@ -53,9 +53,12 @@ export function formatInitResult(result: InitResult): string {
       ? "✓ Added .codeatlas/ to .gitignore"
       : "✓ .codeatlas/ already ignored",
     `✓ Indexed ${result.files} files`,
-    `✓ Created ${result.nodes} graph nodes`,
+    `✓ Extracted ${result.symbols} symbols`,
     `✓ Created ${result.edges} graph relationships`,
-    "✓ CodeAtlas foundation is ready",
+    result.parseErrors > 0
+      ? `! ${result.parseErrors} files contain parse errors`
+      : "✓ All supported source files parsed",
+    "✓ CodeAtlas structural index is ready",
     "",
     "Run:",
     "  codeatlas status",

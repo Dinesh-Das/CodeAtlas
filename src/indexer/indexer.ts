@@ -17,6 +17,12 @@ import { createEdgeId, createNodeId } from "../graph/ids.js";
 import type { GraphEdge, GraphNode } from "../graph/types.js";
 import type { RepositoryInfo } from "../git/repository.js";
 import { detectRepository } from "../git/repository.js";
+import type { ParsedFile } from "../parser/parser.js";
+import {
+  availableLanguageAdapters,
+  getLanguageAdapter,
+  TREE_SITTER_VERSION,
+} from "../parser/registry.js";
 import { openDatabase, removeDatabaseFiles, type AtlasDatabase } from "../storage/database.js";
 import { clearContainmentEdges, upsertEdge } from "../storage/edges.js";
 import { deleteFile, listFiles, upsertFile, type FileRecord } from "../storage/files.js";
@@ -37,6 +43,8 @@ export interface IndexResult {
   deletedFiles: number;
   nodes: number;
   edges: number;
+  symbols: number;
+  parseErrors: number;
   languages: Record<string, number>;
   indexedAt: string;
 }
@@ -48,16 +56,25 @@ interface IndexedCandidate {
   language: DetectedLanguage | null;
   contentHash: string;
   parseStatus: string;
+  adapterVersion: string;
+  parsedFile: ParsedFile | null;
 }
 
-function parseStatus(
+function initialParseStatus(
   language: DetectedLanguage | null,
   enabled: { typescript: boolean; javascript: boolean; python: boolean },
+  hasAdapter: boolean,
 ): string {
+  if (language === null) return "unsupported";
   if (!isLanguageEnabled(language, enabled)) return "disabled";
-  if (isSourceLanguage(language)) return "pending_parser";
+  if (isSourceLanguage(language)) return hasAdapter ? "pending_parse" : "unsupported_parser";
   if (language !== null) return "metadata_only";
   return "unsupported";
+}
+
+function statusMatches(previous: string, current: string): boolean {
+  if (current !== "pending_parse") return previous === current;
+  return previous === "parsed" || previous === "parsed_with_errors" || previous === "parse_error";
 }
 
 function graphNode(input: Partial<GraphNode> & Pick<GraphNode, "id" | "kind" | "name">): GraphNode {
@@ -128,11 +145,15 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       32,
       async (file) => {
         const language = detectLanguage(file.relativePath);
+        const adapter = getLanguageAdapter(language);
+        const enabled = isLanguageEnabled(language, config.languages);
         return {
           ...file,
           language,
           contentHash: await hashFile(file.absolutePath),
-          parseStatus: parseStatus(language, config.languages),
+          parseStatus: initialParseStatus(language, config.languages, adapter !== null),
+          adapterVersion: enabled && adapter !== null ? adapter.version : "none",
+          parsedFile: null,
         };
       },
     );
@@ -160,21 +181,51 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       }
 
       const existing = new Map(listFiles(database).map((file) => [file.path, file]));
+      const indexerChanged = getRepositoryState(database, "indexer_version") !== INDEXER_VERSION;
       const candidatePaths = new Set(candidates.map((file) => file.relativePath));
       const deleted = [...existing.keys()].filter((filePath) => !candidatePaths.has(filePath));
       const changed = candidates.filter((file) => {
         const previous = existing.get(file.relativePath);
         return (
           options.full === true ||
+          indexerChanged ||
           previous === undefined ||
           previous.contentHash !== file.contentHash ||
           previous.language !== file.language ||
-          previous.parseStatus !== file.parseStatus ||
-          previous.parserVersion !== INDEXER_VERSION
+          !statusMatches(previous.parseStatus, file.parseStatus) ||
+          previous.parserVersion !== (file.adapterVersion === "none" ? "none" : TREE_SITTER_VERSION) ||
+          previous.adapterVersion !== file.adapterVersion
         );
+      });
+      await mapWithConcurrency(changed, 4, async (candidate) => {
+        if (candidate.parseStatus !== "pending_parse") return;
+        const adapter = getLanguageAdapter(candidate.language);
+        if (adapter === null) {
+          candidate.parseStatus = "unsupported_parser";
+          return;
+        }
+        try {
+          candidate.parsedFile = adapter.parseFile({
+            repositoryId: repository.id,
+            repositoryRoot: repository.root,
+            relativeFilePath: candidate.relativePath,
+            language: candidate.language ?? adapter.language,
+            content: await readFile(candidate.absolutePath, "utf8"),
+            contentHash: candidate.contentHash,
+          });
+          candidate.parseStatus = candidate.parsedFile.errors.some(
+            (diagnostic) => diagnostic.severity === "error",
+          )
+            ? "parsed_with_errors"
+            : "parsed";
+        } catch {
+          candidate.parsedFile = null;
+          candidate.parseStatus = "parse_error";
+        }
       });
       const indexedAt = new Date().toISOString();
       const configHash = sha256(JSON.stringify(config));
+      const changedPaths = new Set(changed.map((candidate) => candidate.relativePath));
 
       const writeIndex = database.transaction(() => {
         if (options.full) {
@@ -193,8 +244,8 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             language: candidate.language,
             contentHash: candidate.contentHash,
             sizeBytes: candidate.sizeBytes,
-            parserVersion: INDEXER_VERSION,
-            adapterVersion: "none",
+            parserVersion: candidate.adapterVersion === "none" ? "none" : TREE_SITTER_VERSION,
+            adapterVersion: candidate.adapterVersion,
             indexedCommit: repository.headCommit,
             parseStatus: candidate.parseStatus,
             indexedAt,
@@ -259,20 +310,27 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             candidate.relativePath,
             candidate.relativePath,
           );
-          upsertNode(
-            database,
-            graphNode({
-              id,
-              kind: "file",
-              name: path.posix.basename(candidate.relativePath),
-              qualifiedName: candidate.relativePath,
-              filePath: candidate.relativePath,
-              language: candidate.language,
-              contentHash: candidate.contentHash,
-              metadata: { parseStatus: candidate.parseStatus, sizeBytes: candidate.sizeBytes },
-            }),
-            indexedAt,
-          );
+          if (changedPaths.has(candidate.relativePath)) {
+            upsertNode(
+              database,
+              graphNode({
+                id,
+                kind: "file",
+                name: path.posix.basename(candidate.relativePath),
+                qualifiedName: candidate.relativePath,
+                filePath: candidate.relativePath,
+                language: candidate.language,
+                contentHash: candidate.contentHash,
+                metadata: {
+                  parseStatus: candidate.parseStatus,
+                  sizeBytes: candidate.sizeBytes,
+                  diagnosticCount: candidate.parsedFile?.errors.length ?? 0,
+                  unresolvedReferenceCount: candidate.parsedFile?.unresolvedReferences.length ?? 0,
+                },
+              }),
+              indexedAt,
+            );
+          }
 
           const parentDirectory = path.posix.dirname(candidate.relativePath);
           const parentId =
@@ -298,6 +356,12 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           }
         }
 
+        for (const candidate of changed) {
+          if (candidate.parsedFile === null) continue;
+          for (const node of candidate.parsedFile.nodes) upsertNode(database, node, indexedAt);
+          for (const edge of candidate.parsedFile.edges) upsertEdge(database, edge, indexedAt);
+        }
+
         setRepositoryStates(database, {
           schema_version: String(SCHEMA_VERSION),
           codeatlas_version: CODEATLAS_VERSION,
@@ -316,9 +380,13 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         .prepare(
           `SELECT
             (SELECT count(*) FROM nodes) AS nodes,
-            (SELECT count(*) FROM edges) AS edges`,
+            (SELECT count(*) FROM edges) AS edges,
+            (SELECT count(*) FROM nodes
+              WHERE kind NOT IN ('repository', 'directory', 'file', 'module')) AS symbols,
+            (SELECT count(*) FROM files
+              WHERE parse_status IN ('parsed_with_errors', 'parse_error')) AS parseErrors`,
         )
-        .get() as { nodes: number; edges: number };
+        .get() as { nodes: number; edges: number; symbols: number; parseErrors: number };
       const languages: Record<string, number> = {};
       for (const candidate of candidates) {
         if (candidate.language !== null) {
@@ -333,6 +401,10 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         repositoryRoot: repository.root,
         codeatlasVersion: CODEATLAS_VERSION,
         schemaVersion: SCHEMA_VERSION,
+        parserVersion: TREE_SITTER_VERSION,
+        adapters: Object.fromEntries(
+          availableLanguageAdapters().map((adapter) => [adapter.language, adapter.version]),
+        ),
         createdAt,
         updatedAt: indexedAt,
         languages,
@@ -346,6 +418,8 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         files: candidates.length,
         nodes: counts.nodes,
         edges: counts.edges,
+        symbols: counts.symbols,
+        parseErrors: counts.parseErrors,
       });
 
       return {
@@ -356,6 +430,8 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         deletedFiles: deleted.length,
         nodes: counts.nodes,
         edges: counts.edges,
+        symbols: counts.symbols,
+        parseErrors: counts.parseErrors,
         languages,
         indexedAt,
       };

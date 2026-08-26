@@ -31,7 +31,7 @@ describe("compiled CLI", () => {
 
     const initialized = await runCli("init", repository.root);
     expect(initialized.stderr).toBe("");
-    expect(initialized.stdout).toContain("CodeAtlas foundation is ready");
+    expect(initialized.stdout).toContain("CodeAtlas structural index is ready");
 
     const statusResult = await runCli("status", repository.root, "--json");
     const status = JSON.parse(statusResult.stdout) as { synchronized: boolean; files: number };

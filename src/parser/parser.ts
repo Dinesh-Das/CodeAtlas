@@ -40,6 +40,3 @@ export interface LanguageAdapter {
   readonly version: string;
   parseFile(input: ParseInput): ParsedFile;
 }
-
-// Tree-sitter adapters are introduced in Phase 2. The foundation indexer deliberately
-// records supported files as `pending_parser` until an evidence-bearing adapter exists.
