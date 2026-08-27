@@ -56,7 +56,8 @@ export function createProgram(): Command {
   program
     .command("mcp")
     .description("Start the CodeAtlas MCP server over stdio.")
-    .action(startMcpServer);
+    .argument("[path]", "A path inside the repository", process.cwd())
+    .action(async (targetPath: string) => startMcpServer(targetPath));
 
   program
     .command("clean")

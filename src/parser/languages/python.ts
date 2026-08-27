@@ -23,6 +23,57 @@ function identifierName(node: SyntaxNode | null): string | null {
   return node?.type === "identifier" ? node.text : null;
 }
 
+function referenceTarget(node: SyntaxNode | null): string | null {
+  if (node === null) return null;
+  if (node.type === "identifier") return node.text;
+  if (node.type === "attribute") {
+    const object = referenceTarget(node.childForFieldName("object"));
+    const attribute = identifierName(node.childForFieldName("attribute"));
+    return object === null || attribute === null ? null : `${object}.${attribute}`;
+  }
+  if (node.type === "subscript") {
+    return referenceTarget(node.childForFieldName("value"));
+  }
+  if (node.type === "dotted_name") {
+    const parts = node.namedChildren.map((child) => identifierName(child)).filter(Boolean);
+    return parts.length === 0 ? null : parts.join(".");
+  }
+  return null;
+}
+
+function importNameAndAlias(node: SyntaxNode): {
+  importedName: string;
+  localName: string;
+} | null {
+  if (node.type === "aliased_import") {
+    const importedName = referenceTarget(node.childForFieldName("name"));
+    const localName = identifierName(node.childForFieldName("alias"));
+    return importedName === null || localName === null ? null : { importedName, localName };
+  }
+  const importedName = referenceTarget(node);
+  if (importedName === null) return null;
+  return { importedName, localName: importedName.split(".")[0] ?? importedName };
+}
+
+function isValueReference(node: SyntaxNode): boolean {
+  if (node.type !== "identifier") return false;
+  const parent = node.parent;
+  if (parent === null) return false;
+  if (parent.childForFieldName("name")?.id === node.id) return false;
+  if (parent.childForFieldName("attribute")?.id === node.id) return false;
+  if (parent.childForFieldName("function")?.id === node.id) return false;
+  return ![
+    "parameters",
+    "typed_parameter",
+    "default_parameter",
+    "import_statement",
+    "import_from_statement",
+    "aliased_import",
+    "dotted_name",
+    "type",
+  ].includes(parent.type);
+}
+
 function collectIdentifiers(node: SyntaxNode | null): string[] {
   if (node === null) return [];
   const direct = identifierName(node);
@@ -50,7 +101,7 @@ function callableAssignmentSignature(name: string, value: SyntaxNode): string {
 
 export const pythonAdapter: LanguageAdapter = {
   language: "python",
-  version: "python-tree-sitter-1@0.23.4",
+  version: "python-tree-sitter-2@0.23.4",
 
   parseFile(input: ParseInput): ParsedFile {
     const tree = createTree(PythonLanguage, input.content);
@@ -74,8 +125,20 @@ export const pythonAdapter: LanguageAdapter = {
       if (node.type === "import_statement") {
         const imported = node.childrenForFieldName("name");
         for (const item of imported.length > 0 ? imported : node.namedChildren) {
+          const binding = importNameAndAlias(item);
           const source = item.type === "aliased_import" ? item.childForFieldName("name") : item;
-          if (source !== null) builder.addReference({ name: source.text, kind: "import" }, source);
+          if (source !== null && binding !== null) {
+            builder.addReference(
+              {
+                name: binding.importedName,
+                kind: "import",
+                sourceNodeId: scope.parentNodeId,
+                localName: binding.localName,
+                importedName: "*",
+              },
+              source,
+            );
+          }
         }
         return [];
       }
@@ -83,7 +146,29 @@ export const pythonAdapter: LanguageAdapter = {
       if (node.type === "import_from_statement") {
         const moduleName = node.childForFieldName("module_name");
         if (moduleName !== null) {
-          builder.addReference({ name: moduleName.text, kind: "import" }, moduleName);
+          const imported = node.childrenForFieldName("name");
+          const bindings = imported
+            .map(importNameAndAlias)
+            .filter((binding): binding is NonNullable<typeof binding> => binding !== null);
+          if (bindings.length === 0) {
+            builder.addReference(
+              { name: moduleName.text, kind: "import", sourceNodeId: scope.parentNodeId },
+              moduleName,
+            );
+          } else {
+            for (const binding of bindings) {
+              builder.addReference(
+                {
+                  name: moduleName.text,
+                  kind: "import",
+                  sourceNodeId: scope.parentNodeId,
+                  localName: binding.localName,
+                  importedName: binding.importedName,
+                },
+                moduleName,
+              );
+            }
+          }
         }
         return [];
       }
@@ -108,6 +193,18 @@ export const pythonAdapter: LanguageAdapter = {
           }),
           scope,
         );
+        const superclasses = node.childForFieldName("superclasses");
+        if (superclasses !== null) {
+          for (const target of superclasses.namedChildren) {
+            const targetName = referenceTarget(target);
+            if (targetName !== null) {
+              builder.addReference(
+                { name: targetName, kind: "extends", sourceNodeId: symbol.id },
+                target,
+              );
+            }
+          }
+        }
         const body = node.childForFieldName("body");
         if (body !== null) {
           const classScope: Scope = {
@@ -187,8 +284,37 @@ export const pythonAdapter: LanguageAdapter = {
           ),
         );
 
-        if (right?.type === "assignment") visit(right, scope);
+        if (callable && right !== null && added[0] !== undefined) {
+          const body = right.childForFieldName("body");
+          if (body !== null) {
+            visit(body, {
+              parentNodeId: added[0].id,
+              qualifiedName: added[0].node.qualifiedName ?? added[0].node.name,
+              type: "function",
+            });
+          }
+        } else if (right !== null) {
+          visit(right, scope);
+        }
         return added;
+      }
+
+      if (node.type === "call") {
+        const callable = node.childForFieldName("function");
+        const name = referenceTarget(callable);
+        if (name !== null) {
+          builder.addReference(
+            { name, kind: "call", sourceNodeId: scope.parentNodeId },
+            callable ?? node,
+          );
+        }
+      }
+
+      if (isValueReference(node)) {
+        builder.addReference(
+          { name: node.text, kind: "reference", sourceNodeId: scope.parentNodeId },
+          node,
+        );
       }
 
       const added: AddedSymbol[] = [];

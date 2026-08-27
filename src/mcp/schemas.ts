@@ -1,0 +1,119 @@
+import { z } from "zod";
+import { EDGE_TYPES, SOURCE_TYPES } from "../graph/types.js";
+
+export const evidenceSchema = z
+  .object({
+    file: z.string(),
+    line: z.number().int().positive(),
+    column: z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export const answerPacketSchema = z
+  .object({
+    answer_context: z
+      .object({
+        topic: z.string(),
+        tool: z.string(),
+      })
+      .strict(),
+    facts: z.array(
+      z
+        .object({
+          statement: z.string(),
+          confidence: z.number().min(0).max(1),
+          source_type: z.enum(SOURCE_TYPES),
+          evidence: evidenceSchema,
+        })
+        .strict(),
+    ),
+    relationships: z.array(
+      z
+        .object({
+          source_node_id: z.string(),
+          target_node_id: z.string(),
+          edge_type: z.enum(EDGE_TYPES),
+          confidence: z.number().min(0).max(1),
+          source_type: z.enum(SOURCE_TYPES),
+          evidence: evidenceSchema.omit({ column: true }),
+        })
+        .strict(),
+    ),
+    source_snippets: z.array(
+      z
+        .object({
+          node_id: z.string(),
+          file: z.string(),
+          start_line: z.number().int().positive(),
+          end_line: z.number().int().positive(),
+          content: z.string(),
+          trust: z.literal("untrusted_repository_content"),
+        })
+        .strict(),
+    ),
+    uncertainties: z.array(
+      z
+        .object({
+          description: z.string(),
+          reason: z.enum([
+            "unresolved_reference",
+            "insufficient_evidence",
+            "heuristic_only",
+            "multi_candidate",
+          ]),
+          candidates: z.array(z.string()),
+        })
+        .strict(),
+    ),
+    freshness: z
+      .object({
+        fingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+        head_commit: z.string(),
+        working_tree_checked: z.literal(true),
+        checked_at: z.string().datetime(),
+      })
+      .strict(),
+    pagination: z
+      .object({
+        cursor: z.string().nullable(),
+        has_more: z.boolean(),
+      })
+      .strict(),
+  })
+  .strict();
+
+export type AnswerPacket = z.infer<typeof answerPacketSchema>;
+
+export const paginationInputShape = {
+  cursor: z.string().nullable().optional().default(null),
+  limit: z.number().int().positive().max(10_000).optional().default(50),
+};
+
+export const emptyInputSchema = z.object({}).strict();
+export const overviewInputSchema = z.object(paginationInputShape).strict();
+export const searchInputSchema = z
+  .object({ query: z.string().min(1), ...paginationInputShape })
+  .strict();
+export const getNodeInputSchema = z.object({ node_id: z.string().min(1) }).strict();
+export const explainFeatureInputSchema = z
+  .object({ feature: z.string().min(1), ...paginationInputShape })
+  .strict();
+export const traceInputSchema = z
+  .object({
+    start: z.string().min(1),
+    max_depth: z.number().int().positive().max(100).optional().default(8),
+    ...paginationInputShape,
+  })
+  .strict();
+export const impactInputSchema = z
+  .object({ target: z.string().min(1), ...paginationInputShape })
+  .strict();
+export const dependenciesInputSchema = z
+  .object({
+    target: z.string().min(1),
+    direction: z.enum(["incoming", "outgoing", "both"]).optional().default("both"),
+    ...paginationInputShape,
+  })
+  .strict();
+export const sourceInputSchema = z.object({ node_id: z.string().min(1) }).strict();
+export const healthInputSchema = z.object(paginationInputShape).strict();

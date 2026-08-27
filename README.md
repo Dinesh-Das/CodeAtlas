@@ -2,8 +2,8 @@
 
 CodeAtlas builds a local, persistent structural index of a Git repository. The long-term
 product exposes an evidence-bearing knowledge graph to AI coding agents through MCP; the
-current implementation includes the Phase 1 foundation and Phase 2 structural indexer defined
-by the product specification.
+current implementation includes the Phase 1 foundation, Phase 2 structural indexer, and Phase 3
+relationship resolver/MCP contract defined by the product specification.
 
 The governing principle is simple: the working tree owns the facts, deterministic analysis
 structures those facts, and an LLM may explain them later.
@@ -22,16 +22,21 @@ structures those facts, and an LLM may explain them later.
 - Deterministic repository, directory, file, and `CONTAINS` graph entities with provenance.
 - Tree-sitter adapters for TypeScript, JavaScript, TSX, JSX, and Python.
 - Evidence-bearing module, class, interface, function, method, and variable nodes.
-- Deterministic AST `CONTAINS` and `EXPORTS` relationships plus normalized unresolved imports.
+- Deterministic `CONTAINS`, `EXPORTS`, `IMPORTS`, `CALLS`, `EXTENDS`, `IMPLEMENTS`, and
+  `REFERENCES` relationships.
+- Explicit unresolved and multi-candidate resolution records; ambiguous edges use confidence
+  scaled by import-graph distance.
 - Literal-safe signatures that redact assigned/default string values before persistence.
 - Transactional structural indexing, deleted-file cleanup, status checks, and a single-writer
   workspace lock.
-- Parser graph snapshots plus unit, integration, and compiled-CLI tests using disposable Git
-  repositories.
+- Official-SDK MCP stdio server with all ten required tools, validated inputs, typed Answer
+  Packets, configured limits, and a mandatory freshness gate before every tool call.
+- Parser and call-graph snapshots plus unit, integration, compiled-CLI, and MCP protocol tests
+  using disposable Git repositories.
 
-Import, call, inheritance, implementation, and general-reference resolution follow in Phase 3,
-along with the typed MCP skeleton. `codeatlas mcp` intentionally reports that boundary instead
-of returning incomplete or ungrounded data.
+The Phase 3 MCP tools intentionally return grounded empty result sets with an
+`insufficient_evidence` uncertainty. Later phases fill those stable contracts with graph query
+results without changing the protocol shape.
 
 ## Requirements
 
@@ -73,7 +78,7 @@ codeatlas status --json       Return machine-readable status
 codeatlas doctor [path]       Check Node, parsers, Git, config, SQLite, and WAL
 codeatlas clean [path]        Remove the local index after confirmation
 codeatlas clean --force       Remove it non-interactively
-codeatlas mcp                 Reserved for the Phase 3 grounded MCP implementation
+codeatlas mcp [path]          Start the CodeAtlas MCP server over stdio
 ```
 
 ## Local workspace
@@ -93,9 +98,22 @@ codeatlas mcp                 Reserved for the Phase 3 grounded MCP implementati
 index writer owns the workspace.
 
 The database stores structural metadata and hashes, not complete source files or string literal
-values. Its graph contains repository, directory, file, module, class, interface, function,
-method, and variable nodes with containment and export edges. Source contents remain in the
-working tree.
+values. Import module values used during resolution remain transient; unresolved import records
+store only a SHA-256 hash. Source contents remain in the working tree.
+
+## MCP setup
+
+Configure an MCP-compatible host to launch `codeatlas mcp` with the repository as its working
+directory, or pass the repository path explicitly:
+
+```bash
+codeatlas mcp /absolute/path/to/repository
+```
+
+The server uses stdio and writes no protocol-breaking output to stdout. Every tool request first
+checks the current repository fingerprint and performs an incremental index update when needed.
+All source snippets in the stable Answer Packet contract are labeled
+`untrusted_repository_content`.
 
 ## Supported syntax
 
@@ -169,7 +187,7 @@ Modules remain one-directional:
 ```text
 CLI → Indexer → Core / Git / Graph / Storage
               ↘ Tree-sitter language adapters
-MCP (Phase 3) → Graph queries + freshness gate
+MCP → Freshness gate → Graph query contracts
 ```
 
 - `src/cli`: command presentation and process behavior
@@ -179,6 +197,7 @@ MCP (Phase 3) → Graph queries + freshness gate
 - `src/storage`: SQLite lifecycle, migrations, repositories, and FTS search
 - `src/indexer`: orchestration and transactional graph writes
 - `src/parser`: normalized parser contract, adapter registry, and Tree-sitter implementations
+- `src/mcp`: provider-independent schemas, freshness gate, packets, and stdio server
 
 Parser code will not depend on MCP. MCP tools will not parse source. Graph/storage entities do
 not contain Tree-sitter-specific objects.
@@ -198,11 +217,10 @@ CodeAtlas will not discard it and fall back to defaults.
 
 ## Roadmap from the specification
 
-1. Import/call/inheritance/reference resolution and a typed MCP skeleton.
-2. Incremental dependency-neighborhood invalidation and Git rename identity preservation.
-3. Express, FastAPI, Prisma, and SQLAlchemy adapters.
-4. Feature/domain grouping, cycles, coupling, churn, and health signals.
-5. Full grounded MCP query tools, hardening, packaging, and public release documentation.
+1. Incremental dependency-neighborhood invalidation and Git rename identity preservation.
+2. Express, FastAPI, Prisma, and SQLAlchemy adapters.
+3. Feature/domain grouping, cycles, coupling, churn, and health signals.
+4. Full grounded MCP query tools, hardening, packaging, and public release documentation.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
 [CHANGELOG.md](CHANGELOG.md).

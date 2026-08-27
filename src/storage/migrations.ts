@@ -110,6 +110,31 @@ const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    version: 2,
+    sql: `
+      CREATE TABLE resolution_issues (
+        id TEXT PRIMARY KEY,
+        source_node_id TEXT NOT NULL,
+        reference_kind TEXT NOT NULL,
+        reference_name TEXT,
+        reference_hash TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        column_number INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        candidate_node_ids_json TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(source_node_id) REFERENCES nodes(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX idx_resolution_issues_source ON resolution_issues(source_node_id);
+      CREATE INDEX idx_resolution_issues_file ON resolution_issues(file_path);
+      CREATE INDEX idx_resolution_issues_reason ON resolution_issues(reason);
+    `,
+  },
 ];
 
 export function runMigrations(database: Database.Database): void {

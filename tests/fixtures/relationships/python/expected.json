@@ -1,0 +1,7 @@
+[
+  "IMPORTS|pkg/consumer.py|pkg/base.py|1|ast|pkg/consumer.py:1",
+  "EXTENDS|Worker|Base|1|ast|pkg/consumer.py:4",
+  "CALLS|Worker.run|shared|1|ast|pkg/consumer.py:6",
+  "CALLS|Worker.run|Worker.finish|1|ast|pkg/consumer.py:7",
+  "REFERENCES|Worker.run|value|1|ast|pkg/consumer.py:8"
+]

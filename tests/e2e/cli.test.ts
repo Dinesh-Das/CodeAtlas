@@ -39,7 +39,7 @@ describe("compiled CLI", () => {
     expect(status.files).toBeGreaterThan(0);
 
     const doctor = await runCli("doctor", repository.root);
-    expect(doctor.stdout).toContain("✓ SQLite: quick_check=ok, journal_mode=wal, schema=1");
+    expect(doctor.stdout).toContain("✓ SQLite: quick_check=ok, journal_mode=wal, schema=2");
 
     const cleaned = await runCli("clean", repository.root, "--force");
     expect(cleaned.stdout).toContain("Removed .codeatlas/");

@@ -1,7 +1,5 @@
-import { CodeAtlasError } from "../core/errors.js";
+import { startCodeAtlasMcpServer } from "../mcp/server.js";
 
-export async function startMcpServer(): Promise<never> {
-  throw new CodeAtlasError(
-    "The MCP server is scheduled for Phase 3 after evidence-bearing parser and relationship contracts exist.",
-  );
+export async function startMcpServer(targetPath = process.cwd()): Promise<void> {
+  await startCodeAtlasMcpServer(targetPath);
 }

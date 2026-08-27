@@ -10,6 +10,7 @@ import { detectRepository } from "../git/repository.js";
 import { isWorkingTreeDirty } from "../git/diff.js";
 import { openDatabase } from "../storage/database.js";
 import { getRepositoryStates } from "../storage/state.js";
+import { INDEXER_VERSION, SCHEMA_VERSION } from "../version.js";
 
 export interface StatusResult {
   repository: string;
@@ -61,6 +62,9 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
       .get() as { files: number; nodes: number; symbols: number; edges: number; features: number };
     const indexedFingerprint = state.dirty_fingerprint ?? null;
     const configIsCurrent = state.config_hash === sha256(JSON.stringify(config));
+    const indexContractIsCurrent =
+      state.indexer_version === INDEXER_VERSION &&
+      state.schema_version === String(SCHEMA_VERSION);
 
     return {
       repository: repository.name,
@@ -68,7 +72,8 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
       branch: repository.branch,
       headCommit: repository.headCommit,
       indexedCommit: state.last_indexed_commit ?? null,
-      synchronized: indexedFingerprint === current.fingerprint && configIsCurrent,
+      synchronized:
+        indexedFingerprint === current.fingerprint && configIsCurrent && indexContractIsCurrent,
       dirty,
       files: counts.files,
       nodes: counts.nodes,

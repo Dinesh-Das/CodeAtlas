@@ -1,0 +1,614 @@
+import path from "node:path";
+import { sha256 } from "../core/hashing.js";
+import type { ParsedFile, UnresolvedReference } from "../parser/parser.js";
+import type { AtlasDatabase } from "../storage/database.js";
+import { upsertEdge } from "../storage/edges.js";
+import { upsertResolutionIssue } from "../storage/resolution-issues.js";
+import { createEdgeId } from "./ids.js";
+import type { EdgeType, GraphEdge, NodeKind, SourceType } from "./types.js";
+
+interface StoredNode {
+  id: string;
+  kind: NodeKind;
+  name: string;
+  qualifiedName: string | null;
+  filePath: string | null;
+}
+
+interface NodeRow {
+  id: string;
+  kind: NodeKind;
+  name: string;
+  qualified_name: string | null;
+  file_path: string | null;
+}
+
+interface ParsedInput {
+  relativePath: string;
+  parsedFile: ParsedFile;
+}
+
+interface ImportBinding {
+  localName: string;
+  importedName: string;
+  targetFilePath: string;
+}
+
+interface CandidateSet {
+  nodes: StoredNode[];
+  exact: boolean;
+}
+
+export interface ResolutionResult {
+  edges: number;
+  unresolved: number;
+  ambiguous: number;
+}
+
+const SYMBOL_KINDS = new Set<NodeKind>([
+  "class",
+  "interface",
+  "function",
+  "method",
+  "variable",
+]);
+
+const JAVASCRIPT_EXTENSIONS = [
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+] as const;
+
+function loadNodes(database: AtlasDatabase): StoredNode[] {
+  const rows = database
+    .prepare("SELECT id, kind, name, qualified_name, file_path FROM nodes ORDER BY id")
+    .all() as NodeRow[];
+  return rows.map((row) => ({
+    id: row.id,
+    kind: row.kind,
+    name: row.name,
+    qualifiedName: row.qualified_name,
+    filePath: row.file_path,
+  }));
+}
+
+function uniqueNodes(nodes: readonly StoredNode[]): StoredNode[] {
+  return [...new Map(nodes.map((node) => [node.id, node])).values()].sort((left, right) =>
+    left.id.localeCompare(right.id),
+  );
+}
+
+function moduleCandidates(
+  reference: UnresolvedReference,
+  modulesByFile: ReadonlyMap<string, StoredNode>,
+): StoredNode[] {
+  const sourceDirectory = path.posix.dirname(reference.evidence.file);
+  const candidatePaths = new Set<string>();
+
+  if (reference.name.startsWith(".")) {
+    if (reference.evidence.file.endsWith(".py") || reference.evidence.file.endsWith(".pyi")) {
+      const prefix = reference.name.match(/^\.+/u)?.[0] ?? ".";
+      let baseDirectory = sourceDirectory;
+      for (let level = 1; level < prefix.length; level += 1) {
+        baseDirectory = path.posix.dirname(baseDirectory);
+      }
+      const modulePart = reference.name.slice(prefix.length).replaceAll(".", "/");
+      const base = path.posix.normalize(path.posix.join(baseDirectory, modulePart));
+      candidatePaths.add(`${base}.py`);
+      candidatePaths.add(`${base}.pyi`);
+      candidatePaths.add(path.posix.join(base, "__init__.py"));
+    } else {
+      const base = path.posix.normalize(path.posix.join(sourceDirectory, reference.name));
+      candidatePaths.add(base);
+      const sourceExtension = path.posix.extname(base);
+      const hasKnownRuntimeExtension =
+        JAVASCRIPT_EXTENSIONS.some((extension) => extension === sourceExtension) ||
+        sourceExtension === ".json";
+      if (!hasKnownRuntimeExtension) {
+        for (const extension of JAVASCRIPT_EXTENSIONS) {
+          candidatePaths.add(`${base}${extension}`);
+          candidatePaths.add(path.posix.join(base, `index${extension}`));
+        }
+        candidatePaths.add(`${base}.json`);
+      } else {
+        const withoutExtension = base.slice(0, -sourceExtension.length);
+        if (sourceExtension === ".js" || sourceExtension === ".jsx") {
+          candidatePaths.add(`${withoutExtension}.ts`);
+          candidatePaths.add(`${withoutExtension}.tsx`);
+        } else if (sourceExtension === ".mjs") {
+          candidatePaths.add(`${withoutExtension}.mts`);
+        } else if (sourceExtension === ".cjs") {
+          candidatePaths.add(`${withoutExtension}.cts`);
+        }
+      }
+    }
+  } else if (reference.evidence.file.endsWith(".py") || reference.evidence.file.endsWith(".pyi")) {
+    const modulePath = reference.name.replaceAll(".", "/");
+    candidatePaths.add(`${modulePath}.py`);
+    candidatePaths.add(`${modulePath}.pyi`);
+    candidatePaths.add(path.posix.join(modulePath, "__init__.py"));
+    for (const filePath of modulesByFile.keys()) {
+      if (filePath.endsWith(`/${modulePath}.py`) || filePath.endsWith(`/${modulePath}/__init__.py`)) {
+        candidatePaths.add(filePath);
+      }
+    }
+  }
+
+  return uniqueNodes(
+    [...candidatePaths]
+      .map((candidatePath) => modulesByFile.get(candidatePath))
+      .filter((node): node is StoredNode => node !== undefined),
+  );
+}
+
+function edgeTypeFor(reference: UnresolvedReference): EdgeType {
+  switch (reference.kind) {
+    case "import":
+      return "IMPORTS";
+    case "export":
+      return "EXPORTS";
+    case "call":
+      return "CALLS";
+    case "extends":
+      return "EXTENDS";
+    case "implements":
+      return "IMPLEMENTS";
+    case "reference":
+      return "REFERENCES";
+  }
+}
+
+function expectedKinds(reference: UnresolvedReference): ReadonlySet<NodeKind> {
+  if (reference.kind === "call") return new Set(["function", "method", "class"]);
+  if (reference.kind === "extends") return new Set(["class", "interface"]);
+  if (reference.kind === "implements") return new Set(["interface"]);
+  return SYMBOL_KINDS;
+}
+
+function ownerQualifiedName(source: StoredNode): string | null {
+  if (source.qualifiedName === null) return null;
+  const pieces = source.qualifiedName.split(".");
+  return pieces.length > 1 ? pieces.slice(0, -1).join(".") : null;
+}
+
+function lexicalScore(source: StoredNode, candidate: StoredNode): number {
+  if (source.filePath !== candidate.filePath) return -1;
+  const sourceParts = (source.qualifiedName ?? "").split(".");
+  const candidateParent = (candidate.qualifiedName ?? "").split(".").slice(0, -1);
+  let common = 0;
+  while (common < sourceParts.length && sourceParts[common] === candidateParent[common]) {
+    common += 1;
+  }
+  return common;
+}
+
+function byNameInFile(
+  nodes: readonly StoredNode[],
+  filePath: string,
+  name: string,
+  kinds: ReadonlySet<NodeKind>,
+): StoredNode[] {
+  return nodes.filter(
+    (node) => node.filePath === filePath && node.name === name && kinds.has(node.kind),
+  );
+}
+
+function importedCandidates(
+  reference: UnresolvedReference,
+  binding: ImportBinding,
+  nodes: readonly StoredNode[],
+  exportedNodeIds: ReadonlySet<string>,
+  kinds: ReadonlySet<NodeKind>,
+): StoredNode[] {
+  const parts = reference.name.split(".");
+  const remainder = parts.slice(1);
+  if (binding.importedName === "*") {
+    const targetName = remainder[0];
+    if (targetName === undefined) return [];
+    const roots = byNameInFile(nodes, binding.targetFilePath, targetName, kinds);
+    if (remainder.length === 1) return roots;
+    const suffix = remainder.slice(1).join(".");
+    return nodes.filter((node) =>
+      roots.some(
+        (root) =>
+          node.filePath === binding.targetFilePath &&
+          kinds.has(node.kind) &&
+          node.qualifiedName === `${root.qualifiedName}.${suffix}`,
+      ),
+    );
+  }
+
+  if (binding.importedName === "default") {
+    const roots = nodes.filter(
+      (node) =>
+        node.filePath === binding.targetFilePath &&
+        kinds.has(node.kind) &&
+        (node.name === "default" || exportedNodeIds.has(node.id)),
+    );
+    if (remainder.length === 0) return roots;
+    const suffix = remainder.join(".");
+    return nodes.filter((node) =>
+      roots.some(
+        (root) =>
+          node.filePath === binding.targetFilePath &&
+          kinds.has(node.kind) &&
+          node.qualifiedName === `${root.qualifiedName}.${suffix}`,
+      ),
+    );
+  }
+
+  const roots = byNameInFile(nodes, binding.targetFilePath, binding.importedName, kinds);
+  if (remainder.length === 0) return roots;
+  const suffix = remainder.join(".");
+  return nodes.filter((node) =>
+    roots.some(
+      (root) =>
+        node.filePath === binding.targetFilePath &&
+        kinds.has(node.kind) &&
+        node.qualifiedName === `${root.qualifiedName}.${suffix}`,
+    ),
+  );
+}
+
+function symbolCandidates(
+  reference: UnresolvedReference,
+  source: StoredNode,
+  nodes: readonly StoredNode[],
+  bindings: readonly ImportBinding[],
+  exportedNodeIds: ReadonlySet<string>,
+  modulesByFile: ReadonlyMap<string, StoredNode>,
+  distances: ReadonlyMap<string, Map<string, number>>,
+): CandidateSet {
+  const kinds = expectedKinds(reference);
+  const parts = reference.name.split(".");
+  const first = parts[0] ?? reference.name;
+  const last = parts.at(-1) ?? reference.name;
+
+  if (reference.kind === "export") {
+    return {
+      nodes: byNameInFile(nodes, reference.evidence.file, reference.name, kinds),
+      exact: true,
+    };
+  }
+
+  if (first === "this" || first === "self") {
+    const owner = ownerQualifiedName(source);
+    if (owner !== null) {
+      const qualifiedName = `${owner}.${parts.slice(1).join(".")}`;
+      const scoped = nodes.filter(
+        (node) =>
+          node.filePath === source.filePath &&
+          node.qualifiedName === qualifiedName &&
+          kinds.has(node.kind),
+      );
+      if (scoped.length > 0) return { nodes: scoped, exact: true };
+    }
+  }
+  if (first === "super") return { nodes: [], exact: false };
+
+  const matchingBindings = bindings.filter((binding) => binding.localName === first);
+  if (matchingBindings.length > 0) {
+    return {
+      nodes: uniqueNodes(
+        matchingBindings.flatMap((binding) =>
+          importedCandidates(reference, binding, nodes, exportedNodeIds, kinds),
+        ),
+      ),
+      exact: true,
+    };
+  }
+
+  if (parts.length > 1) {
+    const roots = byNameInFile(nodes, reference.evidence.file, first, SYMBOL_KINDS);
+    const qualified = nodes.filter((node) =>
+      roots.some(
+        (root) =>
+          node.filePath === reference.evidence.file &&
+          node.qualifiedName === `${root.qualifiedName}.${parts.slice(1).join(".")}` &&
+          kinds.has(node.kind),
+      ),
+    );
+    if (qualified.length > 0) return { nodes: qualified, exact: true };
+    return { nodes: [], exact: false };
+  }
+
+  const local = byNameInFile(nodes, reference.evidence.file, last, kinds);
+  if (local.length > 0) {
+    const scored = local.map((node) => ({ node, score: lexicalScore(source, node) }));
+    const best = Math.max(...scored.map((candidate) => candidate.score));
+    return {
+      nodes: scored.filter((candidate) => candidate.score === best).map((candidate) => candidate.node),
+      exact: true,
+    };
+  }
+
+  const sourceModule = modulesByFile.get(reference.evidence.file);
+  const reachableModules = sourceModule === undefined ? undefined : distances.get(sourceModule.id);
+  return {
+    nodes: nodes.filter(
+      (node) =>
+        node.name === last &&
+        kinds.has(node.kind) &&
+        node.filePath !== null &&
+        modulesByFile.get(node.filePath) !== undefined &&
+        reachableModules?.has(modulesByFile.get(node.filePath)!.id) === true,
+    ),
+    exact: false,
+  };
+}
+
+function importDistances(
+  database: AtlasDatabase,
+  modulesByFile: ReadonlyMap<string, StoredNode>,
+  nodeById: ReadonlyMap<string, StoredNode>,
+): Map<string, Map<string, number>> {
+  const adjacency = new Map<string, Set<string>>();
+  const rows = database
+    .prepare("SELECT source_node_id, target_node_id FROM edges WHERE edge_type = 'IMPORTS'")
+    .all() as Array<{ source_node_id: string; target_node_id: string }>;
+  for (const row of rows) {
+    const source = nodeById.get(row.source_node_id);
+    const target = nodeById.get(row.target_node_id);
+    if (source === undefined || target === undefined) continue;
+    if (source.filePath === null || target.filePath === null) continue;
+    const sourceModule = modulesByFile.get(source.filePath);
+    const targetModule = modulesByFile.get(target.filePath);
+    if (sourceModule === undefined || targetModule === undefined) continue;
+    const neighbors = adjacency.get(sourceModule.id) ?? new Set<string>();
+    neighbors.add(targetModule.id);
+    adjacency.set(sourceModule.id, neighbors);
+  }
+
+  const result = new Map<string, Map<string, number>>();
+  for (const start of modulesByFile.values()) {
+    const distances = new Map<string, number>([[start.id, 0]]);
+    const queue = [start.id];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (current === undefined) break;
+      const distance = distances.get(current) ?? 0;
+      for (const neighbor of adjacency.get(current) ?? []) {
+        if (distances.has(neighbor)) continue;
+        distances.set(neighbor, distance + 1);
+        queue.push(neighbor);
+      }
+    }
+    result.set(start.id, distances);
+  }
+  return result;
+}
+
+function candidateDistance(
+  reference: UnresolvedReference,
+  candidate: StoredNode,
+  modulesByFile: ReadonlyMap<string, StoredNode>,
+  distances: ReadonlyMap<string, Map<string, number>>,
+): number {
+  const sourceModule = modulesByFile.get(reference.evidence.file);
+  const targetModule = candidate.filePath === null ? undefined : modulesByFile.get(candidate.filePath);
+  if (sourceModule === undefined || targetModule === undefined) return 20;
+  return distances.get(sourceModule.id)?.get(targetModule.id) ?? 20;
+}
+
+function confidenceFor(distance: number, candidateCount: number, exact: boolean): number {
+  if (candidateCount === 1 && exact) return 1;
+  const base = exact ? 0.9 : 0.75;
+  return Math.max(0.2, Number((base - Math.min(distance, 10) * 0.04 - (candidateCount - 1) * 0.05).toFixed(2)));
+}
+
+function persistIssue(
+  database: AtlasDatabase,
+  reference: UnresolvedReference,
+  reason: "unresolved_reference" | "multi_candidate",
+  candidates: readonly StoredNode[],
+  timestamp: string,
+): void {
+  const referenceHash = sha256(`${reference.kind}:${reference.name}`);
+  const safeName =
+    reference.kind !== "import" &&
+    /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/u.test(reference.name)
+      ? reference.name
+      : null;
+  upsertResolutionIssue(
+    database,
+    {
+      id: sha256(
+        `${reference.sourceNodeId}:${referenceHash}:${reference.evidence.file}:${reference.evidence.line}:${reference.evidence.column}`,
+      ),
+      sourceNodeId: reference.sourceNodeId,
+      referenceKind: reference.kind,
+      referenceName: safeName,
+      referenceHash,
+      filePath: reference.evidence.file,
+      line: reference.evidence.line,
+      column: reference.evidence.column,
+      reason,
+      candidateNodeIds: candidates.map((candidate) => candidate.id),
+      metadata: {
+        evidence: {
+          source_type: reference.evidence.sourceType,
+          file: reference.evidence.file,
+          line: reference.evidence.line,
+          column: reference.evidence.column,
+        },
+      },
+    },
+    timestamp,
+  );
+}
+
+function persistEdges(
+  database: AtlasDatabase,
+  repositoryId: string,
+  reference: UnresolvedReference,
+  candidates: readonly StoredNode[],
+  exact: boolean,
+  modulesByFile: ReadonlyMap<string, StoredNode>,
+  distances: ReadonlyMap<string, Map<string, number>>,
+  timestamp: string,
+  edgeIds: Set<string>,
+): void {
+  for (const candidate of candidates) {
+    const distance = candidateDistance(reference, candidate, modulesByFile, distances);
+    const sourceType: SourceType = exact && candidates.length === 1 ? "ast" : "heuristic";
+    const edgeType = edgeTypeFor(reference);
+    const id = createEdgeId(
+      repositoryId,
+      edgeType,
+      reference.sourceNodeId,
+      candidate.id,
+      reference.evidence.file,
+      reference.evidence.line,
+    );
+    const edge: GraphEdge = {
+      id,
+      sourceNodeId: reference.sourceNodeId,
+      targetNodeId: candidate.id,
+      edgeType,
+      sourceType,
+      confidence: confidenceFor(distance, candidates.length, exact),
+      filePath: reference.evidence.file,
+      line: reference.evidence.line,
+      metadata: {
+        evidence: {
+          source_type: reference.evidence.sourceType,
+          file: reference.evidence.file,
+          line: reference.evidence.line,
+          column: reference.evidence.column,
+        },
+        resolution: candidates.length > 1 ? "ambiguous" : exact ? "exact" : "unique_candidate",
+        candidate_count: candidates.length,
+        import_graph_distance: distance === 20 ? null : distance,
+      },
+    };
+    upsertEdge(database, edge, timestamp);
+    edgeIds.add(id);
+  }
+}
+
+export function resolveReferences(
+  database: AtlasDatabase,
+  repositoryId: string,
+  parsedInputs: readonly ParsedInput[],
+  timestamp: string,
+): ResolutionResult {
+  const nodes = loadNodes(database);
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const modulesByFile = new Map<string, StoredNode>();
+  for (const node of nodes) {
+    if (node.kind === "file" && node.filePath !== null) modulesByFile.set(node.filePath, node);
+  }
+  for (const node of nodes) {
+    if (node.kind === "module" && node.filePath !== null) modulesByFile.set(node.filePath, node);
+  }
+  const exportedNodeIds = new Set(
+    (
+      database.prepare("SELECT target_node_id FROM edges WHERE edge_type = 'EXPORTS'").all() as Array<{
+        target_node_id: string;
+      }>
+    ).map((row) => row.target_node_id),
+  );
+  const bindingsByFile = new Map<string, ImportBinding[]>();
+  const importReferences: UnresolvedReference[] = [];
+  const otherReferences: UnresolvedReference[] = [];
+  for (const input of parsedInputs) {
+    for (const reference of input.parsedFile.unresolvedReferences) {
+      if (reference.kind === "import" || (reference.kind === "export" && reference.name.startsWith("."))) {
+        importReferences.push(reference);
+      } else {
+        otherReferences.push(reference);
+      }
+    }
+  }
+
+  let unresolved = 0;
+  let ambiguous = 0;
+  const edgeIds = new Set<string>();
+
+  for (const reference of importReferences) {
+    const candidates = moduleCandidates(reference, modulesByFile);
+    if (candidates.length === 0) {
+      persistIssue(database, reference, "unresolved_reference", [], timestamp);
+      unresolved += 1;
+      continue;
+    }
+    if (candidates.length > 1) {
+      persistIssue(database, reference, "multi_candidate", candidates, timestamp);
+      ambiguous += 1;
+    }
+    const importReference = reference.kind === "export" ? { ...reference, kind: "import" as const } : reference;
+    const directDistances = new Map<string, Map<string, number>>();
+    const sourceModule = modulesByFile.get(reference.evidence.file);
+    if (sourceModule !== undefined) {
+      directDistances.set(
+        sourceModule.id,
+        new Map(candidates.map((candidate) => [candidate.id, 1])),
+      );
+    }
+    persistEdges(
+      database,
+      repositoryId,
+      importReference,
+      candidates,
+      true,
+      modulesByFile,
+      directDistances,
+      timestamp,
+      edgeIds,
+    );
+    if (reference.localName !== null && reference.importedName !== null) {
+      const bindings = bindingsByFile.get(reference.evidence.file) ?? [];
+      for (const candidate of candidates) {
+        if (candidate.filePath === null) continue;
+        bindings.push({
+          localName: reference.localName,
+          importedName: reference.importedName,
+          targetFilePath: candidate.filePath,
+        });
+      }
+      bindingsByFile.set(reference.evidence.file, bindings);
+    }
+  }
+
+  const distances = importDistances(database, modulesByFile, nodeById);
+  for (const reference of otherReferences) {
+    const source = nodeById.get(reference.sourceNodeId);
+    if (source === undefined) continue;
+    const candidates = symbolCandidates(
+      reference,
+      source,
+      nodes,
+      bindingsByFile.get(reference.evidence.file) ?? [],
+      exportedNodeIds,
+      modulesByFile,
+      distances,
+    );
+    if (candidates.nodes.length === 0) {
+      persistIssue(database, reference, "unresolved_reference", [], timestamp);
+      unresolved += 1;
+      continue;
+    }
+    if (candidates.nodes.length > 1) {
+      persistIssue(database, reference, "multi_candidate", candidates.nodes, timestamp);
+      ambiguous += 1;
+    }
+    persistEdges(
+      database,
+      repositoryId,
+      reference,
+      candidates.nodes,
+      candidates.exact,
+      modulesByFile,
+      distances,
+      timestamp,
+      edgeIds,
+    );
+  }
+
+  return { edges: edgeIds.size, unresolved, ambiguous };
+}

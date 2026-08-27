@@ -27,6 +27,14 @@
     "EXPORTS|module:src/input.ts|function:helper|18|ast|1",
     "EXPORTS|module:src/input.ts|variable:localValue|19|ast|1"
   ],
-  "unresolvedReferences": ["import|./dependency|1|34|ast"],
+  "unresolvedReferences": [
+    "import|./dependency|1|34|ast",
+    "call|value.trim|12|41|ast",
+    "reference|value|12|41|ast",
+    "call|normalize|13|11|ast",
+    "reference|input|13|21|ast",
+    "reference|value|18|49|ast",
+    "reference|localValue|18|57|ast"
+  ],
   "errors": []
 }

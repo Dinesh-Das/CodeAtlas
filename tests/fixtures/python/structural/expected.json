@@ -19,6 +19,14 @@
     "EXPORTS|module:src/input.py|class:Service|18|ast|1",
     "EXPORTS|module:src/input.py|function:helper|18|ast|1"
   ],
-  "unresolvedReferences": ["import|app.dependency|1|5|ast"],
+  "unresolvedReferences": [
+    "import|app.dependency|1|5|ast",
+    "call|item.strip|9|19|ast",
+    "reference|item|9|19|ast",
+    "call|bool|11|15|ast",
+    "call|normalize|11|20|ast",
+    "reference|value|11|30|ast",
+    "reference|value|15|11|ast"
+  ],
   "errors": []
 }

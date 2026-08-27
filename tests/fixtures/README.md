@@ -9,7 +9,9 @@ graph snapshot:
 - JSX
 - Python
 
-The snapshots cover modules, symbols, containment, exports, unresolved imports, evidence,
-confidence, signatures, and literal-value redaction. Integration fixtures are additionally
-created as temporary Git repositories so tests exercise tracked, untracked, modified, and
-deleted working-tree state.
+The structural snapshots cover modules, symbols, containment, exports, transient references,
+evidence, confidence, signatures, and literal-value redaction. Phase 3 relationship fixtures add
+exact call-graph snapshots for imports, calls, inheritance, implementations, general references,
+and distance-scaled ambiguous candidates. Integration fixtures are additionally created as
+temporary Git repositories so tests exercise tracked, untracked, modified, and deleted
+working-tree state.

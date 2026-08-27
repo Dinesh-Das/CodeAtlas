@@ -14,6 +14,7 @@ import {
 } from "../core/languages.js";
 import { acquireIndexLock, workspacePaths, writeJsonAtomic } from "../core/workspace.js";
 import { createEdgeId, createNodeId } from "../graph/ids.js";
+import { resolveReferences } from "../graph/resolver.js";
 import type { GraphEdge, GraphNode } from "../graph/types.js";
 import type { RepositoryInfo } from "../git/repository.js";
 import { detectRepository } from "../git/repository.js";
@@ -361,6 +362,17 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           for (const node of candidate.parsedFile.nodes) upsertNode(database, node, indexedAt);
           for (const edge of candidate.parsedFile.edges) upsertEdge(database, edge, indexedAt);
         }
+
+        resolveReferences(
+          database,
+          repository.id,
+          changed.flatMap((candidate) =>
+            candidate.parsedFile === null
+              ? []
+              : [{ relativePath: candidate.relativePath, parsedFile: candidate.parsedFile }],
+          ),
+          indexedAt,
+        );
 
         setRepositoryStates(database, {
           schema_version: String(SCHEMA_VERSION),

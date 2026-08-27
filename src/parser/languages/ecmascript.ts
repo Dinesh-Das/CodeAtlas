@@ -78,6 +78,94 @@ function stringValue(node: SyntaxNode | null): string | null {
   return text.length >= 2 ? text.slice(1, -1) : null;
 }
 
+function referenceTarget(node: SyntaxNode | null): string | null {
+  if (node === null) return null;
+  const direct = validName(node);
+  if (direct !== null) return direct;
+  if (node.type === "this" || node.type === "super") return node.type;
+  if (node.type === "generic_type") {
+    return referenceTarget(node.childForFieldName("name"));
+  }
+  if (node.type === "member_expression" || node.type === "nested_type_identifier") {
+    const object = referenceTarget(
+      node.childForFieldName("object") ?? node.childForFieldName("module"),
+    );
+    const property = validName(
+      node.childForFieldName("property") ?? node.childForFieldName("name"),
+    );
+    return object === null || property === null ? null : `${object}.${property}`;
+  }
+  return null;
+}
+
+function addImportReferences(
+  builder: ParseGraphBuilder,
+  statement: SyntaxNode,
+  source: SyntaxNode,
+  moduleName: string,
+  sourceNodeId: string,
+): void {
+  const clause = statement.namedChildren.find((child) => child.type === "import_clause");
+  if (clause === undefined) {
+    builder.addReference({ name: moduleName, kind: "import", sourceNodeId }, source);
+    return;
+  }
+
+  let added = false;
+  for (const child of clause.namedChildren) {
+    if (child.type === "identifier") {
+      builder.addReference(
+        { name: moduleName, kind: "import", sourceNodeId, localName: child.text, importedName: "default" },
+        source,
+      );
+      added = true;
+    } else if (child.type === "namespace_import") {
+      const localName = validName(child.namedChildren.at(-1) ?? null);
+      if (localName !== null) {
+        builder.addReference(
+          { name: moduleName, kind: "import", sourceNodeId, localName, importedName: "*" },
+          source,
+        );
+        added = true;
+      }
+    } else if (child.type === "named_imports") {
+      for (const specifier of child.namedChildren.filter(
+        (candidate) => candidate.type === "import_specifier",
+      )) {
+        const importedName = validName(specifier.childForFieldName("name"));
+        const localName = validName(specifier.childForFieldName("alias")) ?? importedName;
+        if (importedName !== null && localName !== null) {
+          builder.addReference(
+            { name: moduleName, kind: "import", sourceNodeId, localName, importedName },
+            source,
+          );
+          added = true;
+        }
+      }
+    }
+  }
+  if (!added) builder.addReference({ name: moduleName, kind: "import", sourceNodeId }, source);
+}
+
+function isValueReference(node: SyntaxNode): boolean {
+  if (node.type !== "identifier") return false;
+  const parent = node.parent;
+  if (parent === null) return false;
+  if (parent.childForFieldName("name")?.id === node.id) return false;
+  if (parent.childForFieldName("property")?.id === node.id) return false;
+  if (parent.childForFieldName("function")?.id === node.id) return false;
+  return ![
+    "import_clause",
+    "import_specifier",
+    "namespace_import",
+    "export_specifier",
+    "required_parameter",
+    "optional_parameter",
+    "type_annotation",
+    "predefined_type",
+  ].includes(parent.type);
+}
+
 function visibilityFor(node: SyntaxNode, name: string, fallback: string): string {
   if (name.startsWith("#")) return "private";
   const modifier = node.namedChildren.find((child) => child.type === "accessibility_modifier");
@@ -141,7 +229,9 @@ export class EcmaScriptAdapter implements LanguageAdapter {
       if (node.type === "import_statement") {
         const source = node.childForFieldName("source");
         const name = stringValue(source);
-        if (name !== null) builder.addReference({ name, kind: "import" }, source ?? node);
+        if (name !== null) {
+          addImportReferences(builder, node, source ?? node, name, scope.parentNodeId);
+        }
         return [];
       }
 
@@ -193,6 +283,18 @@ export class EcmaScriptAdapter implements LanguageAdapter {
           scope,
           exportedAt,
         );
+        const heritage = node.namedChildren.find((child) => child.type === "class_heritage");
+        if (heritage !== undefined) {
+          for (const clause of heritage.namedChildren) {
+            const kind = clause.type === "implements_clause" ? "implements" : "extends";
+            for (const target of clause.namedChildren) {
+              const name = referenceTarget(target.childForFieldName("value") ?? target);
+              if (name !== null) {
+                builder.addReference({ name, kind, sourceNodeId: symbol.id }, target);
+              }
+            }
+          }
+        }
         const body = node.childForFieldName("body");
         if (body !== null) {
           const classScope: Scope = {
@@ -221,6 +323,20 @@ export class EcmaScriptAdapter implements LanguageAdapter {
           scope,
           exportedAt,
         );
+        const heritage = node.namedChildren.find(
+          (child) => child.type === "extends_type_clause",
+        );
+        if (heritage !== undefined) {
+          for (const target of heritage.childrenForFieldName("type")) {
+            const targetName = referenceTarget(target);
+            if (targetName !== null) {
+              builder.addReference(
+                { name: targetName, kind: "extends", sourceNodeId: symbol.id },
+                target,
+              );
+            }
+          }
+        }
         const body = node.childForFieldName("body");
         if (body !== null) {
           const interfaceScope: Scope = {
@@ -325,7 +441,11 @@ export class EcmaScriptAdapter implements LanguageAdapter {
               qualifiedName: added[0].node.qualifiedName ?? added[0].node.name,
               type: "function",
             };
-            for (const child of body.namedChildren) visit(child, functionScope);
+            if (body.type === "statement_block") {
+              for (const child of body.namedChildren) visit(child, functionScope);
+            } else {
+              visit(body, functionScope);
+            }
           }
         } else if (value !== null) {
           visit(value, scope);
@@ -358,7 +478,51 @@ export class EcmaScriptAdapter implements LanguageAdapter {
         if (callable?.text === "require" || callable?.type === "import") {
           const argument = node.childForFieldName("arguments")?.namedChildren[0] ?? null;
           const name = stringValue(argument);
-          if (name !== null) builder.addReference({ name, kind: "import" }, argument ?? node);
+          if (name !== null) {
+            const declarator = node.parent?.type === "variable_declarator" ? node.parent : null;
+            const bindings = callable.text === "require"
+              ? collectBindingNames(declarator?.childForFieldName("name") ?? null)
+              : [];
+            if (bindings.length === 0) {
+              builder.addReference(
+                { name, kind: "import", sourceNodeId: scope.parentNodeId },
+                argument ?? node,
+              );
+            } else {
+              const namespaceBinding = declarator?.childForFieldName("name")?.type === "identifier";
+              for (const localName of bindings) {
+                builder.addReference(
+                  {
+                    name,
+                    kind: "import",
+                    sourceNodeId: scope.parentNodeId,
+                    localName,
+                    importedName: namespaceBinding ? "*" : localName,
+                  },
+                  argument ?? node,
+                );
+              }
+            }
+          }
+        } else {
+          const name = referenceTarget(callable);
+          if (name !== null) {
+            builder.addReference(
+              { name, kind: "call", sourceNodeId: scope.parentNodeId },
+              callable ?? node,
+            );
+          }
+        }
+      }
+
+      if (node.type === "new_expression") {
+        const constructor = node.childForFieldName("constructor");
+        const name = referenceTarget(constructor);
+        if (name !== null) {
+          builder.addReference(
+            { name, kind: "call", sourceNodeId: scope.parentNodeId },
+            constructor ?? node,
+          );
         }
       }
 
@@ -368,6 +532,13 @@ export class EcmaScriptAdapter implements LanguageAdapter {
         if (rightName !== null && (left === "module.exports" || left?.startsWith("exports.") === true)) {
           pendingExports.push({ localName: rightName, syntaxNode: node });
         }
+      }
+
+      if (isValueReference(node)) {
+        builder.addReference(
+          { name: node.text, kind: "reference", sourceNodeId: scope.parentNodeId },
+          node,
+        );
       }
 
       const added: AddedSymbol[] = [];

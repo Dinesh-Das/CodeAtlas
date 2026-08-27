@@ -26,6 +26,9 @@ export interface ParsedFile {
 export interface UnresolvedReference {
   name: string;
   kind: "import" | "export" | "call" | "extends" | "implements" | "reference";
+  sourceNodeId: string;
+  localName: string | null;
+  importedName: string | null;
   evidence: Evidence;
 }
 

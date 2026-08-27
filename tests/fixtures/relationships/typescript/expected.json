@@ -1,0 +1,16 @@
+[
+  "IMPORTS|src/ambiguous-bridge.ts|src/ambiguous-b.ts|1|ast|src/ambiguous-bridge.ts:1",
+  "IMPORTS|src/ambiguous-consumer.ts|src/ambiguous-a.ts|1|ast|src/ambiguous-consumer.ts:1",
+  "IMPORTS|src/ambiguous-consumer.ts|src/ambiguous-bridge.ts|1|ast|src/ambiguous-consumer.ts:2",
+  "CALLS|invoke|duplicate|0.66|heuristic|src/ambiguous-consumer.ts:5",
+  "CALLS|invoke|duplicate|0.62|heuristic|src/ambiguous-consumer.ts:5",
+  "REFERENCES|src/common-base.cjs|run|1|ast|src/common-base.cjs:3",
+  "IMPORTS|src/common-consumer.cjs|src/common-base.cjs|1|ast|src/common-consumer.cjs:1",
+  "CALLS|invokeCommon|run|1|ast|src/common-consumer.cjs:4",
+  "IMPORTS|src/consumer.ts|src/base.ts|1|ast|src/consumer.ts:1",
+  "EXTENDS|Worker|Base|1|ast|src/consumer.ts:3",
+  "IMPLEMENTS|Worker|Runnable|1|ast|src/consumer.ts:3",
+  "CALLS|Worker.run|shared|1|ast|src/consumer.ts:5",
+  "CALLS|Worker.run|Worker.finish|1|ast|src/consumer.ts:6",
+  "REFERENCES|Worker.run|value|1|ast|src/consumer.ts:7"
+]

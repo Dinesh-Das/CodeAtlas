@@ -2,6 +2,22 @@
 
 All notable changes follow semantic versioning.
 
+## 0.3.0 - 2026-08-27
+
+### Added
+
+- Phase 3 import, call, inheritance, implementation, and general-reference resolution.
+- Explicit unresolved and multi-candidate records without persisted module-specifier values.
+- Import-graph-distance confidence scaling for ambiguous candidate edges.
+- Official MCP SDK stdio server with all ten required tools and typed Answer Packets.
+- Mandatory MCP freshness synchronization and configured traversal/result limits.
+- Exact relationship snapshots and end-to-end stdio MCP contract tests.
+
+### Changed
+
+- The database schema is now version 2 and the index contract is `relationships-3`.
+- CLI and MCP status treat schema/indexer version drift as out of date.
+
 ## 0.2.0 - 2026-08-26
 
 ### Added

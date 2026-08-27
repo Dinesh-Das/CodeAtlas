@@ -15,6 +15,9 @@
     "EXPORTS|module:src/input.tsx|function:Card|5|ast|1",
     "CONTAINS|function:Card|function:Card.renderTitle|6|ast|1"
   ],
-  "unresolvedReferences": [],
+  "unresolvedReferences": [
+    "reference|title|6|33|ast",
+    "call|renderTitle|7|19|ast"
+  ],
   "errors": []
 }

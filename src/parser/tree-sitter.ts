@@ -215,8 +215,17 @@ export class ParseGraphBuilder {
     );
   }
 
-  addReference(reference: Omit<UnresolvedReference, "evidence">, syntaxNode: SyntaxNode): void {
+  addReference(
+    reference: Omit<
+      UnresolvedReference,
+      "evidence" | "sourceNodeId" | "localName" | "importedName"
+    > & Partial<Pick<UnresolvedReference, "sourceNodeId" | "localName" | "importedName">>,
+    syntaxNode: SyntaxNode,
+  ): void {
     this.unresolvedReferences.push({
+      sourceNodeId: this.moduleNodeId,
+      localName: null,
+      importedName: null,
       ...reference,
       evidence: evidenceFor(this.input, syntaxNode),
     });

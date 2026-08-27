@@ -17,6 +17,18 @@
     "EXPORTS|module:src/input.js|class:Worker|12|ast|1",
     "EXPORTS|module:src/input.js|function:makeWorker|13|ast|1"
   ],
-  "unresolvedReferences": ["import|node:fs|1|27|ast"],
+  "unresolvedReferences": [
+    "import|node:fs|1|27|ast",
+    "call|input.trim|5|33|ast",
+    "reference|input|5|33|ast",
+    "call|normalize|6|11|ast",
+    "reference|value|6|21|ast",
+    "call|Worker|10|29|ast",
+    "reference|Worker|10|29|ast",
+    "reference|module|12|0|ast",
+    "reference|Worker|12|17|ast",
+    "reference|exports|13|0|ast",
+    "reference|makeWorker|13|21|ast"
+  ],
   "errors": []
 }

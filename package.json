@@ -1,6 +1,6 @@
 {
   "name": "codeatlas",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Local-first structural intelligence for software repositories.",
   "type": "module",
   "bin": {
@@ -32,6 +32,7 @@
   ],
   "license": "Apache-2.0",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
     "better-sqlite3": "13.0.3",
     "commander": "15.0.0",
     "ignore": "7.0.6",
