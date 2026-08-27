@@ -1,14 +1,18 @@
-import { loadConfig } from "../core/config.js";
 import { mapWithConcurrency } from "../core/async.js";
+import { loadConfig, type CodeAtlasConfig } from "../core/config.js";
 import { discoverFiles } from "../core/discovery.js";
-import { computeRepositoryFingerprint } from "../core/freshness.js";
+import { CodeAtlasError } from "../core/errors.js";
+import {
+  computeRepositoryFingerprint,
+  computeWorktreeSignature,
+} from "../core/freshness.js";
 import { hashFile, sha256 } from "../core/hashing.js";
 import { loadIgnoreRules } from "../core/ignore.js";
-import { CodeAtlasError } from "../core/errors.js";
+import type { IgnoreRules } from "../core/ignore.js";
 import { workspaceExists, workspacePaths } from "../core/workspace.js";
-import { detectRepository } from "../git/repository.js";
 import { isWorkingTreeDirty } from "../git/diff.js";
-import { openDatabase } from "../storage/database.js";
+import { detectRepository, type RepositoryInfo } from "../git/repository.js";
+import { openDatabase, type AtlasDatabase } from "../storage/database.js";
 import { listFiles } from "../storage/files.js";
 import { getRepositoryStates } from "../storage/state.js";
 import { INDEXER_VERSION, SCHEMA_VERSION } from "../version.js";
@@ -38,12 +42,119 @@ export interface StatusResult {
   indexedFingerprint: string | null;
 }
 
-export async function getStatus(startPath = process.cwd()): Promise<StatusResult> {
+const fastIgnoreRules = new Map<string, IgnoreRules>();
+
+export function clearFastStatusCache(repositoryRoot: string): void {
+  fastIgnoreRules.delete(repositoryRoot);
+}
+
+function readStoredStatus(
+  database: AtlasDatabase,
+  repository: RepositoryInfo,
+  config: CodeAtlasConfig,
+  state: Readonly<Record<string, string>>,
+  currentFingerprint: string,
+  dirty: boolean,
+  freshnessMatches: boolean,
+): StatusResult {
+  const baseCounts = database
+    .prepare(
+      `SELECT
+        (SELECT count(*) FROM files) AS files,
+        (SELECT count(*) FROM nodes) AS nodes,
+        (SELECT count(*) FROM nodes
+          WHERE kind NOT IN (
+            'repository', 'package', 'directory', 'file', 'module', 'feature', 'domain',
+            'documentation'
+          )) AS symbols,
+        (SELECT count(*) FROM edges) AS edges,
+        (SELECT count(*) FROM nodes WHERE kind = 'feature') AS features,
+        (SELECT count(*) FROM nodes WHERE kind = 'api_route') AS apiRoutes,
+        (SELECT count(*) FROM nodes WHERE kind = 'database_model') AS databaseModels,
+        (SELECT count(*) FROM nodes WHERE kind = 'domain') AS domains`,
+    )
+    .get() as {
+      files: number;
+      nodes: number;
+      symbols: number;
+      edges: number;
+      features: number;
+      apiRoutes: number;
+      databaseModels: number;
+      domains: number;
+    };
+  const architectureCounts = state.schema_version === String(SCHEMA_VERSION)
+    ? database
+        .prepare(
+          `SELECT
+             (SELECT count(DISTINCT community_id) FROM dependency_communities) AS communities,
+             (SELECT count(*) FROM architecture_findings
+                WHERE finding_type = 'circular_dependency') AS cycles,
+             (SELECT count(*) FROM architecture_findings
+                WHERE finding_type = 'change_hotspot') AS hotspots,
+             (SELECT count(*) FROM architecture_findings) AS findings`,
+        )
+        .get() as { communities: number; cycles: number; hotspots: number; findings: number }
+    : { communities: 0, cycles: 0, hotspots: 0, findings: 0 };
+  const indexedFingerprint = state.dirty_fingerprint ?? null;
+  const contractMatches = state.indexer_version === INDEXER_VERSION &&
+    state.schema_version === String(SCHEMA_VERSION) &&
+    state.config_hash === sha256(JSON.stringify(config));
+  return {
+    repository: repository.name,
+    root: repository.root,
+    branch: repository.branch,
+    headCommit: repository.headCommit,
+    indexedCommit: state.last_indexed_commit ?? null,
+    synchronized: freshnessMatches && contractMatches,
+    dirty,
+    ...baseCounts,
+    ...architectureCounts,
+    lastIndexedAt: state.last_indexed_at ?? null,
+    currentFingerprint,
+    indexedFingerprint,
+  };
+}
+
+async function initializedRepository(startPath: string): Promise<RepositoryInfo> {
   const repository = await detectRepository(startPath);
   if (!(await workspaceExists(repository.root))) {
     throw new CodeAtlasError("Error: CodeAtlas is not initialized. Run `codeatlas init` first.");
   }
+  return repository;
+}
 
+/** Fast MCP path: Git supplies changed paths and only those paths are hashed. */
+export async function getFastStatus(startPath = process.cwd()): Promise<StatusResult> {
+  const repository = await initializedRepository(startPath);
+  const config = await loadConfig(repository.root);
+  let ignoreRules = fastIgnoreRules.get(repository.root);
+  if (ignoreRules === undefined) {
+    ignoreRules = await loadIgnoreRules(repository.root);
+    fastIgnoreRules.set(repository.root, ignoreRules);
+  }
+  const worktree = await computeWorktreeSignature(repository, ignoreRules);
+  const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
+  try {
+    const state = getRepositoryStates(database);
+    const matches = state.worktree_signature === worktree.signature;
+    return readStoredStatus(
+      database,
+      repository,
+      config,
+      state,
+      matches ? state.dirty_fingerprint ?? worktree.signature : worktree.signature,
+      worktree.dirty,
+      matches,
+    );
+  } finally {
+    database.close();
+  }
+}
+
+/** Full reconciliation used by the CLI and as a fallback when the fast signature changes. */
+export async function getStatus(startPath = process.cwd()): Promise<StatusResult> {
+  const repository = await initializedRepository(startPath);
   const config = await loadConfig(repository.root);
   const ignoreRules = await loadIgnoreRules(repository.root);
   const discovered = await discoverFiles(repository.root, ignoreRules);
@@ -53,98 +164,31 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
     ? new Map(listFiles(database).map((file) => [file.path, file]))
     : new Map();
   const hashed = await mapWithConcurrency(discovered, 32, async (file) => ({
-      relativePath: file.relativePath,
-      contentHash: (() => {
-        const previous = existing.get(file.relativePath);
-        return previous !== undefined &&
-          previous.sizeBytes === file.sizeBytes &&
-          previous.mtimeMs === file.mtimeMs &&
-          previous.ctimeMs === file.ctimeMs
-          ? previous.contentHash
-          : null;
-      })() ?? await hashFile(file.absolutePath),
-    }));
-  const current = await computeRepositoryFingerprint(repository, hashed, ignoreRules);
-  const dirty = await isWorkingTreeDirty(repository.root);
-
+    relativePath: file.relativePath,
+    contentHash: (() => {
+      const previous = existing.get(file.relativePath);
+      return previous !== undefined &&
+        previous.sizeBytes === file.sizeBytes &&
+        previous.mtimeMs === file.mtimeMs &&
+        previous.ctimeMs === file.ctimeMs
+        ? previous.contentHash
+        : null;
+    })() ?? await hashFile(file.absolutePath),
+  }));
+  const [current, dirty] = await Promise.all([
+    computeRepositoryFingerprint(repository, hashed, ignoreRules),
+    isWorkingTreeDirty(repository.root),
+  ]);
   try {
-    const baseCounts = database
-      .prepare(
-        `SELECT
-          (SELECT count(*) FROM files) AS files,
-          (SELECT count(*) FROM nodes) AS nodes,
-          (SELECT count(*) FROM nodes
-            WHERE kind NOT IN (
-              'repository', 'directory', 'file', 'module', 'feature', 'domain',
-              'documentation'
-            )) AS symbols,
-          (SELECT count(*) FROM edges) AS edges,
-          (SELECT count(*) FROM nodes WHERE kind = 'feature') AS features,
-          (SELECT count(*) FROM nodes WHERE kind = 'api_route') AS apiRoutes,
-          (SELECT count(*) FROM nodes WHERE kind = 'database_model') AS databaseModels,
-          (SELECT count(*) FROM nodes WHERE kind = 'domain') AS domains`,
-      )
-      .get() as {
-        files: number;
-        nodes: number;
-        symbols: number;
-        edges: number;
-        features: number;
-        apiRoutes: number;
-        databaseModels: number;
-        domains: number;
-      };
-    const architectureCounts =
-      state.schema_version === String(SCHEMA_VERSION)
-        ? (database
-            .prepare(
-              `SELECT
-                 (SELECT count(DISTINCT community_id)
-                    FROM dependency_communities) AS communities,
-                 (SELECT count(*) FROM architecture_findings
-                    WHERE finding_type = 'circular_dependency') AS cycles,
-                 (SELECT count(*) FROM architecture_findings
-                    WHERE finding_type = 'change_hotspot') AS hotspots,
-                 (SELECT count(*) FROM architecture_findings) AS findings`,
-            )
-            .get() as {
-            communities: number;
-            cycles: number;
-            hotspots: number;
-            findings: number;
-          })
-        : { communities: 0, cycles: 0, hotspots: 0, findings: 0 };
-    const indexedFingerprint = state.dirty_fingerprint ?? null;
-    const configIsCurrent = state.config_hash === sha256(JSON.stringify(config));
-    const indexContractIsCurrent =
-      state.indexer_version === INDEXER_VERSION &&
-      state.schema_version === String(SCHEMA_VERSION);
-
-    return {
-      repository: repository.name,
-      root: repository.root,
-      branch: repository.branch,
-      headCommit: repository.headCommit,
-      indexedCommit: state.last_indexed_commit ?? null,
-      synchronized:
-        indexedFingerprint === current.fingerprint && configIsCurrent && indexContractIsCurrent,
+    return readStoredStatus(
+      database,
+      repository,
+      config,
+      state,
+      current.fingerprint,
       dirty,
-      files: baseCounts.files,
-      nodes: baseCounts.nodes,
-      symbols: baseCounts.symbols,
-      edges: baseCounts.edges,
-      features: baseCounts.features,
-      apiRoutes: baseCounts.apiRoutes,
-      databaseModels: baseCounts.databaseModels,
-      domains: baseCounts.domains,
-      communities: architectureCounts.communities,
-      cycles: architectureCounts.cycles,
-      hotspots: architectureCounts.hotspots,
-      findings: architectureCounts.findings,
-      lastIndexedAt: state.last_indexed_at ?? null,
-      currentFingerprint: current.fingerprint,
-      indexedFingerprint,
-    };
+      state.dirty_fingerprint === current.fingerprint,
+    );
   } finally {
     database.close();
   }

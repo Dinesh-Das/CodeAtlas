@@ -1,60 +1,93 @@
 import { sha256 } from "../core/hashing.js";
 import type { ArchitectureFinding, FileGraph } from "./types.js";
 
-export function findDependencyCycles(
-  repositoryId: string,
-  graph: FileGraph,
-): ArchitectureFinding[] {
+interface SearchFrame {
+  filePath: string;
+  parent: string | null;
+  neighbors: string[];
+  nextNeighbor: number;
+}
+
+function stronglyConnectedComponents(graph: FileGraph): string[][] {
   const indexByFile = new Map<string, number>();
   const lowLink = new Map<string, number>();
-  const stack: string[] = [];
+  const componentStack: string[] = [];
   const onStack = new Set<string>();
   const components: string[][] = [];
   let nextIndex = 0;
 
-  const connect = (filePath: string): void => {
+  const enter = (filePath: string, parent: string | null): SearchFrame => {
     indexByFile.set(filePath, nextIndex);
     lowLink.set(filePath, nextIndex);
     nextIndex += 1;
-    stack.push(filePath);
+    componentStack.push(filePath);
     onStack.add(filePath);
-
-    for (const target of [...(graph.outgoing.get(filePath) ?? [])].sort((left, right) =>
-      left.localeCompare(right),
-    )) {
-      if (!indexByFile.has(target)) {
-        connect(target);
-        lowLink.set(filePath, Math.min(lowLink.get(filePath)!, lowLink.get(target)!));
-      } else if (onStack.has(target)) {
-        lowLink.set(filePath, Math.min(lowLink.get(filePath)!, indexByFile.get(target)!));
-      }
-    }
-
-    if (lowLink.get(filePath) !== indexByFile.get(filePath)) return;
-    const component: string[] = [];
-    while (stack.length > 0) {
-      const member = stack.pop()!;
-      onStack.delete(member);
-      component.push(member);
-      if (member === filePath) break;
-    }
-    const selfCycle =
-      component.length === 1 && graph.outgoing.get(component[0]!)?.has(component[0]!) === true;
-    if (component.length > 1 || selfCycle) {
-      components.push(component.sort((left, right) => left.localeCompare(right)));
-    }
+    return {
+      filePath,
+      parent,
+      neighbors: [...(graph.outgoing.get(filePath) ?? [])].sort((left, right) =>
+        left.localeCompare(right),
+      ),
+      nextNeighbor: 0,
+    };
   };
 
-  for (const filePath of [...graph.fileNodes.keys()].sort((left, right) =>
+  for (const start of [...graph.fileNodes.keys()].sort((left, right) =>
     left.localeCompare(right),
   )) {
-    if (!indexByFile.has(filePath)) connect(filePath);
-  }
+    if (indexByFile.has(start)) continue;
+    const searchStack: SearchFrame[] = [enter(start, null)];
+    while (searchStack.length > 0) {
+      const frame = searchStack.at(-1)!;
+      const target = frame.neighbors[frame.nextNeighbor];
+      if (target !== undefined) {
+        frame.nextNeighbor += 1;
+        if (!indexByFile.has(target)) {
+          searchStack.push(enter(target, frame.filePath));
+        } else if (onStack.has(target)) {
+          lowLink.set(
+            frame.filePath,
+            Math.min(lowLink.get(frame.filePath)!, indexByFile.get(target)!),
+          );
+        }
+        continue;
+      }
 
-  return components.map((files) => {
-    const evidenceLink = graph.links.find(
-      (link) => files.includes(link.sourceFile) && files.includes(link.targetFile),
+      searchStack.pop();
+      if (frame.parent !== null) {
+        lowLink.set(
+          frame.parent,
+          Math.min(lowLink.get(frame.parent)!, lowLink.get(frame.filePath)!),
+        );
+      }
+      if (lowLink.get(frame.filePath) !== indexByFile.get(frame.filePath)) continue;
+      const component: string[] = [];
+      while (componentStack.length > 0) {
+        const member = componentStack.pop()!;
+        onStack.delete(member);
+        component.push(member);
+        if (member === frame.filePath) break;
+      }
+      const selfCycle = component.length === 1 &&
+        graph.outgoing.get(component[0]!)?.has(component[0]!) === true;
+      if (component.length > 1 || selfCycle) {
+        components.push(component.sort((left, right) => left.localeCompare(right)));
+      }
+    }
+  }
+  return components;
+}
+
+export function findDependencyCycles(
+  repositoryId: string,
+  graph: FileGraph,
+): ArchitectureFinding[] {
+  return stronglyConnectedComponents(graph).map((files) => {
+    const members = new Set(files);
+    const internalLinks = graph.links.filter(
+      (link) => members.has(link.sourceFile) && members.has(link.targetFile),
     );
+    const evidenceLink = internalLinks[0];
     const filePath = evidenceLink?.filePath ?? files[0]!;
     const line = evidenceLink?.line ?? 1;
     return {
@@ -65,9 +98,7 @@ export function findDependencyCycles(
       filePath,
       line,
       sourceType: "heuristic",
-      confidence: Math.min(...graph.links
-        .filter((link) => files.includes(link.sourceFile) && files.includes(link.targetFile))
-        .map((link) => link.confidence), 0.95),
+      confidence: Math.min(...internalLinks.map((link) => link.confidence), 0.95),
       evidenceNodeIds: files
         .map((member) => graph.fileNodes.get(member)?.id)
         .filter((id): id is string => id !== undefined),
@@ -75,9 +106,7 @@ export function findDependencyCycles(
         evidence: { source_type: "heuristic", file: filePath, line, column: 0 },
         signal: "circular_dependency",
         files,
-        edge_ids: graph.links
-          .filter((link) => files.includes(link.sourceFile) && files.includes(link.targetFile))
-          .map((link) => link.id),
+        edge_ids: internalLinks.map((link) => link.id),
       },
     };
   });

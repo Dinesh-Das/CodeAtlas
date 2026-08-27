@@ -8,24 +8,24 @@ import type {
   FileGraph,
 } from "./types.js";
 
-function dependencyDepth(graph: FileGraph, start: string, maxDepth: number): number {
-  const visited = new Set([start]);
-  let frontier = [start];
-  let depth = 0;
-  while (frontier.length > 0 && depth < maxDepth) {
-    const next: string[] = [];
-    for (const filePath of frontier) {
+function dependencyDepths(graph: FileGraph, maxDepth: number): ReadonlyMap<string, number> {
+  const paths = [...graph.fileNodes.keys()].sort((left, right) => left.localeCompare(right));
+  let depths = new Map(paths.map((filePath) => [filePath, 0]));
+  for (let iteration = 0; iteration < maxDepth; iteration += 1) {
+    let changed = false;
+    const next = new Map<string, number>();
+    for (const filePath of paths) {
+      let depth = 0;
       for (const target of graph.outgoing.get(filePath) ?? []) {
-        if (visited.has(target)) continue;
-        visited.add(target);
-        next.push(target);
+        depth = Math.max(depth, Math.min(maxDepth, (depths.get(target) ?? 0) + 1));
       }
+      next.set(filePath, depth);
+      if (depth !== depths.get(filePath)) changed = true;
     }
-    if (next.length === 0) break;
-    frontier = next;
-    depth += 1;
+    depths = next;
+    if (!changed) break;
   }
-  return depth;
+  return depths;
 }
 
 function percentile(values: readonly number[], fraction: number): number {
@@ -75,6 +75,7 @@ export function calculateArchitectureSignals(
   config: CodeAtlasConfig,
 ): { metrics: ArchitectureMetric[]; findings: ArchitectureFinding[] } {
   const lines = lineCountByFile(graph);
+  const depths = dependencyDepths(graph, config.limits.maxTraversalDepth);
   const raw = [...graph.fileNodes].map(([filePath, fileNode]) => {
     const fanIn = graph.incoming.get(filePath)?.size ?? 0;
     const fanOut = graph.outgoing.get(filePath)?.size ?? 0;
@@ -91,11 +92,7 @@ export function calculateArchitectureSignals(
       fanOut,
       connectivity,
       crossDomainDependencies,
-      dependencyDepth: dependencyDepth(
-        graph,
-        filePath,
-        config.limits.maxTraversalDepth,
-      ),
+      dependencyDepth: depths.get(filePath) ?? 0,
       lineCount: lines.get(filePath) ?? 1,
       recentCommitCount: fileHistory?.recentCommitCount ?? 0,
       recentChurn,

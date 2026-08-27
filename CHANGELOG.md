@@ -2,6 +2,33 @@
 
 All notable changes follow semantic versioning.
 
+## Unreleased
+
+### Added
+
+- TypeScript compiler-backed module and receiver-aware call resolution, workspace package nodes,
+  internal package dependencies, package exports, aliases, and project configuration support.
+- Generated 10k-to-1M+ LOC benchmark profiles with index phase timings, incremental edits,
+  p50/p95 queries and freshness checks, observed RSS, and database growth.
+- Regression coverage for 20,000-node dependency cycles, connected-graph clustering, layered
+  business features, TypeScript aliases, duplicated receiver methods, workspace exports, natural
+  questions, and pagination beyond the configured candidate cap.
+
+### Changed
+
+- Replaced all-pairs import-distance precomputation with bounded on-demand traversal and indexed
+  symbol candidate generation.
+- Replaced connected components with deterministic Louvain modularity optimization and recursive
+  Tarjan traversal with an explicit-stack implementation.
+- MCP freshness uses Git changed paths and dirty-file hashes rather than full repository discovery;
+  concurrent refreshes are coalesced.
+- Search uses normalized developer intent and SQL-backed page retrieval instead of paginating a
+  permanently truncated in-memory candidate set.
+- Architecture computation occurs outside the SQLite write transaction; persistence remains
+  atomic. Schema 5 adds resolver and query indexes; the indexing contract is `semantic-8`.
+- The supported runtime is Node.js 22.12 or newer, matching the strictest runtime dependency; CI
+  validates Node.js 22.12 and 24.
+
 ## 0.9.0 - 2026-08-27
 
 ### Added

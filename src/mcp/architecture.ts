@@ -26,6 +26,8 @@ interface OverviewRow {
     | "domain"
     | "feature"
     | "dependency_community"
+    | "entrypoint"
+    | "package"
     | "api_route"
     | "database_model";
   name: string;
@@ -70,6 +72,10 @@ function overviewStatement(row: OverviewRow, value: Record<string, unknown>): st
       return `Feature ${row.name} groups ${String(value.semantic_member_count ?? "multiple")} semantic graph entities.`;
     case "dependency_community":
       return `Dependency community ${row.name} contains ${String(value.member_file_count ?? "multiple")} source or model files.`;
+    case "entrypoint":
+      return `Recommended starting point ${row.file_path ?? row.name} has graph fan-out ${String(value.fan_out ?? 0)}.`;
+    case "package":
+      return `Workspace package ${row.name} is declared at ${row.file_path ?? "a package manifest"}.`;
     case "api_route":
       return `API route ${row.name} is exposed by the repository.`;
     case "database_model":
@@ -92,7 +98,8 @@ function relationshipsForNodes(
        FROM edges
        WHERE (source_node_id IN (${placeholders}) OR target_node_id IN (${placeholders}))
          AND edge_type IN (
-           'BELONGS_TO_FEATURE', 'BELONGS_TO_DOMAIN', 'EXPOSES', 'HANDLES', 'REFERENCES'
+           'BELONGS_TO_FEATURE', 'BELONGS_TO_DOMAIN', 'DEPENDS_ON', 'EXPOSES',
+           'HANDLES', 'IMPORTS', 'REFERENCES'
          )
        ORDER BY edge_type, source_node_id, target_node_id
        LIMIT ?`,
@@ -123,12 +130,38 @@ export function architectureOverviewPacket(
   try {
     const rows = database
       .prepare(
-        `WITH overview_items AS (
+        `WITH entrypoint_items AS (
+           SELECT nodes.id, 'entrypoint' AS kind, nodes.name, nodes.file_path,
+                  nodes.start_line, 'heuristic' AS source_type,
+                  'inferred' AS provenance, 0.8 AS confidence,
+                  json_object(
+                    'fan_out', coalesce(architecture_metrics.fan_out, 0),
+                    'signal', 'entrypoint_filename_and_connectivity',
+                    'evidence', json_object(
+                      'source_type', 'heuristic', 'file', nodes.file_path,
+                      'line', coalesce(nodes.start_line, 1), 'column', 0
+                    )
+                  ) AS metadata_json
+           FROM nodes
+           LEFT JOIN architecture_metrics ON architecture_metrics.file_node_id = nodes.id
+           WHERE nodes.kind = 'file'
+             AND lower(nodes.name) IN (
+               'app.js', 'app.ts', 'index.js', 'index.ts', 'main.js', 'main.py', 'main.ts',
+               'server.js', 'server.ts'
+             )
+             AND length(nodes.file_path) - length(replace(nodes.file_path, '/', '')) <= 4
+           ORDER BY coalesce(architecture_metrics.fan_out, 0) DESC, nodes.file_path
+           LIMIT 20
+         ), overview_items AS (
            SELECT id, kind, name, file_path, start_line, source_type,
                   provenance_category AS provenance,
                   confidence, metadata_json
            FROM nodes
-           WHERE kind IN ('domain', 'feature', 'api_route', 'database_model')
+           WHERE kind IN ('domain', 'feature', 'package', 'api_route', 'database_model')
+           UNION ALL
+           SELECT id, kind, name, file_path, start_line, source_type,
+                  provenance, confidence, metadata_json
+           FROM entrypoint_items
            UNION ALL
            SELECT community_id AS id,
                   'dependency_community' AS kind,
@@ -155,8 +188,9 @@ export function architectureOverviewPacket(
          FROM overview_items
          ORDER BY CASE kind
            WHEN 'domain' THEN 1 WHEN 'feature' THEN 2
-           WHEN 'dependency_community' THEN 3
-           WHEN 'api_route' THEN 4 ELSE 5 END,
+           WHEN 'package' THEN 3 WHEN 'entrypoint' THEN 4
+           WHEN 'dependency_community' THEN 5
+           WHEN 'api_route' THEN 6 ELSE 7 END,
            name, id
          LIMIT ? OFFSET ?`,
       )
@@ -188,7 +222,7 @@ export function architectureOverviewPacket(
         page.length === 0
           ? [
               {
-                description: "No architecture groups, API routes, or database models were detected.",
+                description: "No architecture groups, packages, entrypoints, API routes, or database models were detected.",
                 reason: "insufficient_evidence",
                 candidates: [],
               },

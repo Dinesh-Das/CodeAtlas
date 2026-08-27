@@ -217,6 +217,20 @@ const migrations: readonly Migration[] = [
       CREATE INDEX idx_edges_provenance ON edges(provenance_category);
     `,
   },
+  {
+    version: 5,
+    sql: `
+      CREATE INDEX idx_nodes_name_nocase ON nodes(name COLLATE NOCASE);
+      CREATE INDEX idx_nodes_qualified_name_nocase
+        ON nodes(qualified_name COLLATE NOCASE);
+      CREATE INDEX idx_nodes_kind_name ON nodes(kind, name);
+      CREATE INDEX idx_edges_type_source ON edges(edge_type, source_node_id);
+      CREATE INDEX idx_edges_type_target ON edges(edge_type, target_node_id);
+      CREATE INDEX idx_edges_file_path ON edges(file_path);
+      CREATE INDEX idx_resolution_issues_source_reason
+        ON resolution_issues(source_node_id, reason);
+    `,
+  },
 ];
 
 export function runMigrations(database: Database.Database): void {

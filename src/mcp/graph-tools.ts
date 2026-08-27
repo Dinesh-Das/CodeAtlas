@@ -133,18 +133,31 @@ function withDatabase<T>(context: FreshContext, callback: (database: AtlasDataba
   }
 }
 
+const SEARCH_STOP_WORDS = new Set([
+  "a", "an", "and", "are", "can", "code", "does", "for", "how", "in", "is", "it",
+  "of", "on", "show", "the", "this", "to", "what", "where", "which", "work", "works",
+]);
+
+function searchTerms(query: string): string[] {
+  const raw = (query.toLowerCase().match(/[\p{L}\p{N}_$-]+/gu) ?? [])
+    .filter((term) => term.length > 1);
+  const meaningful = raw.filter((term) => !SEARCH_STOP_WORDS.has(term));
+  return [...new Set(meaningful.length > 0 ? meaningful : raw)];
+}
+
 function searchExpression(query: string): string | null {
-  const terms = query.match(/[\p{L}\p{N}_$-]+/gu) ?? [];
+  const terms = searchTerms(query);
   if (terms.length === 0) return null;
   return terms
     .map((term) => `"${term.replaceAll('"', '""')}"*`)
-    .join(" AND ");
+    .join(" OR ");
 }
 
 function searchNodes(
   database: AtlasDatabase,
   query: string,
   limit: number,
+  offset: number,
 ): StoredNode[] {
   const kinds = SEARCHABLE_KINDS.map(() => "?").join(", ");
   const expression = searchExpression(query);
@@ -163,10 +176,28 @@ function searchNodes(
          FROM nodes_fts
          JOIN nodes ON nodes.id = nodes_fts.id
          WHERE nodes_fts MATCH ? AND nodes.kind IN (${kinds})
-         ORDER BY bm25(nodes_fts), nodes.kind, nodes.name, nodes.id
-         LIMIT ?`,
+         ORDER BY
+           CASE
+             WHEN lower(nodes.name) = lower(?) THEN 0
+             WHEN lower(coalesce(nodes.qualified_name, '')) = lower(?) THEN 1
+             WHEN lower(nodes.name) LIKE lower(?) || '%' THEN 2
+             WHEN instr(lower(coalesce(nodes.file_path, '')), lower(?)) > 0 THEN 3
+             ELSE 4
+           END,
+           bm25(nodes_fts),
+           nodes.confidence DESC, nodes.kind, nodes.name, nodes.id
+         LIMIT ? OFFSET ?`,
       )
-      .all(expression, ...SEARCHABLE_KINDS, limit) as StoredNode[];
+      .all(
+        expression,
+        ...SEARCHABLE_KINDS,
+        query,
+        query,
+        query,
+        query,
+        limit,
+        offset,
+      ) as StoredNode[];
   }
 
   return database
@@ -183,20 +214,19 @@ function searchNodes(
            OR instr(lower(coalesce(qualified_name, '')), lower(?)) > 0
            OR instr(lower(coalesce(file_path, '')), lower(?)) > 0)
        ORDER BY kind, name, id
-       LIMIT ?`,
+       LIMIT ? OFFSET ?`,
     )
-    .all(...SEARCHABLE_KINDS, query, query, query, limit) as StoredNode[];
+    .all(...SEARCHABLE_KINDS, query, query, query, limit, offset) as StoredNode[];
 }
 
 export function searchPacket(context: FreshContext, input: SearchInput): AnswerPacket {
   return withDatabase(context, (database) => {
     const scope = input.query.trim().toLowerCase();
     const offset = decodeCursor(input.cursor, "search", scope);
-    const candidateLimit = context.config.limits.maxMcpResultNodes;
-    const rows = searchNodes(database, input.query, candidateLimit);
-    const ranked = rankNodes(database, rows, { query: input.query });
-    const hasMore = ranked.length > offset + input.limit;
-    const page = ranked.slice(offset, offset + input.limit);
+    const pageSize = Math.min(input.limit, context.config.limits.maxMcpResultNodes);
+    const rows = searchNodes(database, input.query, pageSize + 1, offset);
+    const hasMore = rows.length > pageSize;
+    const page = rows.slice(0, pageSize);
     const uncertainties: AnswerPacket["uncertainties"] = [];
     if (page.length === 0) {
       uncertainties.push({
@@ -213,13 +243,6 @@ export function searchPacket(context: FreshContext, input: SearchInput): AnswerP
         candidates: heuristic.map((node) => node.id),
       });
     }
-    if (rows.length === candidateLimit) {
-      uncertainties.push({
-        description: "Search ranking considered only the configured maximum candidate set.",
-        reason: "insufficient_evidence",
-        candidates: [],
-      });
-    }
     return packet(
       {
         answer_context: { topic: input.query, tool: "codeatlas_search" },
@@ -228,7 +251,7 @@ export function searchPacket(context: FreshContext, input: SearchInput): AnswerP
         source_snippets: [],
         uncertainties,
         pagination: {
-          cursor: hasMore ? encodeCursor(offset + input.limit, "search", scope) : null,
+          cursor: hasMore ? encodeCursor(offset + pageSize, "search", scope) : null,
           has_more: hasMore,
         },
       },

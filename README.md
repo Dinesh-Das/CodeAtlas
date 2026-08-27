@@ -22,13 +22,17 @@ structures those facts, and an LLM may explain them later.
 - External-repository symlink protection.
 - SHA-256 file hashing and the canonical tracked/untracked repository fingerprint.
 - SQLite graph storage with versioned transactional migrations, foreign keys, FTS5, and WAL.
-- Deterministic repository, directory, file, and `CONTAINS` graph entities with provenance.
+- Deterministic repository, package, directory, file, and `CONTAINS` graph entities with provenance;
+  internal workspace-package dependencies are verified from package manifests.
 - Tree-sitter adapters for TypeScript, JavaScript, TSX, JSX, and Python.
 - Evidence-bearing module, class, interface, function, method, and variable nodes.
 - Deterministic `CONTAINS`, `EXPORTS`, `IMPORTS`, `CALLS`, `EXTENDS`, `IMPLEMENTS`, and
   `REFERENCES` relationships.
+- Project-aware TypeScript resolution through the compiler API, including `tsconfig`/`jsconfig`
+  inheritance, `baseUrl`, `paths`, Node package exports, workspace packages, and receiver-type
+  verification for call targets when compiler evidence is available.
 - Explicit unresolved and multi-candidate resolution records; ambiguous edges use confidence
-  scaled by import-graph distance.
+  scaled by bounded, on-demand import-graph distance.
 - Explicit dynamic analysis for callbacks, async continuations, event emitters, queues,
   dependency-injection containers, runtime registration, reflection, polymorphic calls, and
   generated code. Candidate targets have reduced confidence; unverifiable targets remain
@@ -47,7 +51,8 @@ structures those facts, and an LLM may explain them later.
 - Optional, separately registered framework adapters for Express, FastAPI, Prisma, and SQLAlchemy.
 - Evidence-bearing `api_route` and `database_model` nodes with `EXPOSES`, `HANDLES`,
   `CONTAINS`, and `REFERENCES` relationships.
-- Deterministic feature/domain grouping and dependency communities derived from the current graph.
+- Deterministic feature/domain grouping and modularity-optimized dependency communities derived
+  from the current graph, including cross-layer business vocabulary signals.
 - Weighted feature evidence from directory boundaries, symbol vocabulary, routes, tests, imports,
   database models, and dependency communities, with configuration-based manual overrides.
 - README, ADR, documentation-heading, intent-comment, and test-file indexing that remains clearly
@@ -60,12 +65,14 @@ structures those facts, and an LLM may explain them later.
   dependency-neighborhood, and current-source MCP responses.
 - Bounded traversal, definite-versus-potential impact classification, opaque query-bound cursors,
   ambiguity reporting, and stable node IDs for follow-up queries.
-- Relevance ranking by query similarity, feature membership, graph distance, symbol type, direct
-  dependency strength, and confidence; candidate sets and SQL materialization are strictly capped.
+- Natural-query normalization, FTS/BM25, exact symbol, prefix, path, package, and architecture
+  retrieval with database-backed cursor pagination beyond per-page resource caps.
 - Current-working-tree source excerpts capped by configuration, path-contained within the
   repository, and labeled `untrusted_repository_content`.
 - Official-SDK MCP stdio server with all ten required tools, validated inputs, typed Answer
-  Packets, configured limits, and a mandatory freshness gate before every tool call.
+  Packets, configured limits, and a Git-indexed freshness gate that hashes only dirty paths.
+- Repeatable generated-repository benchmarks (`npm run benchmark` and `npm run benchmark:full`)
+  with cold/incremental phase timing, p50/p95 search and freshness latency, RSS, and database size.
 - Evidence-only MCP policy metadata that marks repository content untrusted, indexing local-only,
   and external LLM/provider behavior as outside CodeAtlas.
 - Expanded `codeatlas doctor` diagnostics for unsupported languages, unresolved imports, dynamic
@@ -79,7 +86,7 @@ uncertainty rather than selecting a candidate silently.
 
 ## Requirements
 
-- Node.js 24 LTS or newer
+- Node.js 22.12 or newer
 - Git
 - npm
 
@@ -387,7 +394,7 @@ CodeAtlas will not discard it and fall back to defaults.
 
 If `codeatlas` is not found after a global install, inspect npm's global binary directory with
 `npm prefix --global`, ensure that directory is on `PATH`, and restart the MCP host. If native
-dependency installation fails, confirm that Node.js 24 and a supported current operating system
+dependency installation fails, confirm that Node.js 22.12 or newer and a supported operating system
 are in use, then retry from a clean npm cache.
 
 ## Project status

@@ -52,6 +52,7 @@ export type EdgeType = (typeof EDGE_TYPES)[number];
 
 export const SOURCE_TYPES = [
   "ast",
+  "compiler",
   "framework",
   "config",
   "schema",

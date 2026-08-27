@@ -39,6 +39,7 @@ export function formatIndexResult(result: IndexResult): string {
       ? `! Recorded ${result.findings} architecture signals`
       : "✓ No architecture signals crossed configured thresholds",
     `✓ Graph contains ${result.symbols} symbols and ${result.edges} relationships`,
+    `✓ Index timing ${result.timingsMs.total.toFixed(0)} ms (discover ${result.timingsMs.discovery.toFixed(0)}, fingerprint ${result.timingsMs.fingerprint.toFixed(0)}, parse ${result.timingsMs.parsing.toFixed(0)}, persist ${result.timingsMs.persistence.toFixed(0)}, architecture ${result.timingsMs.architecture.toFixed(0)})`,
     result.parseErrors > 0 ? `! ${result.parseErrors} files contain parse errors` : null,
   ]
     .filter((line): line is string => line !== null)

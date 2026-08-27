@@ -6,6 +6,7 @@ import { upsertEdge } from "../storage/edges.js";
 import { upsertResolutionIssue } from "../storage/resolution-issues.js";
 import { createEdgeId } from "./ids.js";
 import type { EdgeType, GraphEdge, NodeKind, SourceType } from "./types.js";
+import { TypeScriptProjectResolver } from "./typescript-resolution.js";
 
 interface StoredNode {
   id: string;
@@ -37,7 +38,17 @@ interface ImportBinding {
 interface CandidateSet {
   nodes: StoredNode[];
   exact: boolean;
+  sourceType?: SourceType;
 }
+
+interface SymbolIndexes {
+  byName: ReadonlyMap<string, readonly StoredNode[]>;
+  byFile: ReadonlyMap<string, readonly StoredNode[]>;
+  byFileAndName: ReadonlyMap<string, readonly StoredNode[]>;
+  byFileAndQualifiedName: ReadonlyMap<string, readonly StoredNode[]>;
+}
+
+type PythonModuleIndex = ReadonlyMap<string, readonly string[]>;
 
 const MAX_DYNAMIC_CANDIDATES = 20;
 const DYNAMIC_REFERENCE_KINDS = new Set<UnresolvedReference["kind"]>([
@@ -95,12 +106,77 @@ function uniqueNodes(nodes: readonly StoredNode[]): StoredNode[] {
   );
 }
 
+function addToIndex(
+  index: Map<string, StoredNode[]>,
+  key: string,
+  node: StoredNode,
+): void {
+  const values = index.get(key) ?? [];
+  values.push(node);
+  index.set(key, values);
+}
+
+function buildSymbolIndexes(nodes: readonly StoredNode[]): SymbolIndexes {
+  const byName = new Map<string, StoredNode[]>();
+  const byFile = new Map<string, StoredNode[]>();
+  const byFileAndName = new Map<string, StoredNode[]>();
+  const byFileAndQualifiedName = new Map<string, StoredNode[]>();
+  for (const node of nodes) {
+    addToIndex(byName, node.name, node);
+    if (node.filePath === null) continue;
+    addToIndex(byFile, node.filePath, node);
+    addToIndex(byFileAndName, `${node.filePath}\0${node.name}`, node);
+    if (node.qualifiedName !== null) {
+      addToIndex(byFileAndQualifiedName, `${node.filePath}\0${node.qualifiedName}`, node);
+    }
+  }
+  return { byName, byFile, byFileAndName, byFileAndQualifiedName };
+}
+
+function buildPythonModuleIndex(modulePaths: Iterable<string>): PythonModuleIndex {
+  const paths = [...modulePaths].filter((filePath) => /\.pyi?$/u.test(filePath));
+  const packageDirectories = new Set(
+    paths
+      .filter((filePath) => /(?:^|\/)__init__\.pyi?$/u.test(filePath))
+      .map((filePath) => path.posix.dirname(filePath)),
+  );
+  const index = new Map<string, string[]>();
+  for (const filePath of paths) {
+    const extension = path.posix.extname(filePath);
+    const withoutExtension = filePath.slice(0, -extension.length);
+    const modulePath = withoutExtension.endsWith("/__init__")
+      ? path.posix.dirname(withoutExtension)
+      : withoutExtension;
+    let packageRoot = path.posix.dirname(modulePath);
+    while (packageDirectories.has(packageRoot) && packageDirectories.has(path.posix.dirname(packageRoot))) {
+      packageRoot = path.posix.dirname(packageRoot);
+    }
+    const relativeToPackage = packageDirectories.has(path.posix.dirname(modulePath)) ||
+        packageDirectories.has(modulePath)
+      ? path.posix.relative(path.posix.dirname(packageRoot), modulePath)
+      : modulePath.startsWith("src/")
+        ? modulePath.slice(4)
+        : modulePath;
+    const specifier = relativeToPackage.replaceAll("/", ".");
+    const candidates = index.get(specifier) ?? [];
+    candidates.push(filePath);
+    index.set(specifier, candidates);
+  }
+  return index;
+}
+
 function moduleCandidates(
   reference: UnresolvedReference,
   modulesByFile: ReadonlyMap<string, StoredNode>,
+  projectResolver: TypeScriptProjectResolver,
+  pythonModules: PythonModuleIndex,
 ): StoredNode[] {
   const sourceDirectory = path.posix.dirname(reference.evidence.file);
   const candidatePaths = new Set<string>();
+
+  for (const candidate of projectResolver.resolveModule(reference.name, reference.evidence.file)) {
+    candidatePaths.add(candidate);
+  }
 
   if (reference.name.startsWith(".")) {
     if (reference.evidence.file.endsWith(".py") || reference.evidence.file.endsWith(".pyi")) {
@@ -140,15 +216,7 @@ function moduleCandidates(
       }
     }
   } else if (reference.evidence.file.endsWith(".py") || reference.evidence.file.endsWith(".pyi")) {
-    const modulePath = reference.name.replaceAll(".", "/");
-    candidatePaths.add(`${modulePath}.py`);
-    candidatePaths.add(`${modulePath}.pyi`);
-    candidatePaths.add(path.posix.join(modulePath, "__init__.py"));
-    for (const filePath of modulesByFile.keys()) {
-      if (filePath.endsWith(`/${modulePath}.py`) || filePath.endsWith(`/${modulePath}/__init__.py`)) {
-        candidatePaths.add(filePath);
-      }
-    }
+    for (const filePath of pythonModules.get(reference.name) ?? []) candidatePaths.add(filePath);
   }
 
   return uniqueNodes(
@@ -223,20 +291,19 @@ function lexicalScore(source: StoredNode, candidate: StoredNode): number {
 }
 
 function byNameInFile(
-  nodes: readonly StoredNode[],
+  indexes: SymbolIndexes,
   filePath: string,
   name: string,
   kinds: ReadonlySet<NodeKind>,
 ): StoredNode[] {
-  return nodes.filter(
-    (node) => node.filePath === filePath && node.name === name && kinds.has(node.kind),
-  );
+  return (indexes.byFileAndName.get(`${filePath}\0${name}`) ?? [])
+    .filter((node) => kinds.has(node.kind));
 }
 
 function importedCandidates(
   reference: UnresolvedReference,
   binding: ImportBinding,
-  nodes: readonly StoredNode[],
+  indexes: SymbolIndexes,
   exportedNodeIds: ReadonlySet<string>,
   kinds: ReadonlySet<NodeKind>,
 ): StoredNode[] {
@@ -245,10 +312,10 @@ function importedCandidates(
   if (binding.importedName === "*") {
     const targetName = remainder[0];
     if (targetName === undefined) return [];
-    const roots = byNameInFile(nodes, binding.targetFilePath, targetName, kinds);
+    const roots = byNameInFile(indexes, binding.targetFilePath, targetName, kinds);
     if (remainder.length === 1) return roots;
     const suffix = remainder.slice(1).join(".");
-    return nodes.filter((node) =>
+    return (indexes.byFile.get(binding.targetFilePath) ?? []).filter((node) =>
       roots.some(
         (root) =>
           node.filePath === binding.targetFilePath &&
@@ -259,7 +326,7 @@ function importedCandidates(
   }
 
   if (binding.importedName === "default") {
-    const roots = nodes.filter(
+    const roots = (indexes.byFile.get(binding.targetFilePath) ?? []).filter(
       (node) =>
         node.filePath === binding.targetFilePath &&
         kinds.has(node.kind) &&
@@ -267,7 +334,7 @@ function importedCandidates(
     );
     if (remainder.length === 0) return roots;
     const suffix = remainder.join(".");
-    return nodes.filter((node) =>
+    return (indexes.byFile.get(binding.targetFilePath) ?? []).filter((node) =>
       roots.some(
         (root) =>
           node.filePath === binding.targetFilePath &&
@@ -277,10 +344,10 @@ function importedCandidates(
     );
   }
 
-  const roots = byNameInFile(nodes, binding.targetFilePath, binding.importedName, kinds);
+  const roots = byNameInFile(indexes, binding.targetFilePath, binding.importedName, kinds);
   if (remainder.length === 0) return roots;
   const suffix = remainder.join(".");
-  return nodes.filter((node) =>
+  return (indexes.byFile.get(binding.targetFilePath) ?? []).filter((node) =>
     roots.some(
       (root) =>
         node.filePath === binding.targetFilePath &&
@@ -293,11 +360,12 @@ function importedCandidates(
 function symbolCandidates(
   reference: UnresolvedReference,
   source: StoredNode,
-  nodes: readonly StoredNode[],
+  indexes: SymbolIndexes,
   bindings: readonly ImportBinding[],
   exportedNodeIds: ReadonlySet<string>,
   modulesByFile: ReadonlyMap<string, StoredNode>,
-  distances: ReadonlyMap<string, Map<string, number>>,
+  distances: ImportDistanceIndex,
+  projectResolver: TypeScriptProjectResolver,
 ): CandidateSet {
   const kinds = expectedKinds(reference);
   const parts = reference.name.split(".");
@@ -306,7 +374,7 @@ function symbolCandidates(
 
   if (reference.kind === "export") {
     return {
-      nodes: byNameInFile(nodes, reference.evidence.file, reference.name, kinds),
+      nodes: byNameInFile(indexes, reference.evidence.file, reference.name, kinds),
       exact: true,
     };
   }
@@ -315,12 +383,9 @@ function symbolCandidates(
     const owner = ownerQualifiedName(source);
     if (owner !== null) {
       const qualifiedName = `${owner}.${parts.slice(1).join(".")}`;
-      const scoped = nodes.filter(
-        (node) =>
-          node.filePath === source.filePath &&
-          node.qualifiedName === qualifiedName &&
-          kinds.has(node.kind),
-      );
+      const scoped = (indexes.byFileAndQualifiedName.get(
+        `${source.filePath ?? reference.evidence.file}\0${qualifiedName}`,
+      ) ?? []).filter((node) => kinds.has(node.kind));
       if (scoped.length > 0) return { nodes: scoped, exact: true };
     }
   }
@@ -331,7 +396,7 @@ function symbolCandidates(
     return {
       nodes: uniqueNodes(
         matchingBindings.flatMap((binding) =>
-          importedCandidates(reference, binding, nodes, exportedNodeIds, kinds),
+          importedCandidates(reference, binding, indexes, exportedNodeIds, kinds),
         ),
       ),
       exact: true,
@@ -339,8 +404,8 @@ function symbolCandidates(
   }
 
   if (parts.length > 1) {
-    const roots = byNameInFile(nodes, reference.evidence.file, first, SYMBOL_KINDS);
-    const qualified = nodes.filter((node) =>
+    const roots = byNameInFile(indexes, reference.evidence.file, first, SYMBOL_KINDS);
+    const qualified = (indexes.byFile.get(reference.evidence.file) ?? []).filter((node) =>
       roots.some(
         (root) =>
           node.filePath === reference.evidence.file &&
@@ -354,24 +419,30 @@ function symbolCandidates(
       reference.kind === "callback" ||
       DYNAMIC_REFERENCE_KINDS.has(reference.kind)
     ) {
-      const sourceModule = modulesByFile.get(reference.evidence.file);
-      const reachableModules =
-        sourceModule === undefined ? undefined : distances.get(sourceModule.id);
-      const polymorphic = nodes
+      const semantic = projectResolver.resolveCall(reference);
+      if (semantic !== null) {
+        const compiler = byNameInFile(indexes, semantic.filePath, semantic.name, kinds);
+        if (compiler.length > 0) return { nodes: compiler, exact: true, sourceType: "compiler" };
+      }
+      const polymorphicCandidates = (indexes.byName.get(last) ?? [])
         .filter((node) => {
           if (node.name !== last || !kinds.has(node.kind) || node.filePath === null) {
             return false;
           }
-          const module = modulesByFile.get(node.filePath);
-          return module !== undefined && reachableModules?.has(module.id) === true;
+          return modulesByFile.get(node.filePath) !== undefined;
         })
         .slice(0, MAX_DYNAMIC_CANDIDATES);
+      const polymorphic = distances.reachableCandidates(
+        reference.evidence.file,
+        polymorphicCandidates,
+        modulesByFile,
+      );
       if (polymorphic.length > 0) return { nodes: polymorphic, exact: false };
     }
     return { nodes: [], exact: false };
   }
 
-  const local = byNameInFile(nodes, reference.evidence.file, last, kinds);
+  const local = byNameInFile(indexes, reference.evidence.file, last, kinds);
   if (local.length > 0) {
     const scored = local.map((node) => ({ node, score: lexicalScore(source, node) }));
     const best = Math.max(...scored.map((candidate) => candidate.score));
@@ -381,72 +452,100 @@ function symbolCandidates(
     };
   }
 
-  const sourceModule = modulesByFile.get(reference.evidence.file);
-  const reachableModules = sourceModule === undefined ? undefined : distances.get(sourceModule.id);
+  const named = (indexes.byName.get(last) ?? []).filter(
+    (node) => kinds.has(node.kind) && node.filePath !== null,
+  );
   return {
-    nodes: nodes.filter(
-      (node) =>
-        node.name === last &&
-        kinds.has(node.kind) &&
-        node.filePath !== null &&
-        modulesByFile.get(node.filePath) !== undefined &&
-        reachableModules?.has(modulesByFile.get(node.filePath)!.id) === true,
-    ),
+    nodes: distances.reachableCandidates(reference.evidence.file, named, modulesByFile),
     exact: false,
   };
 }
 
-function importDistances(
-  database: AtlasDatabase,
-  modulesByFile: ReadonlyMap<string, StoredNode>,
-  nodeById: ReadonlyMap<string, StoredNode>,
-): Map<string, Map<string, number>> {
-  const adjacency = new Map<string, Set<string>>();
-  const rows = database
-    .prepare("SELECT source_node_id, target_node_id FROM edges WHERE edge_type = 'IMPORTS'")
-    .all() as Array<{ source_node_id: string; target_node_id: string }>;
-  for (const row of rows) {
-    const source = nodeById.get(row.source_node_id);
-    const target = nodeById.get(row.target_node_id);
-    if (source === undefined || target === undefined) continue;
-    if (source.filePath === null || target.filePath === null) continue;
-    const sourceModule = modulesByFile.get(source.filePath);
-    const targetModule = modulesByFile.get(target.filePath);
-    if (sourceModule === undefined || targetModule === undefined) continue;
-    const neighbors = adjacency.get(sourceModule.id) ?? new Set<string>();
-    neighbors.add(targetModule.id);
-    adjacency.set(sourceModule.id, neighbors);
+class ImportDistanceIndex {
+  readonly #adjacency: ReadonlyMap<string, ReadonlySet<string>>;
+  readonly #cache = new Map<string, ReadonlyMap<string, number>>();
+
+  constructor(
+    database: AtlasDatabase,
+    modulesByFile: ReadonlyMap<string, StoredNode>,
+    nodeById: ReadonlyMap<string, StoredNode>,
+  ) {
+    const adjacency = new Map<string, Set<string>>();
+    const rows = database
+      .prepare("SELECT source_node_id, target_node_id FROM edges WHERE edge_type = 'IMPORTS'")
+      .all() as Array<{ source_node_id: string; target_node_id: string }>;
+    for (const row of rows) {
+      const source = nodeById.get(row.source_node_id);
+      const target = nodeById.get(row.target_node_id);
+      if (source?.filePath === null || source?.filePath === undefined) continue;
+      if (target?.filePath === null || target?.filePath === undefined) continue;
+      const sourceModule = modulesByFile.get(source.filePath);
+      const targetModule = modulesByFile.get(target.filePath);
+      if (sourceModule === undefined || targetModule === undefined) continue;
+      const neighbors = adjacency.get(sourceModule.id) ?? new Set<string>();
+      neighbors.add(targetModule.id);
+      adjacency.set(sourceModule.id, neighbors);
+    }
+    this.#adjacency = adjacency;
   }
 
-  const result = new Map<string, Map<string, number>>();
-  for (const start of modulesByFile.values()) {
-    const distances = new Map<string, number>([[start.id, 0]]);
-    const queue = [start.id];
-    while (queue.length > 0) {
-      const current = queue.shift();
-      if (current === undefined) break;
-      const distance = distances.get(current) ?? 0;
-      for (const neighbor of adjacency.get(current) ?? []) {
+  #from(startId: string): ReadonlyMap<string, number> {
+    const cached = this.#cache.get(startId);
+    if (cached !== undefined) return cached;
+    const distances = new Map<string, number>([[startId, 0]]);
+    const queue = [startId];
+    for (let head = 0; head < queue.length && distances.size < 5_000; head += 1) {
+      const current = queue[head]!;
+      const distance = distances.get(current)!;
+      if (distance >= 12) continue;
+      for (const neighbor of this.#adjacency.get(current) ?? []) {
         if (distances.has(neighbor)) continue;
         distances.set(neighbor, distance + 1);
         queue.push(neighbor);
+        if (distances.size >= 5_000) break;
       }
     }
-    result.set(start.id, distances);
+    // Resolution inputs are file-grouped. A small LRU bounds memory even on full rebuilds.
+    this.#cache.set(startId, distances);
+    if (this.#cache.size > 128) this.#cache.delete(this.#cache.keys().next().value!);
+    return distances;
   }
-  return result;
+
+  distance(
+    sourceFile: string,
+    targetFile: string,
+    modulesByFile: ReadonlyMap<string, StoredNode>,
+  ): number {
+    const source = modulesByFile.get(sourceFile);
+    const target = modulesByFile.get(targetFile);
+    if (source === undefined || target === undefined) return 20;
+    return this.#from(source.id).get(target.id) ?? 20;
+  }
+
+  reachableCandidates(
+    sourceFile: string,
+    candidates: readonly StoredNode[],
+    modulesByFile: ReadonlyMap<string, StoredNode>,
+  ): StoredNode[] {
+    const source = modulesByFile.get(sourceFile);
+    if (source === undefined) return [];
+    const reachable = this.#from(source.id);
+    return candidates.filter((candidate) => {
+      if (candidate.filePath === null) return false;
+      const target = modulesByFile.get(candidate.filePath);
+      return target !== undefined && reachable.has(target.id);
+    });
+  }
 }
 
 function candidateDistance(
   reference: UnresolvedReference,
   candidate: StoredNode,
   modulesByFile: ReadonlyMap<string, StoredNode>,
-  distances: ReadonlyMap<string, Map<string, number>>,
+  distances: ImportDistanceIndex,
 ): number {
-  const sourceModule = modulesByFile.get(reference.evidence.file);
-  const targetModule = candidate.filePath === null ? undefined : modulesByFile.get(candidate.filePath);
-  if (sourceModule === undefined || targetModule === undefined) return 20;
-  return distances.get(sourceModule.id)?.get(targetModule.id) ?? 20;
+  if (candidate.filePath === null) return 20;
+  return distances.distance(reference.evidence.file, candidate.filePath, modulesByFile);
 }
 
 function confidenceFor(distance: number, candidateCount: number, exact: boolean): number {
@@ -511,13 +610,17 @@ function persistEdges(
   candidates: readonly StoredNode[],
   exact: boolean,
   modulesByFile: ReadonlyMap<string, StoredNode>,
-  distances: ReadonlyMap<string, Map<string, number>>,
+  distances: ImportDistanceIndex | null,
   timestamp: string,
   edgeIds: Set<string>,
+  sourceTypeOverride?: SourceType,
 ): void {
   for (const candidate of candidates) {
-    const distance = candidateDistance(reference, candidate, modulesByFile, distances);
-    const sourceType: SourceType = exact && candidates.length === 1 ? "ast" : "heuristic";
+    const distance = distances === null
+      ? 1
+      : candidateDistance(reference, candidate, modulesByFile, distances);
+    const sourceType: SourceType = sourceTypeOverride ??
+      (exact && candidates.length === 1 ? "ast" : "heuristic");
     const edgeType = edgeTypeFor(reference);
     const id = createEdgeId(
       repositoryId,
@@ -567,18 +670,25 @@ function persistEdges(
 export function resolveReferences(
   database: AtlasDatabase,
   repositoryId: string,
+  repositoryRoot: string,
   parsedInputs: readonly ParsedInput[],
   timestamp: string,
 ): ResolutionResult {
   const nodes = loadNodes(database);
+  const indexes = buildSymbolIndexes(nodes);
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const modulesByFile = new Map<string, StoredNode>();
   for (const node of nodes) {
     if (node.kind === "file" && node.filePath !== null) modulesByFile.set(node.filePath, node);
   }
+  const projectResolver = new TypeScriptProjectResolver(
+    repositoryRoot,
+    new Set(modulesByFile.keys()),
+  );
   for (const node of nodes) {
     if (node.kind === "module" && node.filePath !== null) modulesByFile.set(node.filePath, node);
   }
+  const pythonModules = buildPythonModuleIndex(modulesByFile.keys());
   const exportedNodeIds = new Set(
     (
       database.prepare("SELECT target_node_id FROM edges WHERE edge_type = 'EXPORTS'").all() as Array<{
@@ -604,7 +714,12 @@ export function resolveReferences(
   const edgeIds = new Set<string>();
 
   for (const reference of importReferences) {
-    const candidates = moduleCandidates(reference, modulesByFile);
+    const candidates = moduleCandidates(
+      reference,
+      modulesByFile,
+      projectResolver,
+      pythonModules,
+    );
     if (candidates.length === 0) {
       persistIssue(database, reference, "unresolved_reference", [], timestamp);
       unresolved += 1;
@@ -615,14 +730,6 @@ export function resolveReferences(
       ambiguous += 1;
     }
     const importReference = reference.kind === "export" ? { ...reference, kind: "import" as const } : reference;
-    const directDistances = new Map<string, Map<string, number>>();
-    const sourceModule = modulesByFile.get(reference.evidence.file);
-    if (sourceModule !== undefined) {
-      directDistances.set(
-        sourceModule.id,
-        new Map(candidates.map((candidate) => [candidate.id, 1])),
-      );
-    }
     persistEdges(
       database,
       repositoryId,
@@ -630,7 +737,7 @@ export function resolveReferences(
       candidates,
       true,
       modulesByFile,
-      directDistances,
+      null,
       timestamp,
       edgeIds,
     );
@@ -648,18 +755,19 @@ export function resolveReferences(
     }
   }
 
-  const distances = importDistances(database, modulesByFile, nodeById);
+  const distances = new ImportDistanceIndex(database, modulesByFile, nodeById);
   for (const reference of otherReferences) {
     const source = nodeById.get(reference.sourceNodeId);
     if (source === undefined) continue;
     const candidates = symbolCandidates(
       reference,
       source,
-      nodes,
+      indexes,
       bindingsByFile.get(reference.evidence.file) ?? [],
       exportedNodeIds,
       modulesByFile,
       distances,
+      projectResolver,
     );
     if (candidates.nodes.length === 0) {
       persistIssue(
@@ -698,6 +806,7 @@ export function resolveReferences(
       distances,
       timestamp,
       edgeIds,
+      candidates.sourceType,
     );
   }
 

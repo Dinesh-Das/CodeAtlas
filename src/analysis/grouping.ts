@@ -27,6 +27,19 @@ const GENERIC_FEATURES = new Set([
   "tests",
   "utils",
 ]);
+const TECHNICAL_LAYERS = new Set([
+  "adapters",
+  "controllers",
+  "handlers",
+  "models",
+  "repositories",
+  "routes",
+  "services",
+]);
+const ROLE_WORDS = new Set([
+  "adapter", "controller", "entity", "handler", "index", "model", "module", "repository",
+  "route", "schema", "service", "types", "use", "case",
+]);
 const SEMANTIC_KINDS = new Set([
   "api_route",
   "class",
@@ -56,7 +69,10 @@ function groupKey(filePath: string): string {
   const directoryParts = path.posix.dirname(filePath).split("/").filter(Boolean);
   if (directoryParts.length === 0) return "root";
   let index = 0;
-  while (index < directoryParts.length && SOURCE_ROOTS.has(directoryParts[index]!)) {
+  while (
+    index < directoryParts.length - 1 &&
+    SOURCE_ROOTS.has(directoryParts[index]!)
+  ) {
     index += 1;
   }
   return (directoryParts[index] ?? "root").toLowerCase();
@@ -69,6 +85,28 @@ function titleCase(value: string): string {
     .filter(Boolean)
     .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
     .join(" ");
+}
+
+function vocabulary(value: string): string[] {
+  return value
+    .replace(/\.[^.]+$/u, "")
+    .replace(/([a-z0-9])([A-Z])/gu, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/u)
+    .filter((word) => word.length > 2 && !ROLE_WORDS.has(word));
+}
+
+function crossLayerConcept(filePath: string, semanticMembers: readonly AnalysisNode[]): string | null {
+  if (!TECHNICAL_LAYERS.has(groupKey(filePath))) return null;
+  const counts = new Map<string, number>();
+  for (const word of [
+    ...vocabulary(path.posix.basename(filePath)),
+    ...semanticMembers.flatMap((node) => vocabulary(node.name)),
+  ]) {
+    counts.set(word, (counts.get(word) ?? 0) + 1);
+  }
+  return [...counts]
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] ?? null;
 }
 
 function pathPatternMatches(filePath: string, pattern: string): boolean {
@@ -304,6 +342,13 @@ export function buildGroupingArtifacts(
   const communityByFile = new Map(
     communities.map((membership) => [membership.filePath, membership.communityId]),
   );
+  const semanticByFile = new Map<string, AnalysisNode[]>();
+  for (const node of graph.nodes) {
+    if (node.filePath === null || !SEMANTIC_KINDS.has(node.kind)) continue;
+    const members = semanticByFile.get(node.filePath) ?? [];
+    members.push(node);
+    semanticByFile.set(node.filePath, members);
+  }
   const manuallyGroupedFiles = new Set<string>();
   if (config.analysis.featureDetection) {
     for (const override of config.analysis.featureOverrides) {
@@ -366,6 +411,64 @@ export function buildGroupingArtifacts(
     }
   }
   let features = 0;
+  if (config.analysis.featureDetection) {
+    const conceptFiles = new Map<string, AnalysisNode[]>();
+    for (const [filePath, file] of graph.fileNodes) {
+      if (manuallyGroupedFiles.has(filePath)) continue;
+      const semantic = semanticByFile.get(filePath) ?? [];
+      const concept = crossLayerConcept(filePath, semantic);
+      if (concept === null) continue;
+      const members = conceptFiles.get(concept) ?? [];
+      members.push(file);
+      conceptFiles.set(concept, members);
+    }
+    for (const [concept, files] of [...conceptFiles].sort(([left], [right]) =>
+      left.localeCompare(right),
+    )) {
+      const layers = new Set(files.map((file) => groupKey(file.filePath ?? "")));
+      if (files.length < 2 || layers.size < 2) continue;
+      files.sort((left, right) => (left.filePath ?? "").localeCompare(right.filePath ?? ""));
+      const semanticMembers = files.flatMap((file) =>
+        file.filePath === null ? [] : semanticByFile.get(file.filePath) ?? [],
+      );
+      const confidence = Math.min(0.9, 0.65 + layers.size * 0.05 + files.length * 0.02);
+      const feature = groupingNode(
+        repositoryId,
+        "feature",
+        `concept:${concept}`,
+        files[0]!,
+        confidence,
+        {
+          signal: "cross_layer_vocabulary",
+          vocabulary: concept,
+          technical_layers: [...layers].sort(),
+          member_file_count: files.length,
+          supporting_evidence: files.map((file) => ({
+            signal: "symbol_and_path_vocabulary",
+            file: file.filePath,
+            line: file.startLine ?? 1,
+            weight: confidence / files.length,
+            detail: `${concept} appears across technical layers`,
+          })),
+        },
+      );
+      feature.name = titleCase(concept);
+      nodes.push(feature);
+      features += 1;
+      const members = new Map(
+        [...files, ...semanticMembers].map((member) => [member.id, member]),
+      );
+      for (const member of members.values()) {
+        edges.push(membershipEdge(
+          repositoryId,
+          "BELONGS_TO_FEATURE",
+          member,
+          feature,
+          confidence,
+        ));
+      }
+    }
+  }
   for (const [key, files] of [...groups].sort(([left], [right]) => left.localeCompare(right))) {
     files.sort((left, right) => (left.filePath ?? "").localeCompare(right.filePath ?? ""));
     const representative = files[0]!;
@@ -377,7 +480,8 @@ export function buildGroupingArtifacts(
       representative,
       domainConfidence,
       {
-        signal: "directory_boundary",
+        signal: TECHNICAL_LAYERS.has(key) ? "technical_layer_boundary" : "directory_boundary",
+        boundary_type: TECHNICAL_LAYERS.has(key) ? "technical_layer" : "directory",
         member_file_count: files.length,
         member_files: files.map((file) => file.filePath),
       },
@@ -395,14 +499,16 @@ export function buildGroupingArtifacts(
       );
     }
 
-    if (!config.analysis.featureDetection || GENERIC_FEATURES.has(key)) continue;
+    if (
+      !config.analysis.featureDetection ||
+      GENERIC_FEATURES.has(key) ||
+      TECHNICAL_LAYERS.has(key)
+    ) continue;
     const filePaths = new Set(files.map((file) => file.filePath));
-    const semanticMembers = graph.nodes.filter(
-      (node) =>
-        node.filePath !== null &&
-        !manuallyGroupedFiles.has(node.filePath) &&
-        filePaths.has(node.filePath) &&
-        SEMANTIC_KINDS.has(node.kind),
+    const semanticMembers = files.flatMap((file) =>
+      file.filePath === null || manuallyGroupedFiles.has(file.filePath)
+        ? []
+        : semanticByFile.get(file.filePath) ?? [],
     );
     if (semanticMembers.length === 0) continue;
     const automaticFiles = files.filter(

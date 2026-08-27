@@ -18,15 +18,15 @@ export interface DoctorCheck {
 
 export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
-  const [major = 0] = process.versions.node
+  const [major = 0, minor = 0] = process.versions.node
     .split(".")
-    .slice(0, 1)
+    .slice(0, 2)
     .map((part) => Number.parseInt(part, 10));
-  const supportedNode = major >= 24;
+  const supportedNode = major > 22 || (major === 22 && minor >= 12);
   checks.push({
     name: "Node.js",
     ok: supportedNode,
-    detail: `${process.version}${supportedNode ? "" : " (Node.js 24 or newer is required)"}`,
+    detail: `${process.version}${supportedNode ? "" : " (Node.js 22.12 or newer is required)"}`,
   });
 
   try {

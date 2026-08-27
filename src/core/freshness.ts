@@ -1,6 +1,8 @@
 import type { RepositoryInfo } from "../git/repository.js";
 import { runGit } from "../git/repository.js";
-import { hashSortedEntries, sha256 } from "./hashing.js";
+import { stat } from "node:fs/promises";
+import path from "node:path";
+import { hashFile, hashSortedEntries, sha256 } from "./hashing.js";
 import type { IgnoreRules } from "./ignore.js";
 import { toPosixPath } from "./paths.js";
 
@@ -17,11 +19,86 @@ export interface RepositoryFingerprint {
   indexHash: string;
 }
 
+export interface WorktreeSignature {
+  signature: string;
+  dirty: boolean;
+  changedFiles: number;
+}
+
+interface CachedHash {
+  size: number;
+  mtimeMs: number;
+  ctimeMs: number;
+  hash: string;
+}
+
+const worktreeHashCache = new Map<string, CachedHash>();
+
 function splitNullDelimited(output: string): string[] {
   return output
     .split("\0")
     .map((entry) => toPosixPath(entry))
     .filter((entry) => entry.length > 0);
+}
+
+async function cachedFileHash(absolutePath: string): Promise<string> {
+  const metadata = await stat(absolutePath);
+  const cached = worktreeHashCache.get(absolutePath);
+  if (
+    cached !== undefined &&
+    cached.size === metadata.size &&
+    cached.mtimeMs === metadata.mtimeMs &&
+    cached.ctimeMs === metadata.ctimeMs
+  ) {
+    return cached.hash;
+  }
+  const hash = await hashFile(absolutePath);
+  worktreeHashCache.set(absolutePath, {
+    size: metadata.size,
+    mtimeMs: metadata.mtimeMs,
+    ctimeMs: metadata.ctimeMs,
+    hash,
+  });
+  if (worktreeHashCache.size > 10_000) {
+    worktreeHashCache.delete(worktreeHashCache.keys().next().value!);
+  }
+  return hash;
+}
+
+/**
+ * Computes freshness from Git's changed-path index and hashes only dirty paths. This
+ * avoids rediscovering and fingerprinting every repository file for each MCP request.
+ */
+export async function computeWorktreeSignature(
+  repository: RepositoryInfo,
+  ignoreRules: IgnoreRules,
+): Promise<WorktreeSignature> {
+  const [trackedOutput, stagedOutput, untrackedOutput, statusOutput] = await Promise.all([
+    runGit(repository.root, ["diff", "--name-only", "-z", "HEAD", "--"], true),
+    runGit(repository.root, ["diff", "--name-only", "--cached", "-z", "HEAD", "--"], true),
+    runGit(repository.root, ["ls-files", "--others", "--exclude-standard", "-z"]),
+    runGit(repository.root, ["status", "--porcelain=v1", "--untracked-files=all"]),
+  ]);
+  const changedPaths = [...new Set([
+    ...splitNullDelimited(trackedOutput),
+    ...splitNullDelimited(stagedOutput),
+    ...splitNullDelimited(untrackedOutput),
+  ])]
+    .filter((filePath) => !ignoreRules.ignores(filePath))
+    .sort((left, right) => left.localeCompare(right));
+  const entries = await Promise.all(changedPaths.map(async (filePath) => {
+    const absolutePath = path.join(repository.root, ...filePath.split("/"));
+    try {
+      return `${filePath}:${await cachedFileHash(absolutePath)}`;
+    } catch {
+      return `${filePath}:__deleted__`;
+    }
+  }));
+  return {
+    signature: sha256(`${repository.headCommit}|${hashSortedEntries(entries)}`),
+    dirty: statusOutput.length > 0,
+    changedFiles: changedPaths.length,
+  };
 }
 
 export async function computeRepositoryFingerprint(

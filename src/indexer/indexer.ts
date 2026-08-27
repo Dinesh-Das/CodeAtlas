@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { runArchitectureAnalysis } from "../analysis/architecture.js";
 import {
   mergeArchitecturalIntent,
@@ -9,7 +10,10 @@ import type { ArchitectureAnalysisResult } from "../analysis/types.js";
 import { mapWithConcurrency } from "../core/async.js";
 import { loadConfig } from "../core/config.js";
 import { discoverFiles } from "../core/discovery.js";
-import { computeRepositoryFingerprint } from "../core/freshness.js";
+import {
+  computeRepositoryFingerprint,
+  computeWorktreeSignature,
+} from "../core/freshness.js";
 import { hashFile, sha256 } from "../core/hashing.js";
 import { loadIgnoreRules } from "../core/ignore.js";
 import {
@@ -88,6 +92,14 @@ export interface IndexResult {
   languages: Record<string, number>;
   frameworks: string[];
   indexedAt: string;
+  timingsMs: {
+    discovery: number;
+    fingerprint: number;
+    parsing: number;
+    persistence: number;
+    architecture: number;
+    total: number;
+  };
 }
 
 interface IndexedCandidate {
@@ -102,6 +114,78 @@ interface IndexedCandidate {
   adapterVersion: string;
   parsedFile: ParsedFile | null;
   detectedFrameworks: string[];
+}
+
+interface WorkspacePackage {
+  directory: string;
+  manifestPath: string;
+  name: string;
+  version: string | null;
+  isPrivate: boolean;
+  dependencies: string[];
+  hasExports: boolean;
+}
+
+async function loadWorkspacePackages(
+  candidates: readonly IndexedCandidate[],
+): Promise<WorkspacePackage[]> {
+  const manifests = candidates.filter((candidate) =>
+    path.posix.basename(candidate.relativePath) === "package.json",
+  );
+  const packages = await mapWithConcurrency(manifests, 16, async (candidate) => {
+    try {
+      const value = JSON.parse(await readFile(candidate.absolutePath, "utf8")) as {
+        name?: unknown;
+        version?: unknown;
+        private?: unknown;
+        exports?: unknown;
+        dependencies?: unknown;
+        devDependencies?: unknown;
+        peerDependencies?: unknown;
+        optionalDependencies?: unknown;
+      };
+      if (typeof value.name !== "string" || value.name.trim() === "") return null;
+      const dependencyNames = [
+        value.dependencies,
+        value.devDependencies,
+        value.peerDependencies,
+        value.optionalDependencies,
+      ].flatMap((dependencies) =>
+        typeof dependencies === "object" && dependencies !== null
+          ? Object.keys(dependencies)
+          : [],
+      );
+      return {
+        directory: path.posix.dirname(candidate.relativePath),
+        manifestPath: candidate.relativePath,
+        name: value.name,
+        version: typeof value.version === "string" ? value.version : null,
+        isPrivate: value.private === true,
+        dependencies: [...new Set(dependencyNames)].sort((left, right) =>
+          left.localeCompare(right),
+        ),
+        hasExports: value.exports !== undefined,
+      } satisfies WorkspacePackage;
+    } catch {
+      return null;
+    }
+  });
+  return packages
+    .filter((entry): entry is WorkspacePackage => entry !== null)
+    .sort((left, right) => left.manifestPath.localeCompare(right.manifestPath));
+}
+
+function owningPackage(
+  filePath: string,
+  packageByDirectory: ReadonlyMap<string, WorkspacePackage>,
+): WorkspacePackage | null {
+  let current = path.posix.dirname(filePath);
+  while (true) {
+    const owner = packageByDirectory.get(current);
+    if (owner !== undefined) return owner;
+    if (current === ".") return null;
+    current = path.posix.dirname(current);
+  }
 }
 
 function initialParseStatus(
@@ -198,14 +282,17 @@ async function readCreatedAt(manifestPath: string, fallback: string): Promise<st
 }
 
 export async function runIndex(options: IndexOptions = {}): Promise<IndexResult> {
+  const indexStartedAt = performance.now();
   const repository = await detectRepository(options.startPath);
   const paths = workspacePaths(repository.root);
   const config = await loadConfig(repository.root);
   const releaseLock = await acquireIndexLock(repository.root);
 
   try {
+    const discoveryStartedAt = performance.now();
     const ignoreRules = await loadIgnoreRules(repository.root);
     const discovered = await discoverFiles(repository.root, ignoreRules);
+    const discoveryMs = performance.now() - discoveryStartedAt;
     let database: AtlasDatabase;
     try {
       database = openDatabase(paths.database);
@@ -221,6 +308,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
     }
 
     try {
+      const fingerprintStartedAt = performance.now();
       const existing = new Map(listFiles(database).map((file) => [file.path, file]));
       const storedCommit = getRepositoryState(database, "last_indexed_commit");
       const gitState = await detectGitState(repository.root, storedCommit, repository.headCommit);
@@ -261,8 +349,11 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         },
       );
       candidates.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+      const workspacePackages = await loadWorkspacePackages(candidates);
 
       const fingerprint = await computeRepositoryFingerprint(repository, candidates, ignoreRules);
+      const worktree = await computeWorktreeSignature(repository, ignoreRules);
+      const fingerprintMs = performance.now() - fingerprintStartedAt;
       const currentByPath = new Map(
         candidates.map((candidate) => [candidate.relativePath, candidate]),
       );
@@ -348,6 +439,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
               directlyChangedPaths.has(candidate.relativePath) ||
               invalidatedPaths.has(candidate.relativePath),
           );
+      const parsingStartedAt = performance.now();
       await mapWithConcurrency(changed, 4, async (candidate) => {
         let content: string | null = null;
         if (candidate.parseStatus === "pending_parse") {
@@ -420,6 +512,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           }
         }
       });
+      const parsingMs = performance.now() - parsingStartedAt;
       const renamePlans = new Map<string, RenamePlan>();
       if (!fullRebuild) {
         for (const rename of changes.renamed) {
@@ -530,6 +623,96 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           indexedAt,
         );
 
+        const packageByDirectory = new Map(
+          workspacePackages.map((workspacePackage) => [workspacePackage.directory, workspacePackage]),
+        );
+        const packageNodeIds = new Map(
+          workspacePackages.map((workspacePackage) => [
+            workspacePackage.name,
+            createNodeId(
+              repository.id,
+              "package",
+              workspacePackage.manifestPath,
+              workspacePackage.name,
+            ),
+          ]),
+        );
+        for (const workspacePackage of workspacePackages) {
+          const id = packageNodeIds.get(workspacePackage.name)!;
+          upsertNode(
+            database,
+            graphNode({
+              id,
+              kind: "package",
+              name: workspacePackage.name,
+              qualifiedName: workspacePackage.name,
+              filePath: workspacePackage.manifestPath,
+              sourceType: "config",
+              provenance: "verified",
+              metadata: {
+                evidence: {
+                  source_type: "config",
+                  file: workspacePackage.manifestPath,
+                  line: 1,
+                  column: 0,
+                },
+                directory: workspacePackage.directory,
+                version: workspacePackage.version,
+                private: workspacePackage.isPrivate,
+                has_exports: workspacePackage.hasExports,
+              },
+            }),
+            indexedAt,
+          );
+          upsertEdge(
+            database,
+            graphEdge({
+              id: createEdgeId(
+                repository.id,
+                "CONTAINS",
+                repositoryNodeId,
+                id,
+                workspacePackage.manifestPath,
+              ),
+              sourceNodeId: repositoryNodeId,
+              targetNodeId: id,
+              edgeType: "CONTAINS",
+              sourceType: "config",
+              provenance: "verified",
+              filePath: workspacePackage.manifestPath,
+              line: 1,
+            }),
+            indexedAt,
+          );
+        }
+        for (const workspacePackage of workspacePackages) {
+          const sourceId = packageNodeIds.get(workspacePackage.name)!;
+          for (const dependency of workspacePackage.dependencies) {
+            const targetId = packageNodeIds.get(dependency);
+            if (targetId === undefined) continue;
+            upsertEdge(
+              database,
+              graphEdge({
+                id: createEdgeId(
+                  repository.id,
+                  "DEPENDS_ON",
+                  sourceId,
+                  targetId,
+                  workspacePackage.manifestPath,
+                ),
+                sourceNodeId: sourceId,
+                targetNodeId: targetId,
+                edgeType: "DEPENDS_ON",
+                sourceType: "config",
+                provenance: "verified",
+                filePath: workspacePackage.manifestPath,
+                line: 1,
+              }),
+              indexedAt,
+            );
+          }
+        }
+
         const directoryNodeIds = new Map<string, string>();
         for (const directory of directoryPaths) {
           const id = createNodeId(repository.id, "directory", directory, directory);
@@ -632,6 +815,30 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
               indexedAt,
             );
           }
+          const owner = owningPackage(candidate.relativePath, packageByDirectory);
+          const packageId = owner === null ? undefined : packageNodeIds.get(owner.name);
+          if (packageId !== undefined && changedPaths.has(candidate.relativePath)) {
+            upsertEdge(
+              database,
+              graphEdge({
+                id: createEdgeId(
+                  repository.id,
+                  "CONTAINS",
+                  packageId,
+                  id,
+                  candidate.relativePath,
+                ),
+                sourceNodeId: packageId,
+                targetNodeId: id,
+                edgeType: "CONTAINS",
+                sourceType: "config",
+                provenance: "verified",
+                filePath: candidate.relativePath,
+                line: 1,
+              }),
+              indexedAt,
+            );
+          }
         }
 
         for (const candidate of changed) {
@@ -646,6 +853,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         resolveReferences(
           database,
           repository.id,
+          repository.root,
           changed.flatMap((candidate) =>
             candidate.parsedFile === null
               ? []
@@ -653,16 +861,6 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           ),
           indexedAt,
         );
-
-        if (analysisRequired) {
-          analysisResult = runArchitectureAnalysis(
-            database,
-            repository.id,
-            config,
-            history,
-            indexedAt,
-          );
-        }
 
         const repositoryStates: Record<string, string> = {
           schema_version: String(SCHEMA_VERSION),
@@ -673,8 +871,9 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           repository_root: repository.root,
           repository_id: repository.id,
           dirty_fingerprint: fingerprint.fingerprint,
+          worktree_signature: worktree.signature,
           config_hash: configHash,
-          working_tree_dirty: String(gitState.dirty),
+          working_tree_dirty: String(worktree.dirty),
           last_change_summary: JSON.stringify({
             added: changes.added.map((candidate) => candidate.relativePath),
             modified: changes.modified.map((candidate) => candidate.relativePath),
@@ -688,12 +887,26 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             fullRebuild,
           }),
         };
-        if (analysisResult !== null) {
-          repositoryStates.architecture_summary = JSON.stringify(analysisResult);
-        }
         setRepositoryStates(database, repositoryStates);
       });
+      const persistenceStartedAt = performance.now();
       writeIndex();
+      const persistenceMs = performance.now() - persistenceStartedAt;
+
+      const architectureStartedAt = performance.now();
+      if (analysisRequired) {
+        analysisResult = runArchitectureAnalysis(
+          database,
+          repository.id,
+          config,
+          history,
+          indexedAt,
+        );
+        setRepositoryStates(database, {
+          architecture_summary: JSON.stringify(analysisResult),
+        });
+      }
+      const architectureMs = performance.now() - architectureStartedAt;
 
       const counts = database
         .prepare(
@@ -702,7 +915,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             (SELECT count(*) FROM edges) AS edges,
             (SELECT count(*) FROM nodes
               WHERE kind NOT IN (
-                'repository', 'directory', 'file', 'module', 'feature', 'domain',
+                'repository', 'package', 'directory', 'file', 'module', 'feature', 'domain',
                 'documentation'
               )) AS symbols,
             (SELECT count(*) FROM nodes WHERE kind = 'api_route') AS apiRoutes,
@@ -798,8 +1011,24 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           fullRebuild,
           dirtyWorkingTree: gitState.dirty,
         },
+        timingsMs: {
+          discovery: discoveryMs,
+          fingerprint: fingerprintMs,
+          parsing: parsingMs,
+          persistence: persistenceMs,
+          architecture: architectureMs,
+          total: performance.now() - indexStartedAt,
+        },
       });
 
+      const timingsMs = {
+        discovery: Number(discoveryMs.toFixed(2)),
+        fingerprint: Number(fingerprintMs.toFixed(2)),
+        parsing: Number(parsingMs.toFixed(2)),
+        persistence: Number(persistenceMs.toFixed(2)),
+        architecture: Number(architectureMs.toFixed(2)),
+        total: Number((performance.now() - indexStartedAt).toFixed(2)),
+      };
       return {
         repository,
         fingerprint: fingerprint.fingerprint,
@@ -827,6 +1056,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         languages,
         frameworks,
         indexedAt,
+        timingsMs,
       };
     } finally {
       database.close();

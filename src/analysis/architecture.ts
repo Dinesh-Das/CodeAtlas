@@ -26,13 +26,6 @@ export function runArchitectureAnalysis(
     config,
     communities,
   );
-  removeStaleAnalysisNodes(
-    database,
-    new Set(grouping.nodes.map((node) => node.id)),
-  );
-  for (const node of grouping.nodes) upsertNode(database, node, timestamp);
-  for (const edge of grouping.edges) upsertEdge(database, edge, timestamp);
-
   const cycles = config.analysis.technicalDebt
     ? findDependencyCycles(repositoryId, graph)
     : [];
@@ -48,7 +41,16 @@ export function runArchitectureAnalysis(
       `${right.findingType}\0${right.filePath}\0${right.line}`,
     ),
   );
-  replaceArchitectureData(database, signals.metrics, findings, communities, timestamp);
+  const persist = database.transaction(() => {
+    removeStaleAnalysisNodes(
+      database,
+      new Set(grouping.nodes.map((node) => node.id)),
+    );
+    for (const node of grouping.nodes) upsertNode(database, node, timestamp);
+    for (const edge of grouping.edges) upsertEdge(database, edge, timestamp);
+    replaceArchitectureData(database, signals.metrics, findings, communities, timestamp);
+  });
+  persist();
 
   return {
     features: grouping.features,
