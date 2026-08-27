@@ -34,8 +34,10 @@ Environment measured: Windows x64, Node.js 24.12.0
   500k, and 1M LOC fixtures and records cold/incremental phase timings, p50/p95 warm search,
   p50/p95 freshness-aware latency, observed RSS, and database size.
 - Lowered the runtime floor from Node 24 to Node 22.12 and added Node 22.12 to the three-platform CI
-  matrix. Node 20 was not selected because current `better-sqlite3` requires Node >=22 and
-  Commander requires Node >=22.12.
+  matrix. Node 20 was not selected because Commander requires Node >=22.12. `better-sqlite3` is
+  pinned to the Node-22-compatible 12.8 line: 13.0.3 ships Node-API 10 binaries, whose actual Node
+  22 floor is 22.14, despite declaring Node >=22, and its implicit Windows build path requires a
+  compiler even when a bundled prebuild is present.
 
 ## Measurements
 
