@@ -1,7 +1,7 @@
 {
-  "name": "codeatlas",
-  "version": "0.7.0",
-  "description": "Local-first structural intelligence for software repositories.",
+  "name": "@dinesh-das/codeatlas",
+  "version": "0.8.0",
+  "description": "Local-first repository knowledge graphs for AI coding agents through MCP.",
   "type": "module",
   "bin": {
     "codeatlas": "dist/cli/index.js"
@@ -11,15 +11,21 @@
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
-    "SECURITY.md"
+    "SECURITY.md",
+    "RELEASING.md",
+    "examples"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "clean:dist": "node scripts/clean-dist.mjs",
+    "build": "npm run clean:dist && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "prepack": "npm run build",
+    "package:smoke": "node scripts/package-smoke.mjs",
+    "release:check": "npm run check && npm run package:smoke"
   },
   "engines": {
     "node": ">=24.0.0"
@@ -30,6 +36,17 @@
     "mcp",
     "developer-tools"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dinesh-Das/CodeAtlas.git"
+  },
+  "homepage": "https://github.com/Dinesh-Das/CodeAtlas#readme",
+  "bugs": {
+    "url": "https://github.com/Dinesh-Das/CodeAtlas/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "Apache-2.0",
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",

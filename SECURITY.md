@@ -31,4 +31,4 @@ only bounded aggregate churn, commit/contributor counts, and the latest commit h
 
 Users should still protect `.codeatlas/` with normal filesystem permissions. Although the
 database is automatically ignored by Git, it contains repository names, paths, symbol metadata
-in later phases, and structural relationships.
+and structural relationships.

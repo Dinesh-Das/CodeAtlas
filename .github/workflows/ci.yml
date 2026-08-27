@@ -10,11 +10,13 @@ permissions:
 
 jobs:
   check:
+    name: Check (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         node: [24]
     steps:
       - uses: actions/checkout@v7
@@ -24,3 +26,17 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
+
+  package:
+    name: Package smoke test
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run package:smoke

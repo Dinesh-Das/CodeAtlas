@@ -2,6 +2,28 @@
 
 All notable changes follow semantic versioning.
 
+## 0.8.0 - 2026-08-27
+
+### Added
+
+- Final Phase 8 npm packaging under `@dinesh-das/codeatlas`, preserving the `codeatlas` binary.
+- Clean reproducible builds that remove stale compiler output before creating release artifacts.
+- A tarball smoke test that packs, installs, invokes, initializes, and queries CodeAtlas in a
+  disposable external Git repository.
+- Three-platform CI across Linux, macOS, and Windows plus a package smoke-test gate.
+- A tag-driven npm trusted-publishing workflow with OIDC and release version validation.
+- Copyable MCP configuration, first-time installation guidance, release instructions, and an MCP
+  tool reference for external developers.
+
+### Changed
+
+- The initialization summary now ends with `CodeAtlas is ready` and points users to both status
+  and MCP commands.
+- The npm package contains only compiled runtime files, public documentation, licensing, security,
+  release guidance, and examples; source tests and stale build artifacts are excluded.
+- CodeAtlas is version `0.8.0`; the graph schema remains version 3 and the indexing contract
+  remains `architecture-6`.
+
 ## 0.7.0 - 2026-08-27
 
 ### Added

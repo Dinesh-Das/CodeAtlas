@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codeatlas": {
+      "command": "codeatlas",
+      "args": ["mcp", "/absolute/path/to/repository"]
+    }
+  }
+}

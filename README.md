@@ -1,10 +1,12 @@
 # CodeAtlas
 
-CodeAtlas builds a local, persistent structural index of a Git repository. The long-term
-product exposes an evidence-bearing knowledge graph to AI coding agents through MCP; the
-current implementation includes the Phase 1 foundation, Phase 2 structural indexer, Phase 3
-relationship resolver/MCP contract, Phase 4 incremental indexing, Phase 5 framework adapters,
-Phase 6 architecture analysis, and the complete Phase 7 grounded MCP query layer.
+CodeAtlas builds a living knowledge graph of your Git repository and exposes it to AI coding
+agents through MCP. Instead of repeatedly searching the entire codebase, an agent can ask how
+features, modules, functions, APIs, and data models are connected and receive current file/line
+evidence.
+
+The complete MVP includes structural parsing, relationship resolution, incremental indexing,
+framework adapters, architecture analysis, grounded MCP queries, and release packaging.
 
 The governing principle is simple: the working tree owns the facts, deterministic analysis
 structures those facts, and an LLM may explain them later.
@@ -65,7 +67,36 @@ uncertainty rather than selecting a candidate silently.
 - Git
 - npm
 
-Non-Git directories are not supported in V1.
+CI verifies the project on Linux, macOS, and Windows.
+
+Non-Git directories are not supported in V1. Docker, an API key, a cloud account, and a separate
+database service are not required.
+
+## Installation
+
+Install the scoped npm package globally. The installed executable remains `codeatlas`:
+
+```bash
+npm install --global @dinesh-das/codeatlas
+codeatlas --version
+```
+
+The unscoped npm name `codeatlas` belongs to an unrelated package; use the scoped package shown
+above.
+
+## Getting started
+
+From any directory inside the Git repository you want to understand:
+
+```bash
+codeatlas init
+codeatlas status
+codeatlas mcp
+```
+
+`init` creates the ignored local `.codeatlas/` workspace and performs the first index. `mcp`
+starts the stdio server and normally runs under an MCP-compatible coding agent rather than in a
+terminal you interact with directly.
 
 ## Development setup
 
@@ -131,6 +162,24 @@ directory, or pass the repository path explicitly:
 codeatlas mcp /absolute/path/to/repository
 ```
 
+A typical MCP client entry is:
+
+```json
+{
+  "mcpServers": {
+    "codeatlas": {
+      "command": "codeatlas",
+      "args": ["mcp", "/absolute/path/to/repository"]
+    }
+  }
+}
+```
+
+Copy the server object into the MCP configuration supported by your coding agent and replace the
+path with an absolute repository path. A copyable file is available at
+[`examples/mcp-config.json`](examples/mcp-config.json). If the agent was already running when
+CodeAtlas was installed, restart it so the new executable is available on `PATH`.
+
 The server uses stdio and writes no protocol-breaking output to stdout. Every tool request first
 checks the current repository fingerprint and performs an incremental index update when needed.
 All source snippets in the stable Answer Packet contract are labeled
@@ -140,6 +189,23 @@ The available tools are `codeatlas_status`, `codeatlas_overview`, `codeatlas_sea
 `codeatlas_get_node`, `codeatlas_explain_feature`, `codeatlas_trace`, `codeatlas_impact`,
 `codeatlas_dependencies`, `codeatlas_source`, and `codeatlas_health`. Search and other node facts
 include a stable `node_id` in their statement so a client can pass it to follow-up tools.
+
+| Tool | Purpose |
+|---|---|
+| `codeatlas_status` | Repository, commit, dirty-tree, language, and index status |
+| `codeatlas_overview` | Domains, features, communities, entrypoints, and models |
+| `codeatlas_search` | Search features, symbols, APIs, files, and models |
+| `codeatlas_get_node` | Node metadata, location, memberships, and relationships |
+| `codeatlas_explain_feature` | Grounded feature components and execution context |
+| `codeatlas_trace` | Bounded evidence-bearing execution/dependency paths |
+| `codeatlas_impact` | Definite and potential direct/transitive dependents |
+| `codeatlas_dependencies` | Incoming and outgoing dependency neighborhood |
+| `codeatlas_source` | Minimal current-working-tree source range |
+| `codeatlas_health` | Architecture and technical-debt signals |
+
+Useful first questions include “Give me the repository architecture overview”, “How does checkout
+work?”, and “What is affected if I change `PaymentService`?”. The host model explains the result;
+CodeAtlas supplies the facts and evidence.
 
 ## Supported syntax
 
@@ -277,9 +343,16 @@ Run `codeatlas doctor`. If the database is corrupt or its schema/indexer version
 incompatible, rebuild with `codeatlas index --full`. A malformed configuration must be fixed;
 CodeAtlas will not discard it and fall back to defaults.
 
-## Roadmap from the specification
+If `codeatlas` is not found after a global install, inspect npm's global binary directory with
+`npm prefix --global`, ensure that directory is on `PATH`, and restart the MCP host. If native
+dependency installation fails, confirm that Node.js 24 and a supported current operating system
+are in use, then retry from a clean npm cache.
 
-1. Packaging and public release validation.
+## Project status
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
-[CHANGELOG.md](CHANGELOG.md).
+All eight revised implementation phases and the MVP acceptance contract are complete. Possible
+post-MVP distribution work includes Homebrew, standalone binaries, and Windows package-manager
+support; npm remains the primary distribution.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md), [RELEASING.md](RELEASING.md),
+[SECURITY.md](SECURITY.md), and [CHANGELOG.md](CHANGELOG.md).

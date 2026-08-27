@@ -67,10 +67,11 @@ export function formatInitResult(result: InitResult): string {
     result.parseErrors > 0
       ? `! ${result.parseErrors} files contain parse errors`
       : "✓ All supported source files parsed",
-    "✓ CodeAtlas architecture index is ready",
+    "✓ CodeAtlas is ready",
     "",
     "Run:",
     "  codeatlas status",
+    "  codeatlas mcp",
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
