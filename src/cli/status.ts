@@ -25,6 +25,8 @@ export interface StatusResult {
   symbols: number;
   edges: number;
   features: number;
+  apiRoutes: number;
+  databaseModels: number;
   lastIndexedAt: string | null;
   currentFingerprint: string;
   indexedFingerprint: string | null;
@@ -57,9 +59,19 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
           (SELECT count(*) FROM nodes
             WHERE kind NOT IN ('repository', 'directory', 'file', 'module')) AS symbols,
           (SELECT count(*) FROM edges) AS edges,
-          (SELECT count(*) FROM nodes WHERE kind = 'feature') AS features`,
+          (SELECT count(*) FROM nodes WHERE kind = 'feature') AS features,
+          (SELECT count(*) FROM nodes WHERE kind = 'api_route') AS apiRoutes,
+          (SELECT count(*) FROM nodes WHERE kind = 'database_model') AS databaseModels`,
       )
-      .get() as { files: number; nodes: number; symbols: number; edges: number; features: number };
+      .get() as {
+        files: number;
+        nodes: number;
+        symbols: number;
+        edges: number;
+        features: number;
+        apiRoutes: number;
+        databaseModels: number;
+      };
     const indexedFingerprint = state.dirty_fingerprint ?? null;
     const configIsCurrent = state.config_hash === sha256(JSON.stringify(config));
     const indexContractIsCurrent =
@@ -80,6 +92,8 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
       symbols: counts.symbols,
       edges: counts.edges,
       features: counts.features,
+      apiRoutes: counts.apiRoutes,
+      databaseModels: counts.databaseModels,
       lastIndexedAt: state.last_indexed_at ?? null,
       currentFingerprint: current.fingerprint,
       indexedFingerprint,
@@ -101,6 +115,8 @@ export function formatStatus(result: StatusResult): string {
     `  Files: ${result.files}`,
     `  Symbols: ${result.symbols}`,
     `  Relationships: ${result.edges}`,
+    `  API routes: ${result.apiRoutes}`,
+    `  Database models: ${result.databaseModels}`,
     `  Features: ${result.features}`,
     "",
     `Last indexed: ${result.lastIndexedAt ?? "never"}`,

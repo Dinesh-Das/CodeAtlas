@@ -26,6 +26,10 @@ export function formatIndexResult(result: IndexResult): string {
       : null,
     result.deletedFiles > 0 ? `✓ Removed ${result.deletedFiles} deleted files` : null,
     result.fullRebuild ? "✓ Completed a required full graph rebuild" : null,
+    result.apiRoutes > 0 ? `✓ Detected ${result.apiRoutes} API routes` : null,
+    result.databaseModels > 0
+      ? `✓ Detected ${result.databaseModels} database models`
+      : null,
     `✓ Graph contains ${result.symbols} symbols and ${result.edges} relationships`,
     result.parseErrors > 0 ? `! ${result.parseErrors} files contain parse errors` : null,
   ]

@@ -5,6 +5,7 @@ import { detectRepository } from "../git/repository.js";
 import { getJournalMode, openDatabase, verifyDatabase } from "../storage/database.js";
 import { SCHEMA_VERSION } from "../version.js";
 import { availableLanguageAdapters } from "../parser/registry.js";
+import { availableFrameworkAdapters } from "../framework/registry.js";
 
 export interface DoctorCheck {
   name: string;
@@ -52,6 +53,13 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
       detail: error instanceof Error ? error.message : String(error),
     });
   }
+
+  const frameworkAdapters = availableFrameworkAdapters();
+  checks.push({
+    name: "Framework adapters",
+    ok: frameworkAdapters.length === 4,
+    detail: frameworkAdapters.map((adapter) => adapter.name).join(", "),
+  });
 
   let repository;
   try {

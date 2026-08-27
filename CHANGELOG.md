@@ -2,6 +2,27 @@
 
 All notable changes follow semantic versioning.
 
+## 0.5.0 - 2026-08-27
+
+### Added
+
+- Phase 5 framework-adapter registry kept separate from generic language parsing.
+- Express and FastAPI route extraction with `api_route`, `EXPOSES`, and `HANDLES` graph facts.
+- Prisma and SQLAlchemy model extraction with `database_model`, containment, mapped-class, and
+  local model-reference relationships.
+- Source evidence, deterministic IDs, literal-safe route/table hashes, framework counts, and
+  known framework fixture coverage.
+- Optional `analysis.frameworks` configuration with backward-compatible enablement for existing
+  version 1 configurations.
+
+### Changed
+
+- Index results, initialization output, status, manifest, and state now report API routes,
+  database models, and detected frameworks.
+- Configuration changes now trigger a required transactional rebuild so optional analyses cannot
+  leave stale semantic nodes.
+- The indexing contract is now `frameworks-5` and CodeAtlas is version `0.5.0`.
+
 ## 0.4.0 - 2026-08-27
 
 ### Added

@@ -55,6 +55,10 @@ export function formatInitResult(result: InitResult): string {
     `✓ Indexed ${result.files} files`,
     `✓ Extracted ${result.symbols} symbols`,
     `✓ Created ${result.edges} graph relationships`,
+    result.apiRoutes > 0 ? `✓ Detected ${result.apiRoutes} API routes` : null,
+    result.databaseModels > 0
+      ? `✓ Detected ${result.databaseModels} database models`
+      : null,
     result.parseErrors > 0
       ? `! ${result.parseErrors} files contain parse errors`
       : "✓ All supported source files parsed",
@@ -62,5 +66,7 @@ export function formatInitResult(result: InitResult): string {
     "",
     "Run:",
     "  codeatlas status",
-  ].join("\n");
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
 }

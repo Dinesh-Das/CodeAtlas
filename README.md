@@ -3,8 +3,8 @@
 CodeAtlas builds a local, persistent structural index of a Git repository. The long-term
 product exposes an evidence-bearing knowledge graph to AI coding agents through MCP; the
 current implementation includes the Phase 1 foundation, Phase 2 structural indexer, Phase 3
-relationship resolver/MCP contract, and Phase 4 incremental indexing defined by the product
-specification.
+relationship resolver/MCP contract, Phase 4 incremental indexing, and Phase 5 framework adapters
+defined by the product specification.
 
 The governing principle is simple: the working tree owns the facts, deterministic analysis
 structures those facts, and an LLM may explain them later.
@@ -36,6 +36,9 @@ structures those facts, and an LLM may explain them later.
   reparsing unrelated files.
 - Identity-preserving Git renames at 50% or greater similarity, recorded with `RENAMED_FROM`
   provenance edges; lower-similarity moves remain delete plus create.
+- Optional, separately registered framework adapters for Express, FastAPI, Prisma, and SQLAlchemy.
+- Evidence-bearing `api_route` and `database_model` nodes with `EXPOSES`, `HANDLES`,
+  `CONTAINS`, and `REFERENCES` relationships.
 - Official-SDK MCP stdio server with all ten required tools, validated inputs, typed Answer
   Packets, configured limits, and a mandatory freshness gate before every tool call.
 - Parser and call-graph snapshots plus unit, integration, compiled-CLI, and MCP protocol tests
@@ -135,6 +138,19 @@ confidence, and evidence metadata. Python exports inferred from public-name conv
 explicitly marked `heuristic` with lower confidence; `__all__` exports are deterministic AST
 facts.
 
+## Supported frameworks
+
+| Framework | Extraction |
+|---|---|
+| Express | Application/router HTTP calls and local handler relationships |
+| FastAPI | Decorated application/router routes and handler relationships |
+| Prisma | Schema models, fields, and local model references |
+| SQLAlchemy | Declarative mapped classes, mapped fields, and local model relationships |
+
+Framework analysis is deterministic and optional. Route and database-table string literals are
+used transiently for extraction but are persisted only as hashes; route methods, handler/model
+identifiers, evidence locations, and structural relationships remain queryable.
+
 ## Configuration
 
 `.codeatlas/config.json` is created with:
@@ -150,7 +166,8 @@ facts.
   "analysis": {
     "gitHistory": true,
     "technicalDebt": true,
-    "featureDetection": true
+    "featureDetection": true,
+    "frameworks": true
   },
   "limits": {
     "maxTraversalDepth": 10,
@@ -196,6 +213,7 @@ Modules remain one-directional:
 ```text
 CLI → Indexer → Core / Git / Graph / Storage
               ↘ Tree-sitter language adapters
+              ↘ Optional framework adapters
 MCP → Freshness gate → Graph query contracts
 ```
 
@@ -206,6 +224,7 @@ MCP → Freshness gate → Graph query contracts
 - `src/storage`: SQLite lifecycle, migrations, repositories, and FTS search
 - `src/indexer`: orchestration and transactional graph writes
 - `src/parser`: normalized parser contract, adapter registry, and Tree-sitter implementations
+- `src/framework`: optional detection and semantic extraction kept separate from language parsing
 - `src/mcp`: provider-independent schemas, freshness gate, packets, and stdio server
 
 Parser code will not depend on MCP. MCP tools will not parse source. Graph/storage entities do
@@ -226,9 +245,9 @@ CodeAtlas will not discard it and fall back to defaults.
 
 ## Roadmap from the specification
 
-1. Express, FastAPI, Prisma, and SQLAlchemy adapters.
-2. Feature/domain grouping, cycles, coupling, churn, and health signals.
-3. Full grounded MCP query tools, hardening, packaging, and public release documentation.
+1. Feature/domain grouping, cycles, coupling, churn, and health signals.
+2. Full grounded MCP query tools and accuracy hardening.
+3. Packaging and public release validation.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
 [CHANGELOG.md](CHANGELOG.md).

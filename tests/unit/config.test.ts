@@ -25,6 +25,26 @@ describe("configuration", () => {
     await expect(loadConfig(root)).resolves.toEqual(expected);
   });
 
+  it("defaults framework analysis on for existing version 1 configurations", async () => {
+    const root = await tempRoot();
+    await writeFile(
+      path.join(root, ".codeatlas", "config.json"),
+      JSON.stringify({
+        version: 1,
+        languages: { typescript: true, javascript: true, python: true },
+        analysis: { gitHistory: true, technicalDebt: true, featureDetection: true },
+        limits: {
+          maxTraversalDepth: 10,
+          maxSourceSnippetLines: 120,
+          maxMcpResultNodes: 200,
+        },
+      }),
+      "utf8",
+    );
+
+    await expect(loadConfig(root)).resolves.toHaveProperty("analysis.frameworks", true);
+  });
+
   it("fails instead of silently replacing malformed JSON", async () => {
     const root = await tempRoot();
     await writeFile(path.join(root, ".codeatlas", "config.json"), "{ nope", "utf8");

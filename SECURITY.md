@@ -19,6 +19,10 @@ labeled `untrusted_repository_content`.
 The index writer uses an exclusive repository-local lock and a single SQLite transaction. WAL
 mode permits readers to see a prior committed graph rather than partially written state.
 
+Framework adapters do not persist route or database-table string literal values. They retain
+only cryptographic hashes alongside methods, structural identifiers, relationships, and source
+evidence.
+
 Users should still protect `.codeatlas/` with normal filesystem permissions. Although the
 database is automatically ignored by Git, it contains repository names, paths, symbol metadata
 in later phases, and structural relationships.

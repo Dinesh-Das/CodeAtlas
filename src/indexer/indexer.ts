@@ -13,6 +13,12 @@ import {
   type DetectedLanguage,
 } from "../core/languages.js";
 import { acquireIndexLock, workspacePaths, writeJsonAtomic } from "../core/workspace.js";
+import {
+  availableFrameworkAdapters,
+  extractFrameworkGraph,
+  mergeFrameworkGraph,
+  supportsFrameworkExtraction,
+} from "../framework/registry.js";
 import { createEdgeId, createNodeId } from "../graph/ids.js";
 import {
   loadRenamePathAliases,
@@ -64,7 +70,10 @@ export interface IndexResult {
   edges: number;
   symbols: number;
   parseErrors: number;
+  apiRoutes: number;
+  databaseModels: number;
   languages: Record<string, number>;
+  frameworks: string[];
   indexedAt: string;
 }
 
@@ -77,13 +86,22 @@ interface IndexedCandidate {
   parseStatus: string;
   adapterVersion: string;
   parsedFile: ParsedFile | null;
+  detectedFrameworks: string[];
 }
 
 function initialParseStatus(
   language: DetectedLanguage | null,
   enabled: { typescript: boolean; javascript: boolean; python: boolean },
   hasAdapter: boolean,
+  hasFrameworkAdapter: boolean,
 ): string {
+  if (
+    hasFrameworkAdapter &&
+    (language === null || isLanguageEnabled(language, enabled)) &&
+    !isSourceLanguage(language)
+  ) {
+    return "pending_framework";
+  }
   if (language === null) return "unsupported";
   if (!isLanguageEnabled(language, enabled)) return "disabled";
   if (isSourceLanguage(language)) return hasAdapter ? "pending_parse" : "unsupported_parser";
@@ -92,8 +110,17 @@ function initialParseStatus(
 }
 
 function statusMatches(previous: string, current: string): boolean {
-  if (current !== "pending_parse") return previous === current;
-  return previous === "parsed" || previous === "parsed_with_errors" || previous === "parse_error";
+  if (current === "pending_parse") {
+    return (
+      previous === "parsed" ||
+      previous === "parsed_with_errors" ||
+      previous === "parse_error"
+    );
+  }
+  if (current === "pending_framework") {
+    return previous === "parsed" || previous === "metadata_only" || previous === "parse_error";
+  }
+  return previous === current;
 }
 
 function graphNode(input: Partial<GraphNode> & Pick<GraphNode, "id" | "kind" | "name">): GraphNode {
@@ -166,13 +193,22 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         const language = detectLanguage(file.relativePath);
         const adapter = getLanguageAdapter(language);
         const enabled = isLanguageEnabled(language, config.languages);
+        const frameworkSupported =
+          config.analysis.frameworks &&
+          supportsFrameworkExtraction(file.relativePath, language);
         return {
           ...file,
           language,
           contentHash: await hashFile(file.absolutePath),
-          parseStatus: initialParseStatus(language, config.languages, adapter !== null),
+          parseStatus: initialParseStatus(
+            language,
+            config.languages,
+            adapter !== null,
+            frameworkSupported,
+          ),
           adapterVersion: enabled && adapter !== null ? adapter.version : "none",
           parsedFile: null,
+          detectedFrameworks: [],
         };
       },
     );
@@ -200,6 +236,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       );
       const storedRoot = getRepositoryState(database, "repository_root");
       const storedCommit = getRepositoryState(database, "last_indexed_commit");
+      const configHash = sha256(JSON.stringify(config));
       const gitState = await detectGitState(repository.root, storedCommit, repository.headCommit);
       const indexerChanged = getRepositoryState(database, "indexer_version") !== INDEXER_VERSION;
       const schemaChanged =
@@ -214,11 +251,14 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           previous.adapterVersion !== current.adapterVersion
         );
       });
+      const storedConfigHash = getRepositoryState(database, "config_hash");
+      const configChanged = storedConfigHash !== null && storedConfigHash !== configHash;
       const fullRebuild =
         options.full === true ||
         schemaChanged ||
         parserChanged ||
         indexerChanged ||
+        configChanged ||
         (storedRoot !== null && storedRoot !== repository.root) ||
         !gitState.historyConsistent;
       const changes = classifyRepositoryChanges(
@@ -278,29 +318,55 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
               invalidatedPaths.has(candidate.relativePath),
           );
       await mapWithConcurrency(changed, 4, async (candidate) => {
-        if (candidate.parseStatus !== "pending_parse") return;
-        const adapter = getLanguageAdapter(candidate.language);
-        if (adapter === null) {
-          candidate.parseStatus = "unsupported_parser";
-          return;
+        let content: string | null = null;
+        if (candidate.parseStatus === "pending_parse") {
+          const adapter = getLanguageAdapter(candidate.language);
+          if (adapter === null) {
+            candidate.parseStatus = "unsupported_parser";
+          } else {
+            try {
+              content = await readFile(candidate.absolutePath, "utf8");
+              candidate.parsedFile = adapter.parseFile({
+                repositoryId: repository.id,
+                repositoryRoot: repository.root,
+                relativeFilePath: candidate.relativePath,
+                language: candidate.language ?? adapter.language,
+                content,
+                contentHash: candidate.contentHash,
+              });
+              candidate.parseStatus = candidate.parsedFile.errors.some(
+                (diagnostic) => diagnostic.severity === "error",
+              )
+                ? "parsed_with_errors"
+                : "parsed";
+            } catch {
+              candidate.parsedFile = null;
+              candidate.parseStatus = "parse_error";
+            }
+          }
         }
-        try {
-          candidate.parsedFile = adapter.parseFile({
+
+        const frameworkSupported =
+          config.analysis.frameworks &&
+          supportsFrameworkExtraction(candidate.relativePath, candidate.language) &&
+          (candidate.language === null ||
+            isLanguageEnabled(candidate.language, config.languages));
+        if (frameworkSupported) {
+          content ??= await readFile(candidate.absolutePath, "utf8");
+          const extraction = extractFrameworkGraph({
             repositoryId: repository.id,
             repositoryRoot: repository.root,
             relativeFilePath: candidate.relativePath,
-            language: candidate.language ?? adapter.language,
-            content: await readFile(candidate.absolutePath, "utf8"),
+            language: candidate.language,
+            content,
             contentHash: candidate.contentHash,
+            parsedFile: candidate.parsedFile,
           });
-          candidate.parseStatus = candidate.parsedFile.errors.some(
-            (diagnostic) => diagnostic.severity === "error",
-          )
-            ? "parsed_with_errors"
-            : "parsed";
-        } catch {
-          candidate.parsedFile = null;
-          candidate.parseStatus = "parse_error";
+          candidate.detectedFrameworks = extraction.detectedFrameworks;
+          candidate.parsedFile = mergeFrameworkGraph(candidate.parsedFile, extraction);
+          if (candidate.parseStatus === "pending_framework") {
+            candidate.parseStatus = candidate.parsedFile === null ? "metadata_only" : "parsed";
+          }
         }
       });
       const renamePlans = new Map<string, RenamePlan>();
@@ -325,7 +391,6 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         }
       }
       const indexedAt = new Date().toISOString();
-      const configHash = sha256(JSON.stringify(config));
       const changedPaths = new Set(changed.map((candidate) => candidate.relativePath));
       const directoryPaths = getDirectoryPaths(candidates);
       const currentDirectoryPaths = new Set(directoryPaths);
@@ -468,6 +533,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
                   sizeBytes: candidate.sizeBytes,
                   diagnosticCount: candidate.parsedFile?.errors.length ?? 0,
                   unresolvedReferenceCount: candidate.parsedFile?.unresolvedReferences.length ?? 0,
+                  frameworks: candidate.detectedFrameworks,
                 },
               }),
               indexedAt,
@@ -552,16 +618,36 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             (SELECT count(*) FROM edges) AS edges,
             (SELECT count(*) FROM nodes
               WHERE kind NOT IN ('repository', 'directory', 'file', 'module')) AS symbols,
+            (SELECT count(*) FROM nodes WHERE kind = 'api_route') AS apiRoutes,
+            (SELECT count(*) FROM nodes WHERE kind = 'database_model') AS databaseModels,
             (SELECT count(*) FROM files
               WHERE parse_status IN ('parsed_with_errors', 'parse_error')) AS parseErrors`,
         )
-        .get() as { nodes: number; edges: number; symbols: number; parseErrors: number };
+        .get() as {
+          nodes: number;
+          edges: number;
+          symbols: number;
+          apiRoutes: number;
+          databaseModels: number;
+          parseErrors: number;
+        };
       const languages: Record<string, number> = {};
       for (const candidate of candidates) {
         if (candidate.language !== null) {
           languages[candidate.language] = (languages[candidate.language] ?? 0) + 1;
         }
       }
+      const frameworks = (
+        database
+          .prepare(
+            `SELECT DISTINCT json_extract(metadata_json, '$.framework') AS framework
+             FROM nodes
+             WHERE kind IN ('api_route', 'database_model')
+               AND json_extract(metadata_json, '$.framework') IS NOT NULL
+             ORDER BY framework`,
+          )
+          .all() as Array<{ framework: string }>
+      ).map((row) => row.framework);
 
       const createdAt = await readCreatedAt(paths.manifest, indexedAt);
       await writeJsonAtomic(paths.manifest, {
@@ -573,6 +659,10 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         parserVersion: TREE_SITTER_VERSION,
         adapters: Object.fromEntries(
           availableLanguageAdapters().map((adapter) => [adapter.language, adapter.version]),
+        ),
+        frameworks,
+        frameworkAdapters: Object.fromEntries(
+          availableFrameworkAdapters().map((adapter) => [adapter.name, adapter.version]),
         ),
         createdAt,
         updatedAt: indexedAt,
@@ -589,6 +679,8 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         edges: counts.edges,
         symbols: counts.symbols,
         parseErrors: counts.parseErrors,
+        apiRoutes: counts.apiRoutes,
+        databaseModels: counts.databaseModels,
         changes: {
           updated: changed.length,
           added: changes.added.length,
@@ -617,7 +709,10 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         edges: counts.edges,
         symbols: counts.symbols,
         parseErrors: counts.parseErrors,
+        apiRoutes: counts.apiRoutes,
+        databaseModels: counts.databaseModels,
         languages,
+        frameworks,
         indexedAt,
       };
     } finally {

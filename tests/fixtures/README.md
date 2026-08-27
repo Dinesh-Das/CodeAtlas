@@ -14,4 +14,6 @@ evidence, confidence, signatures, and literal-value redaction. Phase 3 relations
 exact call-graph snapshots for imports, calls, inheritance, implementations, general references,
 and distance-scaled ambiguous candidates. Integration fixtures are additionally created as
 temporary Git repositories so tests exercise tracked, untracked, modified, and deleted
-working-tree state.
+working-tree state. Phase 5 fixtures cover Express and FastAPI routes plus Prisma and SQLAlchemy
+models, including evidence, handler/model relationships, incremental replacement, optional
+disablement, and literal-value redaction.

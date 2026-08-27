@@ -19,6 +19,7 @@ export const configSchema = z
         gitHistory: z.boolean(),
         technicalDebt: z.boolean(),
         featureDetection: z.boolean(),
+        frameworks: z.boolean().default(true),
       })
       .strict(),
     limits: z
@@ -44,6 +45,7 @@ export const DEFAULT_CONFIG: CodeAtlasConfig = {
     gitHistory: true,
     technicalDebt: true,
     featureDetection: true,
+    frameworks: true,
   },
   limits: {
     maxTraversalDepth: 10,
