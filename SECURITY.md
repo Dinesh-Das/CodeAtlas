@@ -13,8 +13,11 @@ real credentials and proprietary source from the report.
 
 CodeAtlas is local-first and performs no telemetry or source upload. It never indexes known
 secret-file paths and never stores complete source files. Repository files, comments, and
-documentation are untrusted input; future source snippets exposed over MCP will always be
+documentation are untrusted input; source snippets exposed over MCP are always
 labeled `untrusted_repository_content`.
+
+The source tool resolves indexed paths against the current repository root and rejects paths that
+resolve outside it. Source responses are capped by `limits.maxSourceSnippetLines`.
 
 The index writer uses an exclusive repository-local lock and a single SQLite transaction. WAL
 mode permits readers to see a prior committed graph rather than partially written state.

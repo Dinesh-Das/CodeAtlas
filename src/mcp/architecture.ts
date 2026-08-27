@@ -1,8 +1,14 @@
-import { CodeAtlasError } from "../core/errors.js";
 import type { SourceType } from "../graph/types.js";
 import { workspacePaths } from "../core/workspace.js";
 import { openDatabase, type AtlasDatabase } from "../storage/database.js";
 import type { FreshContext } from "./freshness.js";
+import {
+  decodeCursor as decodeOffset,
+  encodeCursor as encodeOffset,
+  evidenceFrom as evidence,
+  freshnessFor as freshness,
+  parseMetadata as metadata,
+} from "./query.js";
 import { answerPacketSchema, type AnswerPacket } from "./schemas.js";
 
 interface PageInput {
@@ -48,73 +54,6 @@ interface EdgeRow {
   file_path: string | null;
   line: number | null;
   metadata_json: string | null;
-}
-
-function decodeOffset(cursor: string | null | undefined, kind: string): number {
-  if (cursor === null || cursor === undefined) return 0;
-  try {
-    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as {
-      version?: unknown;
-      kind?: unknown;
-      offset?: unknown;
-    };
-    if (
-      value.version !== 1 ||
-      value.kind !== kind ||
-      !Number.isInteger(value.offset) ||
-      (value.offset as number) < 0
-    ) {
-      throw new Error("invalid cursor payload");
-    }
-    return value.offset as number;
-  } catch (error) {
-    throw new CodeAtlasError("Invalid pagination cursor.", { cause: error });
-  }
-}
-
-function encodeOffset(offset: number, kind: string): string {
-  return Buffer.from(JSON.stringify({ version: 1, kind, offset }), "utf8").toString(
-    "base64url",
-  );
-}
-
-function metadata(value: string | null): Record<string, unknown> {
-  if (value === null) return {};
-  try {
-    return JSON.parse(value) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-}
-
-function evidence(
-  metadataValue: Record<string, unknown>,
-  fallbackFile: string | null,
-  fallbackLine: number | null,
-): { file: string; line: number; column?: number } {
-  const stored = metadataValue.evidence;
-  if (typeof stored === "object" && stored !== null) {
-    const value = stored as { file?: unknown; line?: unknown; column?: unknown };
-    if (typeof value.file === "string" && typeof value.line === "number" && value.line > 0) {
-      return {
-        file: value.file,
-        line: value.line,
-        ...(typeof value.column === "number" && value.column >= 0
-          ? { column: value.column }
-          : {}),
-      };
-    }
-  }
-  return { file: fallbackFile ?? ".", line: fallbackLine ?? 1 };
-}
-
-function freshness(context: FreshContext): AnswerPacket["freshness"] {
-  return {
-    fingerprint: context.status.currentFingerprint,
-    head_commit: context.status.headCommit,
-    working_tree_checked: true,
-    checked_at: context.checkedAt,
-  };
 }
 
 function overviewStatement(row: OverviewRow, value: Record<string, unknown>): string {

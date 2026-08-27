@@ -3,8 +3,8 @@
 CodeAtlas builds a local, persistent structural index of a Git repository. The long-term
 product exposes an evidence-bearing knowledge graph to AI coding agents through MCP; the
 current implementation includes the Phase 1 foundation, Phase 2 structural indexer, Phase 3
-relationship resolver/MCP contract, Phase 4 incremental indexing, and Phase 5 framework adapters
-plus the Phase 6 architecture-analysis layer defined by the product specification.
+relationship resolver/MCP contract, Phase 4 incremental indexing, Phase 5 framework adapters,
+Phase 6 architecture analysis, and the complete Phase 7 grounded MCP query layer.
 
 The governing principle is simple: the working tree owns the facts, deterministic analysis
 structures those facts, and an LLM may explain them later.
@@ -44,15 +44,20 @@ structures those facts, and an LLM may explain them later.
   metrics.
 - Evidence-bearing cycle, high-coupling, large-symbol/file, and churn/connectivity hotspot signals.
 - Meaningful, paginated `codeatlas_overview` and `codeatlas_health` MCP responses.
+- Graph-backed status, search, node detail, feature explanation, execution trace, impact,
+  dependency-neighborhood, and current-source MCP responses.
+- Bounded traversal, definite-versus-potential impact classification, opaque query-bound cursors,
+  ambiguity reporting, and stable node IDs for follow-up queries.
+- Current-working-tree source excerpts capped by configuration, path-contained within the
+  repository, and labeled `untrusted_repository_content`.
 - Official-SDK MCP stdio server with all ten required tools, validated inputs, typed Answer
   Packets, configured limits, and a mandatory freshness gate before every tool call.
 - Parser and call-graph snapshots plus unit, integration, compiled-CLI, and MCP protocol tests
   using disposable Git repositories.
 
-The Phase 6 overview and health tools return graph-backed facts and relationships. The remaining
-Phase 3 MCP tool contracts still return grounded empty result sets with an
-`insufficient_evidence` uncertainty until the Phase 7 query implementation fills them without
-changing the protocol shape.
+All ten required MCP tools return grounded Answer Packets. Structural facts and relationships
+carry confidence and file/line evidence; unresolved or ambiguous queries explicitly report an
+uncertainty rather than selecting a candidate silently.
 
 ## Requirements
 
@@ -131,6 +136,11 @@ checks the current repository fingerprint and performs an incremental index upda
 All source snippets in the stable Answer Packet contract are labeled
 `untrusted_repository_content`.
 
+The available tools are `codeatlas_status`, `codeatlas_overview`, `codeatlas_search`,
+`codeatlas_get_node`, `codeatlas_explain_feature`, `codeatlas_trace`, `codeatlas_impact`,
+`codeatlas_dependencies`, `codeatlas_source`, and `codeatlas_health`. Search and other node facts
+include a stable `node_id` in their statement so a client can pass it to follow-up tools.
+
 ## Supported syntax
 
 | Configuration switch | Parsed syntax |
@@ -179,6 +189,7 @@ identifiers, evidence locations, and structural relationships remain queryable.
     "maxTraversalDepth": 10,
     "maxSourceSnippetLines": 120,
     "maxMcpResultNodes": 200,
+    "maxExecutionPaths": 20,
     "largeFileLines": 500,
     "largeSymbolLines": 80,
     "highFanIn": 10,
@@ -256,9 +267,9 @@ not contain Tree-sitter-specific objects.
 ## Privacy
 
 CodeAtlas has no cloud account, remote database, telemetry, API key, or network upload path.
-It does not call an LLM. Future MCP source-evidence responses may be sent elsewhere by the
-user's configured MCP host/model; that is separate from CodeAtlas itself and will be labeled
-as untrusted repository content.
+It does not call an LLM. MCP source-evidence responses may be sent elsewhere by the user's
+configured MCP host/model; that is separate from CodeAtlas itself, and snippets are labeled as
+untrusted repository content.
 
 ## Troubleshooting
 
@@ -268,8 +279,7 @@ CodeAtlas will not discard it and fall back to defaults.
 
 ## Roadmap from the specification
 
-1. Complete the remaining grounded MCP query tools and accuracy hardening.
-2. Packaging and public release validation.
+1. Packaging and public release validation.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
 [CHANGELOG.md](CHANGELOG.md).

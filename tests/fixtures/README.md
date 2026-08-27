@@ -18,4 +18,7 @@ working-tree state. Phase 5 fixtures cover Express and FastAPI routes plus Prism
 models, including evidence, handler/model relationships, incremental replacement, optional
 disablement, and literal-value redaction. Phase 6 medium-repository fixtures exercise deterministic
 features/domains, dependency communities, cycles, coupling thresholds, Git-backed hotspots, and
-paginated evidence-bearing overview/health packets.
+paginated evidence-bearing overview/health packets. Phase 7 accuracy fixtures cover every required
+MCP tool, current-working-tree source ranges, snippet limits, untrusted-content labels,
+multi-candidate uncertainty, query-bound pagination, dirty refresh, rename preservation, and
+deleted-node cleanup.

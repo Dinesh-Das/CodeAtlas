@@ -1,0 +1,780 @@
+import { workspacePaths } from "../core/workspace.js";
+import type { EdgeType, NodeKind } from "../graph/types.js";
+import { openDatabase, type AtlasDatabase } from "../storage/database.js";
+import type { FreshContext } from "./freshness.js";
+import {
+  decodeCursor,
+  encodeCursor,
+  evidenceForNode,
+  evidenceFrom,
+  freshnessFor,
+  getNodesByIds,
+  listEdgesForNode,
+  nodeFact,
+  parseMetadata,
+  queryEdges,
+  relationshipFromEdge,
+  resolveTarget,
+  uncertaintiesForNodes,
+  type StoredEdge,
+  type StoredNode,
+} from "./query.js";
+import { answerPacketSchema, type AnswerPacket } from "./schemas.js";
+
+interface PageInput {
+  cursor?: string | null;
+  limit: number;
+}
+
+interface SearchInput extends PageInput {
+  query: string;
+}
+
+interface DependenciesInput extends PageInput {
+  target: string;
+  direction: "incoming" | "outgoing" | "both";
+}
+
+interface TraceInput extends PageInput {
+  start: string;
+  max_depth: number;
+}
+
+interface ImpactInput extends PageInput {
+  target: string;
+}
+
+interface ExplainFeatureInput extends PageInput {
+  feature: string;
+}
+
+const SEARCHABLE_KINDS: readonly NodeKind[] = [
+  "file",
+  "class",
+  "interface",
+  "function",
+  "method",
+  "variable",
+  "api_route",
+  "database_model",
+  "database_table",
+  "external_service",
+  "test",
+  "feature",
+  "domain",
+];
+
+const DEPENDENCY_EDGE_TYPES: readonly EdgeType[] = [
+  "IMPORTS",
+  "CALLS",
+  "REFERENCES",
+  "EXTENDS",
+  "IMPLEMENTS",
+  "DEPENDS_ON",
+  "READS_FROM",
+  "WRITES_TO",
+  "HANDLES",
+  "TRIGGERS",
+  "PUBLISHES",
+  "SUBSCRIBES",
+  "TESTS",
+  "CONFIGURES",
+  "USES_EXTERNAL_SERVICE",
+];
+
+const TRACE_EDGE_TYPES: readonly EdgeType[] = [
+  "HANDLES",
+  "CALLS",
+  "DEPENDS_ON",
+  "IMPORTS",
+  "READS_FROM",
+  "WRITES_TO",
+  "USES_EXTERNAL_SERVICE",
+  "TRIGGERS",
+  "PUBLISHES",
+  "SUBSCRIBES",
+  "REFERENCES",
+];
+
+function packet(
+  value: Omit<AnswerPacket, "freshness">,
+  context: FreshContext,
+): AnswerPacket {
+  return answerPacketSchema.parse({ ...value, freshness: freshnessFor(context) });
+}
+
+function noTargetPacket(
+  tool: string,
+  topic: string,
+  context: FreshContext,
+  uncertainty: AnswerPacket["uncertainties"][number],
+): AnswerPacket {
+  return packet(
+    {
+      answer_context: { topic, tool },
+      facts: [],
+      relationships: [],
+      source_snippets: [],
+      uncertainties: [uncertainty],
+      pagination: { cursor: null, has_more: false },
+    },
+    context,
+  );
+}
+
+function withDatabase<T>(context: FreshContext, callback: (database: AtlasDatabase) => T): T {
+  const database = openDatabase(workspacePaths(context.status.root).database, { readonly: true });
+  try {
+    return callback(database);
+  } finally {
+    database.close();
+  }
+}
+
+function searchExpression(query: string): string | null {
+  const terms = query.match(/[\p{L}\p{N}_$-]+/gu) ?? [];
+  if (terms.length === 0) return null;
+  return terms
+    .map((term) => `"${term.replaceAll('"', '""')}"*`)
+    .join(" AND ");
+}
+
+function searchNodes(
+  database: AtlasDatabase,
+  query: string,
+  limit: number,
+  offset: number,
+): StoredNode[] {
+  const kinds = SEARCHABLE_KINDS.map(() => "?").join(", ");
+  const expression = searchExpression(query);
+  if (expression !== null) {
+    return database
+      .prepare(
+        `SELECT
+           nodes.id, nodes.kind, nodes.name,
+           nodes.qualified_name AS qualifiedName, nodes.file_path AS filePath,
+           nodes.language, nodes.start_line AS startLine,
+           nodes.start_column AS startColumn, nodes.end_line AS endLine,
+           nodes.end_column AS endColumn, nodes.signature, nodes.visibility,
+           nodes.source_type AS sourceType, nodes.confidence,
+           nodes.metadata_json AS metadataJson
+         FROM nodes_fts
+         JOIN nodes ON nodes.id = nodes_fts.id
+         WHERE nodes_fts MATCH ? AND nodes.kind IN (${kinds})
+         ORDER BY bm25(nodes_fts), nodes.kind, nodes.name, nodes.id
+         LIMIT ? OFFSET ?`,
+      )
+      .all(expression, ...SEARCHABLE_KINDS, limit, offset) as StoredNode[];
+  }
+
+  return database
+    .prepare(
+      `SELECT
+         id, kind, name, qualified_name AS qualifiedName, file_path AS filePath,
+         language, start_line AS startLine, start_column AS startColumn,
+         end_line AS endLine, end_column AS endColumn, signature, visibility,
+         source_type AS sourceType, confidence, metadata_json AS metadataJson
+       FROM nodes
+       WHERE kind IN (${kinds})
+         AND (instr(lower(name), lower(?)) > 0
+           OR instr(lower(coalesce(qualified_name, '')), lower(?)) > 0
+           OR instr(lower(coalesce(file_path, '')), lower(?)) > 0)
+       ORDER BY kind, name, id
+       LIMIT ? OFFSET ?`,
+    )
+    .all(...SEARCHABLE_KINDS, query, query, query, limit, offset) as StoredNode[];
+}
+
+export function searchPacket(context: FreshContext, input: SearchInput): AnswerPacket {
+  return withDatabase(context, (database) => {
+    const scope = input.query.trim().toLowerCase();
+    const offset = decodeCursor(input.cursor, "search", scope);
+    const rows = searchNodes(database, input.query, input.limit + 1, offset);
+    const hasMore = rows.length > input.limit;
+    const page = rows.slice(0, input.limit);
+    const uncertainties: AnswerPacket["uncertainties"] = [];
+    if (page.length === 0) {
+      uncertainties.push({
+        description: `CodeAtlas found no indexed graph nodes matching ${JSON.stringify(input.query)}.`,
+        reason: "insufficient_evidence",
+        candidates: [],
+      });
+    }
+    const heuristic = page.filter((node) => node.sourceType === "heuristic");
+    if (heuristic.length > 0) {
+      uncertainties.push({
+        description: "Some search results are heuristic architecture groups.",
+        reason: "heuristic_only",
+        candidates: heuristic.map((node) => node.id),
+      });
+    }
+    return packet(
+      {
+        answer_context: { topic: input.query, tool: "codeatlas_search" },
+        facts: page.map((node) => nodeFact(node, "Search result")),
+        relationships: [],
+        source_snippets: [],
+        uncertainties,
+        pagination: {
+          cursor: hasMore ? encodeCursor(offset + input.limit, "search", scope) : null,
+          has_more: hasMore,
+        },
+      },
+      context,
+    );
+  });
+}
+
+function descriptiveFacts(node: StoredNode): AnswerPacket["facts"] {
+  const facts = [nodeFact(node)];
+  const details = [
+    node.language === null ? null : `language ${node.language}`,
+    node.visibility === null ? null : `visibility ${node.visibility}`,
+    node.signature === null ? null : `signature ${node.signature}`,
+  ].filter((value): value is string => value !== null);
+  if (details.length > 0) {
+    facts.push({
+      statement: `${node.name} has ${details.join(", ")}.`,
+      confidence: node.confidence,
+      source_type: node.sourceType,
+      evidence: evidenceForNode(node),
+    });
+  }
+  return facts;
+}
+
+export function getNodePacket(
+  context: FreshContext,
+  input: { node_id: string },
+): AnswerPacket {
+  return withDatabase(context, (database) => {
+    const resolution = resolveTarget(database, input.node_id);
+    if (resolution.node === null) {
+      return noTargetPacket(
+        "codeatlas_get_node",
+        input.node_id,
+        context,
+        resolution.uncertainty!,
+      );
+    }
+    const edgeRows = listEdgesForNode(
+      database,
+      resolution.node.id,
+      "both",
+      context.config.limits.maxMcpResultNodes + 1,
+    );
+    const truncated = edgeRows.length > context.config.limits.maxMcpResultNodes;
+    const selectedEdges = edgeRows.slice(0, context.config.limits.maxMcpResultNodes);
+    const uncertainties = uncertaintiesForNodes(
+      database,
+      [resolution.node.id],
+      context.config.limits.maxMcpResultNodes,
+    );
+    if (truncated) {
+      uncertainties.push({
+        description: "The node has more relationships than the configured MCP result limit.",
+        reason: "insufficient_evidence",
+        candidates: [],
+      });
+    }
+    if (resolution.node.sourceType === "heuristic") {
+      uncertainties.push({
+        description: "This node is an inferred architecture group.",
+        reason: "heuristic_only",
+        candidates: [resolution.node.id],
+      });
+    }
+    return packet(
+      {
+        answer_context: { topic: resolution.node.name, tool: "codeatlas_get_node" },
+        facts: descriptiveFacts(resolution.node),
+        relationships: selectedEdges.map(relationshipFromEdge),
+        source_snippets: [],
+        uncertainties,
+        pagination: { cursor: null, has_more: false },
+      },
+      context,
+    );
+  });
+}
+
+function relatedNodeIds(edges: readonly StoredEdge[], targetId: string): string[] {
+  return edges.map((edge) =>
+    edge.sourceNodeId === targetId ? edge.targetNodeId : edge.sourceNodeId,
+  );
+}
+
+export function dependenciesPacket(
+  context: FreshContext,
+  input: DependenciesInput,
+): AnswerPacket {
+  return withDatabase(context, (database) => {
+    const resolution = resolveTarget(database, input.target);
+    if (resolution.node === null) {
+      return noTargetPacket(
+        "codeatlas_dependencies",
+        input.target,
+        context,
+        resolution.uncertainty!,
+      );
+    }
+    const scope = `${resolution.node.id}:${input.direction}`;
+    const offset = decodeCursor(input.cursor, "dependencies", scope);
+    const rows = listEdgesForNode(
+      database,
+      resolution.node.id,
+      input.direction,
+      input.limit + 1,
+      offset,
+      DEPENDENCY_EDGE_TYPES,
+    );
+    const hasMore = rows.length > input.limit;
+    const page = rows.slice(0, input.limit);
+    const related = getNodesByIds(database, relatedNodeIds(page, resolution.node.id));
+    const uncertainties = uncertaintiesForNodes(
+      database,
+      [resolution.node.id, ...related.map((node) => node.id)],
+      context.config.limits.maxMcpResultNodes,
+    );
+    if (page.length === 0) {
+      uncertainties.push({
+        description: `No ${input.direction} relationships were verified for ${resolution.node.name}.`,
+        reason: "insufficient_evidence",
+        candidates: [],
+      });
+    }
+    return packet(
+      {
+        answer_context: {
+          topic: `${resolution.node.name} dependencies`,
+          tool: "codeatlas_dependencies",
+        },
+        facts: [nodeFact(resolution.node, "Dependency target"), ...related.map((node) => nodeFact(node, "Related node"))],
+        relationships: page.map(relationshipFromEdge),
+        source_snippets: [],
+        uncertainties,
+        pagination: {
+          cursor: hasMore
+            ? encodeCursor(offset + input.limit, "dependencies", scope)
+            : null,
+          has_more: hasMore,
+        },
+      },
+      context,
+    );
+  });
+}
+
+interface TraversalItem {
+  edge: StoredEdge;
+  depth: number;
+  confidence: number;
+  deterministic: boolean;
+}
+
+interface TraversalResult {
+  items: TraversalItem[];
+  nodeIds: string[];
+  truncated: boolean;
+}
+
+function traverse(
+  database: AtlasDatabase,
+  startNodeId: string,
+  direction: "incoming" | "outgoing",
+  edgeTypes: readonly EdgeType[],
+  maxDepth: number,
+  maxNodes: number,
+): TraversalResult {
+  const edgePlaceholders = edgeTypes.map(() => "?").join(", ");
+  const queue: Array<{
+    nodeId: string;
+    depth: number;
+    confidence: number;
+    deterministic: boolean;
+  }> = [{ nodeId: startNodeId, depth: 0, confidence: 1, deterministic: true }];
+  const visitedDepth = new Map<string, number>([[startNodeId, 0]]);
+  const seenEdges = new Set<string>();
+  const items: TraversalItem[] = [];
+  let truncated = false;
+
+  while (queue.length > 0 && items.length < maxNodes) {
+    const current = queue.shift()!;
+    if (current.depth >= maxDepth) continue;
+    const predicate = direction === "outgoing" ? "source_node_id = ?" : "target_node_id = ?";
+    const edges = database
+      .prepare(
+        `SELECT
+           id, source_node_id AS sourceNodeId, target_node_id AS targetNodeId,
+           edge_type AS edgeType, source_type AS sourceType, confidence,
+           file_path AS filePath, line, metadata_json AS metadataJson
+         FROM edges
+         WHERE ${predicate} AND edge_type IN (${edgePlaceholders})
+         ORDER BY edge_type, source_node_id, target_node_id, id`,
+      )
+      .all(current.nodeId, ...edgeTypes) as StoredEdge[];
+
+    for (const edge of edges) {
+      if (seenEdges.has(edge.id)) continue;
+      if (items.length >= maxNodes) {
+        truncated = true;
+        break;
+      }
+      seenEdges.add(edge.id);
+      const nextNodeId = direction === "outgoing" ? edge.targetNodeId : edge.sourceNodeId;
+      const depth = current.depth + 1;
+      const confidence = Math.min(current.confidence, edge.confidence);
+      const deterministic =
+        current.deterministic && edge.sourceType !== "heuristic" && edge.confidence === 1;
+      items.push({ edge, depth, confidence, deterministic });
+      if (visitedDepth.size >= maxNodes) {
+        truncated = true;
+        continue;
+      }
+      const previousDepth = visitedDepth.get(nextNodeId);
+      if (previousDepth === undefined || depth < previousDepth) {
+        visitedDepth.set(nextNodeId, depth);
+        queue.push({ nodeId: nextNodeId, depth, confidence, deterministic });
+      }
+    }
+  }
+  if (queue.length > 0) truncated = true;
+  return { items, nodeIds: [...visitedDepth.keys()], truncated };
+}
+
+function traceTraverse(
+  database: AtlasDatabase,
+  startNodeId: string,
+  maxDepth: number,
+  maxNodes: number,
+  maxPaths: number,
+): TraversalResult {
+  interface PathState {
+    nodeId: string;
+    depth: number;
+    confidence: number;
+    deterministic: boolean;
+    visited: Set<string>;
+  }
+
+  const edgePlaceholders = TRACE_EDGE_TYPES.map(() => "?").join(", ");
+  const queue: PathState[] = [{
+    nodeId: startNodeId,
+    depth: 0,
+    confidence: 1,
+    deterministic: true,
+    visited: new Set([startNodeId]),
+  }];
+  const items = new Map<string, TraversalItem>();
+  const visitedNodes = new Set<string>([startNodeId]);
+  let completedPaths = 0;
+  let truncated = false;
+
+  while (queue.length > 0 && completedPaths < maxPaths && visitedNodes.size <= maxNodes) {
+    const current = queue.shift()!;
+    if (current.depth >= maxDepth) {
+      completedPaths += 1;
+      continue;
+    }
+    const outgoing = database
+      .prepare(
+        `SELECT
+           id, source_node_id AS sourceNodeId, target_node_id AS targetNodeId,
+           edge_type AS edgeType, source_type AS sourceType, confidence,
+           file_path AS filePath, line, metadata_json AS metadataJson
+         FROM edges
+         WHERE source_node_id = ? AND edge_type IN (${edgePlaceholders})
+         ORDER BY edge_type, target_node_id, id`,
+      )
+      .all(current.nodeId, ...TRACE_EDGE_TYPES) as StoredEdge[];
+    const nextEdges = outgoing.filter((edge) => !current.visited.has(edge.targetNodeId));
+    if (nextEdges.length === 0) {
+      completedPaths += 1;
+      continue;
+    }
+
+    let scheduled = 0;
+    for (const edge of nextEdges) {
+      if (completedPaths + queue.length >= maxPaths || visitedNodes.size >= maxNodes) {
+        truncated = true;
+        break;
+      }
+      const confidence = Math.min(current.confidence, edge.confidence);
+      const deterministic =
+        current.deterministic && edge.sourceType !== "heuristic" && edge.confidence === 1;
+      const item = { edge, depth: current.depth + 1, confidence, deterministic };
+      const existing = items.get(edge.id);
+      if (existing === undefined || item.depth < existing.depth) items.set(edge.id, item);
+      visitedNodes.add(edge.targetNodeId);
+      queue.push({
+        nodeId: edge.targetNodeId,
+        depth: item.depth,
+        confidence,
+        deterministic,
+        visited: new Set([...current.visited, edge.targetNodeId]),
+      });
+      scheduled += 1;
+    }
+    if (scheduled === 0) completedPaths += 1;
+  }
+  if (queue.length > 0) truncated = true;
+  return { items: [...items.values()], nodeIds: [...visitedNodes], truncated };
+}
+
+function traversalUncertainties(
+  database: AtlasDatabase,
+  result: TraversalResult,
+  maxResults: number,
+): AnswerPacket["uncertainties"] {
+  const uncertainties = uncertaintiesForNodes(database, result.nodeIds, maxResults);
+  const heuristicEdges = result.items
+    .filter((item) => item.edge.sourceType === "heuristic" || item.edge.confidence < 1)
+    .flatMap((item) => [item.edge.sourceNodeId, item.edge.targetNodeId]);
+  if (heuristicEdges.length > 0) {
+    uncertainties.push({
+      description: "Some traversal hops are inferred or ambiguous and have reduced confidence.",
+      reason: "heuristic_only",
+      candidates: [...new Set(heuristicEdges)],
+    });
+  }
+  if (result.truncated) {
+    uncertainties.push({
+      description: "Traversal stopped at the configured maximum returned-node limit.",
+      reason: "insufficient_evidence",
+      candidates: [],
+    });
+  }
+  return uncertainties;
+}
+
+export function tracePacket(context: FreshContext, input: TraceInput): AnswerPacket {
+  return withDatabase(context, (database) => {
+    const resolution = resolveTarget(database, input.start);
+    if (resolution.node === null) {
+      return noTargetPacket("codeatlas_trace", input.start, context, resolution.uncertainty!);
+    }
+    const result = traceTraverse(
+      database,
+      resolution.node.id,
+      input.max_depth,
+      context.config.limits.maxMcpResultNodes,
+      context.config.limits.maxExecutionPaths,
+    );
+    const scope = `${resolution.node.id}:${input.max_depth}`;
+    const offset = decodeCursor(input.cursor, "trace", scope);
+    const hasMore = result.items.length > offset + input.limit;
+    const page = result.items.slice(offset, offset + input.limit);
+    const reachedIds = page.map((item) => item.edge.targetNodeId);
+    const reached = new Map(getNodesByIds(database, reachedIds).map((node) => [node.id, node]));
+    const facts: AnswerPacket["facts"] = [nodeFact(resolution.node, "Trace start")];
+    for (const item of page) {
+      const node = reached.get(item.edge.targetNodeId);
+      if (node === undefined) continue;
+      facts.push({
+        statement: `Trace depth ${item.depth} reaches ${node.kind} ${node.name}.`,
+        confidence: item.confidence,
+        source_type: item.edge.sourceType,
+        evidence: evidenceFrom(parseMetadata(item.edge.metadataJson), item.edge.filePath, item.edge.line),
+      });
+    }
+    const uncertainties = traversalUncertainties(
+      database,
+      result,
+      context.config.limits.maxMcpResultNodes,
+    );
+    if (result.items.length === 0) {
+      uncertainties.push({
+        description: `No evidence-bearing execution or dependency path starts at ${resolution.node.name}.`,
+        reason: "insufficient_evidence",
+        candidates: [],
+      });
+    }
+    return packet(
+      {
+        answer_context: { topic: resolution.node.name, tool: "codeatlas_trace" },
+        facts,
+        relationships: page.map((item) => relationshipFromEdge(item.edge)),
+        source_snippets: [],
+        uncertainties,
+        pagination: {
+          cursor: hasMore ? encodeCursor(offset + input.limit, "trace", scope) : null,
+          has_more: hasMore,
+        },
+      },
+      context,
+    );
+  });
+}
+
+export function impactPacket(context: FreshContext, input: ImpactInput): AnswerPacket {
+  return withDatabase(context, (database) => {
+    const resolution = resolveTarget(database, input.target);
+    if (resolution.node === null) {
+      return noTargetPacket("codeatlas_impact", input.target, context, resolution.uncertainty!);
+    }
+    const result = traverse(
+      database,
+      resolution.node.id,
+      "incoming",
+      DEPENDENCY_EDGE_TYPES,
+      context.config.limits.maxTraversalDepth,
+      context.config.limits.maxMcpResultNodes,
+    );
+    const membershipEdges = result.nodeIds.length === 0
+      ? []
+      : queryEdges(
+          database,
+          `source_node_id IN (${result.nodeIds.map(() => "?").join(", ")})
+           AND edge_type = 'BELONGS_TO_FEATURE'`,
+          result.nodeIds,
+        );
+    const combined: TraversalItem[] = [
+      ...result.items,
+      ...membershipEdges.map((edge) => ({
+        edge,
+        depth: 1,
+        confidence: edge.confidence,
+        deterministic: false,
+      })),
+    ];
+    const scope = resolution.node.id;
+    const offset = decodeCursor(input.cursor, "impact", scope);
+    const hasMore = combined.length > offset + input.limit;
+    const page = combined.slice(offset, offset + input.limit);
+    const affectedIds = page.map((item) => item.edge.edgeType === "BELONGS_TO_FEATURE"
+      ? item.edge.targetNodeId
+      : item.edge.sourceNodeId);
+    const affected = new Map(getNodesByIds(database, affectedIds).map((node) => [node.id, node]));
+    const facts: AnswerPacket["facts"] = [nodeFact(resolution.node, "Impact target")];
+    for (const item of page) {
+      const relatedId = item.edge.edgeType === "BELONGS_TO_FEATURE"
+        ? item.edge.targetNodeId
+        : item.edge.sourceNodeId;
+      const node = affected.get(relatedId);
+      if (node === undefined) continue;
+      const classification = item.deterministic ? "Definitely affected" : "Potentially affected";
+      const distance = item.depth === 1 ? "direct" : `transitive depth ${item.depth}`;
+      facts.push({
+        statement: `${classification}: ${node.kind} ${node.name} (${distance}).`,
+        confidence: item.confidence,
+        source_type: item.edge.sourceType,
+        evidence: evidenceFrom(parseMetadata(item.edge.metadataJson), item.edge.filePath, item.edge.line),
+      });
+    }
+    const uncertainties = traversalUncertainties(
+      database,
+      result,
+      context.config.limits.maxMcpResultNodes,
+    );
+    if (combined.length === 0) {
+      uncertainties.push({
+        description: `No direct or transitive dependents were verified for ${resolution.node.name}.`,
+        reason: "insufficient_evidence",
+        candidates: [],
+      });
+    }
+    return packet(
+      {
+        answer_context: { topic: resolution.node.name, tool: "codeatlas_impact" },
+        facts,
+        relationships: page.map((item) => relationshipFromEdge(item.edge)),
+        source_snippets: [],
+        uncertainties,
+        pagination: {
+          cursor: hasMore ? encodeCursor(offset + input.limit, "impact", scope) : null,
+          has_more: hasMore,
+        },
+      },
+      context,
+    );
+  });
+}
+
+function featureMemberFacts(nodes: readonly StoredNode[]): AnswerPacket["facts"] {
+  return nodes.map((node) => {
+    const role = node.kind === "api_route"
+      ? "Entrypoint"
+      : node.kind === "database_model" || node.kind === "database_table"
+        ? "Database dependency"
+        : node.kind === "external_service"
+          ? "External dependency"
+          : "Component";
+    return nodeFact(node, role);
+  });
+}
+
+export function explainFeaturePacket(
+  context: FreshContext,
+  input: ExplainFeatureInput,
+): AnswerPacket {
+  return withDatabase(context, (database) => {
+    const resolution = resolveTarget(database, input.feature, ["feature"]);
+    if (resolution.node === null) {
+      return noTargetPacket(
+        "codeatlas_explain_feature",
+        input.feature,
+        context,
+        resolution.uncertainty!,
+      );
+    }
+    const scope = resolution.node.id;
+    const offset = decodeCursor(input.cursor, "explain-feature", scope);
+    const memberships = database
+      .prepare(
+        `SELECT
+           id, source_node_id AS sourceNodeId, target_node_id AS targetNodeId,
+           edge_type AS edgeType, source_type AS sourceType, confidence,
+           file_path AS filePath, line, metadata_json AS metadataJson
+         FROM edges
+         WHERE target_node_id = ? AND edge_type = 'BELONGS_TO_FEATURE'
+         ORDER BY source_node_id, id
+         LIMIT ? OFFSET ?`,
+      )
+      .all(resolution.node.id, input.limit + 1, offset) as StoredEdge[];
+    const hasMore = memberships.length > input.limit;
+    const page = memberships.slice(0, input.limit);
+    const members = getNodesByIds(database, page.map((edge) => edge.sourceNodeId));
+    const memberIds = members.map((node) => node.id);
+    const remainingRelationshipBudget = Math.max(
+      0,
+      context.config.limits.maxMcpResultNodes - page.length,
+    );
+    const executionEdges = memberIds.length === 0 || remainingRelationshipBudget === 0
+      ? []
+      : queryEdges(
+          database,
+          `source_node_id IN (${memberIds.map(() => "?").join(", ")})
+           AND edge_type IN (${TRACE_EDGE_TYPES.map(() => "?").join(", ")})`,
+          [...memberIds, ...TRACE_EDGE_TYPES],
+        ).slice(0, remainingRelationshipBudget);
+    const uncertainties = uncertaintiesForNodes(
+      database,
+      memberIds,
+      context.config.limits.maxMcpResultNodes,
+    );
+    uncertainties.push({
+      description: "Feature membership is inferred from directory and dependency signals.",
+      reason: "heuristic_only",
+      candidates: [resolution.node.id, ...memberIds],
+    });
+    return packet(
+      {
+        answer_context: {
+          topic: resolution.node.name,
+          tool: "codeatlas_explain_feature",
+        },
+        facts: [nodeFact(resolution.node, "Feature"), ...featureMemberFacts(members)],
+        relationships: [...page, ...executionEdges].map(relationshipFromEdge),
+        source_snippets: [],
+        uncertainties,
+        pagination: {
+          cursor: hasMore
+            ? encodeCursor(offset + input.limit, "explain-feature", scope)
+            : null,
+          has_more: hasMore,
+        },
+      },
+      context,
+    );
+  });
+}

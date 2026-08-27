@@ -2,6 +2,29 @@
 
 All notable changes follow semantic versioning.
 
+## 0.7.0 - 2026-08-27
+
+### Added
+
+- Graph-backed implementations for `codeatlas_status`, `codeatlas_search`,
+  `codeatlas_get_node`, `codeatlas_explain_feature`, `codeatlas_trace`, `codeatlas_impact`,
+  `codeatlas_dependencies`, and `codeatlas_source`.
+- Deterministic bounded graph traversal with explicit direct/transitive and
+  definite/potential impact classifications.
+- Current-working-tree source snippets constrained by `maxSourceSnippetLines` and always labeled
+  `untrusted_repository_content`.
+- Opaque query-bound pagination cursors and a configurable 20-path default execution-path limit.
+- Accuracy tests covering automatic dirty-tree refresh, current source locations, source limits,
+  multi-candidate resolution, deletion cleanup, rename identity, pagination, and provenance.
+
+### Changed
+
+- Every required MCP tool now returns grounded facts, confidence, freshness, evidence, and explicit
+  uncertainty instead of stubbed empty results.
+- Search results and node facts expose stable node IDs for follow-up node, source, dependency, and
+  traversal queries.
+- CodeAtlas is version `0.7.0`; the graph schema remains version 3 and does not require migration.
+
 ## 0.6.0 - 2026-08-27
 
 ### Added

@@ -42,7 +42,9 @@ describe("configuration", () => {
       "utf8",
     );
 
-    await expect(loadConfig(root)).resolves.toHaveProperty("analysis.frameworks", true);
+    const config = await loadConfig(root);
+    expect(config.analysis.frameworks).toBe(true);
+    expect(config.limits.maxExecutionPaths).toBe(20);
   });
 
   it("fails instead of silently replacing malformed JSON", async () => {
