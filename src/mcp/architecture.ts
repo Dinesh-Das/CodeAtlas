@@ -1,4 +1,8 @@
-import type { SourceType } from "../graph/types.js";
+import {
+  provenanceForSource,
+  type ProvenanceCategory,
+  type SourceType,
+} from "../graph/types.js";
 import { workspacePaths } from "../core/workspace.js";
 import { openDatabase, type AtlasDatabase } from "../storage/database.js";
 import type { FreshContext } from "./freshness.js";
@@ -28,6 +32,7 @@ interface OverviewRow {
   file_path: string | null;
   start_line: number | null;
   source_type: SourceType;
+  provenance: ProvenanceCategory;
   confidence: number;
   metadata_json: string | null;
 }
@@ -51,6 +56,7 @@ interface EdgeRow {
   edge_type: AnswerPacket["relationships"][number]["edge_type"];
   confidence: number;
   source_type: SourceType;
+  provenance: ProvenanceCategory;
   file_path: string | null;
   line: number | null;
   metadata_json: string | null;
@@ -81,6 +87,7 @@ function relationshipsForNodes(
   const rows = database
     .prepare(
       `SELECT source_node_id, target_node_id, edge_type, confidence, source_type,
+              provenance_category AS provenance,
               file_path, line, metadata_json
        FROM edges
        WHERE (source_node_id IN (${placeholders}) OR target_node_id IN (${placeholders}))
@@ -99,6 +106,7 @@ function relationshipsForNodes(
       edge_type: row.edge_type,
       confidence: row.confidence,
       source_type: row.source_type,
+      provenance: row.provenance,
       evidence: { file: edgeEvidence.file, line: edgeEvidence.line },
     };
   });
@@ -117,6 +125,7 @@ export function architectureOverviewPacket(
       .prepare(
         `WITH overview_items AS (
            SELECT id, kind, name, file_path, start_line, source_type,
+                  provenance_category AS provenance,
                   confidence, metadata_json
            FROM nodes
            WHERE kind IN ('domain', 'feature', 'api_route', 'database_model')
@@ -127,6 +136,7 @@ export function architectureOverviewPacket(
                   min(file_path) AS file_path,
                   1 AS start_line,
                   'heuristic' AS source_type,
+                  'inferred' AS provenance,
                   0.9 AS confidence,
                   json_object(
                     'member_file_count', max(member_count),
@@ -140,7 +150,8 @@ export function architectureOverviewPacket(
            FROM dependency_communities
            GROUP BY community_id
          )
-         SELECT id, kind, name, file_path, start_line, source_type, confidence, metadata_json
+         SELECT id, kind, name, file_path, start_line, source_type, provenance,
+                confidence, metadata_json
          FROM overview_items
          ORDER BY CASE kind
            WHEN 'domain' THEN 1 WHEN 'feature' THEN 2
@@ -163,6 +174,7 @@ export function architectureOverviewPacket(
           statement: overviewStatement(row, value),
           confidence: row.confidence,
           source_type: row.source_type,
+          provenance: row.provenance,
           evidence: evidence(value, row.file_path, row.start_line),
         };
       }),
@@ -218,6 +230,7 @@ function cycleRelationships(
   const rows = database
     .prepare(
       `SELECT source_node_id, target_node_id, edge_type, confidence, source_type,
+              provenance_category AS provenance,
               file_path, line, metadata_json
        FROM edges WHERE id IN (${placeholders}) ORDER BY id`,
     )
@@ -230,6 +243,7 @@ function cycleRelationships(
       edge_type: row.edge_type,
       confidence: row.confidence,
       source_type: row.source_type,
+      provenance: row.provenance,
       evidence: { file: edgeEvidence.file, line: edgeEvidence.line },
     };
   });
@@ -266,6 +280,7 @@ export function architectureHealthPacket(
       statement: `${row.severity.toUpperCase()} signal: ${row.title}.`,
       confidence: row.confidence,
       source_type: row.source_type,
+      provenance: provenanceForSource(row.source_type),
       evidence: evidence(metadata(row.metadata_json), row.file_path, row.line),
     }));
     if (facts.length === 0 && !context.config.analysis.technicalDebt) {
@@ -273,6 +288,7 @@ export function architectureHealthPacket(
         statement: "Technical-debt signal generation is disabled by configuration.",
         confidence: 0.9,
         source_type: "config",
+        provenance: "verified",
         evidence: { file: ".codeatlas/config.json", line: 1 },
       });
     } else if (facts.length === 0 && fallbackMetric !== undefined) {
@@ -280,6 +296,7 @@ export function architectureHealthPacket(
         statement: "No architecture metrics crossed the configured signal thresholds.",
         confidence: 0.9,
         source_type: "heuristic",
+        provenance: "inferred",
         evidence: { file: fallbackMetric.file_path, line: 1 },
       });
     }

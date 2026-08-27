@@ -129,14 +129,20 @@ export function findDependencyNeighborhood(
   database: AtlasDatabase,
   seedPaths: readonly string[],
   maxDepth: number,
+  maxFiles: number,
 ): Set<string> {
   const visited = new Set(seedPaths);
   const dependents = new Set<string>();
   let frontier = [...new Set(seedPaths)];
-  for (let depth = 0; depth < maxDepth && frontier.length > 0; depth += 1) {
+  for (
+    let depth = 0;
+    depth < maxDepth && frontier.length > 0 && dependents.size < maxFiles;
+    depth += 1
+  ) {
     const next: string[] = [];
     for (const filePath of incomingDependencyFiles(database, frontier)) {
       if (visited.has(filePath)) continue;
+      if (dependents.size >= maxFiles) break;
       visited.add(filePath);
       dependents.add(filePath);
       next.push(filePath);

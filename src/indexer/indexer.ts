@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { runArchitectureAnalysis } from "../analysis/architecture.js";
+import {
+  mergeArchitecturalIntent,
+  supportsArchitecturalIntent,
+} from "../analysis/intent.js";
 import type { ArchitectureAnalysisResult } from "../analysis/types.js";
 import { mapWithConcurrency } from "../core/async.js";
 import { loadConfig } from "../core/config.js";
@@ -90,6 +94,8 @@ interface IndexedCandidate {
   absolutePath: string;
   relativePath: string;
   sizeBytes: number;
+  mtimeMs: number;
+  ctimeMs: number;
   language: DetectedLanguage | null;
   contentHash: string;
   parseStatus: string;
@@ -103,7 +109,9 @@ function initialParseStatus(
   enabled: { typescript: boolean; javascript: boolean; python: boolean },
   hasAdapter: boolean,
   hasFrameworkAdapter: boolean,
+  hasIntentAdapter: boolean,
 ): string {
+  if (hasIntentAdapter && language === null) return "pending_intent";
   if (
     hasFrameworkAdapter &&
     (language === null || isLanguageEnabled(language, enabled)) &&
@@ -129,6 +137,7 @@ function statusMatches(previous: string, current: string): boolean {
   if (current === "pending_framework") {
     return previous === "parsed" || previous === "metadata_only" || previous === "parse_error";
   }
+  if (current === "pending_intent") return previous === "parsed_intent";
   return previous === current;
 }
 
@@ -145,6 +154,7 @@ function graphNode(input: Partial<GraphNode> & Pick<GraphNode, "id" | "kind" | "
     visibility: null,
     contentHash: null,
     sourceType: "git",
+    provenance: "git",
     confidence: 1,
     metadata: {},
     ...input,
@@ -157,6 +167,7 @@ function graphEdge(
 ): GraphEdge {
   return {
     sourceType: "git",
+    provenance: "git",
     confidence: 1,
     filePath: null,
     line: null,
@@ -195,35 +206,6 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
   try {
     const ignoreRules = await loadIgnoreRules(repository.root);
     const discovered = await discoverFiles(repository.root, ignoreRules);
-    const candidates: IndexedCandidate[] = await mapWithConcurrency(
-      discovered,
-      32,
-      async (file) => {
-        const language = detectLanguage(file.relativePath);
-        const adapter = getLanguageAdapter(language);
-        const enabled = isLanguageEnabled(language, config.languages);
-        const frameworkSupported =
-          config.analysis.frameworks &&
-          supportsFrameworkExtraction(file.relativePath, language);
-        return {
-          ...file,
-          language,
-          contentHash: await hashFile(file.absolutePath),
-          parseStatus: initialParseStatus(
-            language,
-            config.languages,
-            adapter !== null,
-            frameworkSupported,
-          ),
-          adapterVersion: enabled && adapter !== null ? adapter.version : "none",
-          parsedFile: null,
-          detectedFrameworks: [],
-        };
-      },
-    );
-    candidates.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-
-    const fingerprint = await computeRepositoryFingerprint(repository, candidates, ignoreRules);
     let database: AtlasDatabase;
     try {
       database = openDatabase(paths.database);
@@ -240,13 +222,52 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
 
     try {
       const existing = new Map(listFiles(database).map((file) => [file.path, file]));
+      const storedCommit = getRepositoryState(database, "last_indexed_commit");
+      const gitState = await detectGitState(repository.root, storedCommit, repository.headCommit);
+      const candidates: IndexedCandidate[] = await mapWithConcurrency(
+        discovered,
+        32,
+        async (file) => {
+          const language = detectLanguage(file.relativePath);
+          const adapter = getLanguageAdapter(language);
+          const enabled = isLanguageEnabled(language, config.languages);
+          const frameworkSupported =
+            config.analysis.frameworks &&
+            supportsFrameworkExtraction(file.relativePath, language);
+          const intentSupported = supportsArchitecturalIntent(file.relativePath, language);
+          const previous = existing.get(file.relativePath);
+          const unchangedStat =
+            previous !== undefined &&
+            previous.sizeBytes === file.sizeBytes &&
+            previous.mtimeMs === file.mtimeMs &&
+            previous.ctimeMs === file.ctimeMs;
+          return {
+            ...file,
+            language,
+            contentHash: unchangedStat
+              ? previous.contentHash
+              : await hashFile(file.absolutePath),
+            parseStatus: initialParseStatus(
+              language,
+              config.languages,
+              adapter !== null,
+              frameworkSupported,
+              intentSupported,
+            ),
+            adapterVersion: enabled && adapter !== null ? adapter.version : "none",
+            parsedFile: null,
+            detectedFrameworks: [],
+          };
+        },
+      );
+      candidates.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+
+      const fingerprint = await computeRepositoryFingerprint(repository, candidates, ignoreRules);
       const currentByPath = new Map(
         candidates.map((candidate) => [candidate.relativePath, candidate]),
       );
       const storedRoot = getRepositoryState(database, "repository_root");
-      const storedCommit = getRepositoryState(database, "last_indexed_commit");
       const configHash = sha256(JSON.stringify(config));
-      const gitState = await detectGitState(repository.root, storedCommit, repository.headCommit);
       const indexerChanged = getRepositoryState(database, "indexer_version") !== INDEXER_VERSION;
       const schemaChanged =
         getRepositoryState(database, "schema_version") !== String(SCHEMA_VERSION);
@@ -312,6 +333,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             database,
             dependencySeeds,
             config.limits.maxTraversalDepth,
+            config.limits.maxInvalidationFiles,
           );
       const invalidatedPaths = new Set(
         [...unresolvedImporters, ...dependencyNeighborhood].filter(
@@ -375,6 +397,26 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           candidate.parsedFile = mergeFrameworkGraph(candidate.parsedFile, extraction);
           if (candidate.parseStatus === "pending_framework") {
             candidate.parseStatus = candidate.parsedFile === null ? "metadata_only" : "parsed";
+          }
+        }
+
+
+        const intentSupported =
+          supportsArchitecturalIntent(candidate.relativePath, candidate.language) &&
+          (candidate.language === null ||
+            isLanguageEnabled(candidate.language, config.languages));
+        if (intentSupported) {
+          content ??= await readFile(candidate.absolutePath, "utf8");
+          candidate.parsedFile = mergeArchitecturalIntent({
+            repositoryId: repository.id,
+            relativeFilePath: candidate.relativePath,
+            language: candidate.language,
+            content,
+            contentHash: candidate.contentHash,
+            parsedFile: candidate.parsedFile,
+          });
+          if (candidate.parseStatus === "pending_intent") {
+            candidate.parseStatus = candidate.parsedFile === null ? "metadata_only" : "parsed_intent";
           }
         }
       });
@@ -462,6 +504,8 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             language: candidate.language,
             contentHash: candidate.contentHash,
             sizeBytes: candidate.sizeBytes,
+            mtimeMs: candidate.mtimeMs,
+            ctimeMs: candidate.ctimeMs,
             parserVersion: candidate.adapterVersion === "none" ? "none" : TREE_SITTER_VERSION,
             adapterVersion: candidate.adapterVersion,
             indexedCommit: repository.headCommit,
@@ -555,6 +599,10 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
                   sizeBytes: candidate.sizeBytes,
                   diagnosticCount: candidate.parsedFile?.errors.length ?? 0,
                   unresolvedReferenceCount: candidate.parsedFile?.unresolvedReferences.length ?? 0,
+                  frameworkAdapterFailureCount:
+                    candidate.parsedFile?.errors.filter((diagnostic) =>
+                      diagnostic.message.startsWith("Framework adapter "),
+                    ).length ?? 0,
                   frameworks: candidate.detectedFrameworks,
                 },
               }),
@@ -654,7 +702,8 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             (SELECT count(*) FROM edges) AS edges,
             (SELECT count(*) FROM nodes
               WHERE kind NOT IN (
-                'repository', 'directory', 'file', 'module', 'feature', 'domain'
+                'repository', 'directory', 'file', 'module', 'feature', 'domain',
+                'documentation'
               )) AS symbols,
             (SELECT count(*) FROM nodes WHERE kind = 'api_route') AS apiRoutes,
             (SELECT count(*) FROM nodes WHERE kind = 'database_model') AS databaseModels,

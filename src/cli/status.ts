@@ -9,6 +9,7 @@ import { workspaceExists, workspacePaths } from "../core/workspace.js";
 import { detectRepository } from "../git/repository.js";
 import { isWorkingTreeDirty } from "../git/diff.js";
 import { openDatabase } from "../storage/database.js";
+import { listFiles } from "../storage/files.js";
 import { getRepositoryStates } from "../storage/state.js";
 import { INDEXER_VERSION, SCHEMA_VERSION } from "../version.js";
 
@@ -46,16 +47,27 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
   const config = await loadConfig(repository.root);
   const ignoreRules = await loadIgnoreRules(repository.root);
   const discovered = await discoverFiles(repository.root, ignoreRules);
+  const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
+  const state = getRepositoryStates(database);
+  const existing = state.schema_version === String(SCHEMA_VERSION)
+    ? new Map(listFiles(database).map((file) => [file.path, file]))
+    : new Map();
   const hashed = await mapWithConcurrency(discovered, 32, async (file) => ({
       relativePath: file.relativePath,
-      contentHash: await hashFile(file.absolutePath),
+      contentHash: (() => {
+        const previous = existing.get(file.relativePath);
+        return previous !== undefined &&
+          previous.sizeBytes === file.sizeBytes &&
+          previous.mtimeMs === file.mtimeMs &&
+          previous.ctimeMs === file.ctimeMs
+          ? previous.contentHash
+          : null;
+      })() ?? await hashFile(file.absolutePath),
     }));
   const current = await computeRepositoryFingerprint(repository, hashed, ignoreRules);
   const dirty = await isWorkingTreeDirty(repository.root);
-  const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
 
   try {
-    const state = getRepositoryStates(database);
     const baseCounts = database
       .prepare(
         `SELECT
@@ -63,7 +75,8 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
           (SELECT count(*) FROM nodes) AS nodes,
           (SELECT count(*) FROM nodes
             WHERE kind NOT IN (
-              'repository', 'directory', 'file', 'module', 'feature', 'domain'
+              'repository', 'directory', 'file', 'module', 'feature', 'domain',
+              'documentation'
             )) AS symbols,
           (SELECT count(*) FROM edges) AS edges,
           (SELECT count(*) FROM nodes WHERE kind = 'feature') AS features,

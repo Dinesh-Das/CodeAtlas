@@ -8,6 +8,7 @@ import type {
   NodeKind,
   SourceType,
 } from "../graph/types.js";
+import { provenanceForSource } from "../graph/types.js";
 import type {
   Evidence,
   ParseDiagnostic,
@@ -155,6 +156,7 @@ export class ParseGraphBuilder {
       visibility: null,
       contentHash: input.contentHash,
       sourceType: "ast",
+      provenance: "verified",
       confidence: 1,
       metadata: evidenceMetadata(input, root),
     });
@@ -186,6 +188,7 @@ export class ParseGraphBuilder {
       visibility: symbol.visibility ?? null,
       contentHash: this.input.contentHash,
       sourceType: "ast",
+      provenance: "verified",
       confidence: 1,
       metadata: {
         ...evidenceMetadata(this.input, symbol.syntaxNode),
@@ -218,15 +221,28 @@ export class ParseGraphBuilder {
   addReference(
     reference: Omit<
       UnresolvedReference,
-      "evidence" | "sourceNodeId" | "localName" | "importedName"
+      | "evidence"
+      | "sourceNodeId"
+      | "localName"
+      | "importedName"
+      | "provenance"
+      | "confidence"
+      | "metadata"
     > & Partial<Pick<UnresolvedReference, "sourceNodeId" | "localName" | "importedName">>,
     syntaxNode: SyntaxNode,
+    options: Partial<
+      Pick<UnresolvedReference, "provenance" | "confidence" | "metadata">
+    > = {},
   ): void {
     this.unresolvedReferences.push({
       sourceNodeId: this.moduleNodeId,
       localName: null,
       importedName: null,
+      provenance: "verified",
+      confidence: 1,
+      metadata: {},
       ...reference,
+      ...options,
       evidence: evidenceFor(this.input, syntaxNode),
     });
   }
@@ -265,6 +281,7 @@ export class ParseGraphBuilder {
       targetNodeId,
       edgeType,
       sourceType,
+      provenance: provenanceForSource(sourceType),
       confidence,
       filePath: this.input.relativeFilePath,
       line,

@@ -1,6 +1,6 @@
 {
   "name": "@dinesh-das/codeatlas",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Local-first repository knowledge graphs for AI coding agents through MCP.",
   "type": "module",
   "bin": {

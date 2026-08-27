@@ -13,6 +13,7 @@ export const NODE_KINDS = [
   "database_model",
   "database_table",
   "configuration",
+  "documentation",
   "external_service",
   "test",
   "feature",
@@ -61,6 +62,24 @@ export const SOURCE_TYPES = [
 
 export type SourceType = (typeof SOURCE_TYPES)[number];
 
+export const PROVENANCE_CATEGORIES = [
+  "verified",
+  "inferred",
+  "dynamic",
+  "documentation",
+  "git",
+  "unresolved",
+] as const;
+
+export type ProvenanceCategory = (typeof PROVENANCE_CATEGORIES)[number];
+
+export function provenanceForSource(sourceType: SourceType): ProvenanceCategory {
+  if (sourceType === "heuristic") return "inferred";
+  if (sourceType === "documentation") return "documentation";
+  if (sourceType === "git") return "git";
+  return "verified";
+}
+
 export interface GraphNode {
   id: string;
   kind: NodeKind;
@@ -76,6 +95,7 @@ export interface GraphNode {
   visibility: string | null;
   contentHash: string | null;
   sourceType: SourceType;
+  provenance: ProvenanceCategory;
   confidence: number;
   metadata: Record<string, unknown>;
 }
@@ -86,6 +106,7 @@ export interface GraphEdge {
   targetNodeId: string;
   edgeType: EdgeType;
   sourceType: SourceType;
+  provenance: ProvenanceCategory;
   confidence: number;
   filePath: string | null;
   line: number | null;

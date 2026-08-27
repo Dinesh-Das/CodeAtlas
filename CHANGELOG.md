@@ -2,6 +2,42 @@
 
 All notable changes follow semantic versioning.
 
+## 0.9.0 - 2026-08-27
+
+### Added
+
+- First-class `verified`, `inferred`, `dynamic`, `documentation`, `git`, and `unresolved`
+  provenance categories on graph nodes, edges, and MCP relationships.
+- Explicit callback, event, queue, dependency-injection, runtime-registration, reflection,
+  polymorphic-candidate, and generated-code analysis with reduced confidence or unresolved
+  diagnostics whenever a target cannot be proven.
+- Weighted multi-signal feature inference using directories, symbols, routes, tests, imports,
+  models, and dependency communities, plus strict configuration-based membership overrides.
+- Architectural-intent nodes for README/ADR/document headings, intent-bearing comments, and test
+  files, kept distinct from deterministic code and Git-history facts.
+- Public framework-adapter registration with duplicate validation and per-file failure isolation;
+  failed optional adapters now retain generic AST results.
+- Relevance ranking across query similarity, feature membership, graph distance, symbol type,
+  dependency strength, and confidence.
+- Doctor diagnostics for unsupported languages, unresolved imports, dynamic relationships,
+  indexing failures, stale state, graph integrity, and framework coverage gaps.
+- Gap regression coverage for dynamic relationships, provenance, generated code, feature
+  overrides, architectural intent, staged-only freshness, and adapter failure fallback.
+
+### Changed
+
+- Freshness fingerprints now include Git index entries in addition to HEAD, tracked working-tree
+  hashes, and untracked hashes, detecting staged-only differences even when the working file
+  matches its previously indexed content.
+- File size and modification/change timestamps allow unchanged content hashes to be reused while
+  preserving hash verification for filesystem changes, hidden working-tree modifications, and all
+  Git state transitions.
+- Dependency invalidation is bounded by both depth and file count; graph SQL queries are bounded
+  before materialization and source snippets are capped by lines and UTF-8 bytes.
+- MCP packets declare local-only indexing, untrusted repository content, evidence-only answers,
+  and the boundary between CodeAtlas and external LLM behavior.
+- The graph schema is now version 4 and the indexing contract is `evidence-7`.
+
 ## 0.8.0 - 2026-08-27
 
 ### Added

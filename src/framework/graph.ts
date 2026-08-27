@@ -7,6 +7,7 @@ import type {
   NodeKind,
   SourceType,
 } from "../graph/types.js";
+import { provenanceForSource } from "../graph/types.js";
 import type { SyntaxNode } from "../parser/tree-sitter.js";
 import type { RepositoryContext } from "./types.js";
 
@@ -61,6 +62,7 @@ export function frameworkNode(
     visibility: null,
     contentHash: context.contentHash,
     sourceType,
+    provenance: provenanceForSource(sourceType),
     confidence: input.confidence ?? 1,
     metadata: {
       evidence: {
@@ -101,6 +103,7 @@ export function frameworkEdge(
     targetNodeId: input.targetNodeId,
     edgeType: input.edgeType,
     sourceType,
+    provenance: provenanceForSource(sourceType),
     confidence: input.confidence ?? 1,
     filePath: context.relativeFilePath,
     line: input.location.line,

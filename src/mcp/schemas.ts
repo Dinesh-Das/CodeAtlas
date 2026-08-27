@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { EDGE_TYPES, SOURCE_TYPES } from "../graph/types.js";
+import {
+  EDGE_TYPES,
+  PROVENANCE_CATEGORIES,
+  SOURCE_TYPES,
+} from "../graph/types.js";
 
 export const evidenceSchema = z
   .object({
@@ -23,6 +27,7 @@ export const answerPacketSchema = z
           statement: z.string(),
           confidence: z.number().min(0).max(1),
           source_type: z.enum(SOURCE_TYPES),
+          provenance: z.enum(PROVENANCE_CATEGORIES).default("verified"),
           evidence: evidenceSchema,
         })
         .strict(),
@@ -35,6 +40,7 @@ export const answerPacketSchema = z
           edge_type: z.enum(EDGE_TYPES),
           confidence: z.number().min(0).max(1),
           source_type: z.enum(SOURCE_TYPES),
+          provenance: z.enum(PROVENANCE_CATEGORIES).default("verified"),
           evidence: evidenceSchema.omit({ column: true }),
         })
         .strict(),
@@ -60,6 +66,9 @@ export const answerPacketSchema = z
             "insufficient_evidence",
             "heuristic_only",
             "multi_candidate",
+            "dynamic_relationship",
+            "generated_code",
+            "unsupported_framework",
           ]),
           candidates: z.array(z.string()),
         })
@@ -73,6 +82,20 @@ export const answerPacketSchema = z
         checked_at: z.string().datetime(),
       })
       .strict(),
+    security: z
+      .object({
+        indexing: z.literal("local_only"),
+        repository_content: z.literal("untrusted"),
+        answer_policy: z.literal("evidence_only"),
+        external_llm_behavior: z.literal("outside_codeatlas"),
+      })
+      .strict()
+      .default({
+        indexing: "local_only",
+        repository_content: "untrusted",
+        answer_policy: "evidence_only",
+        external_llm_behavior: "outside_codeatlas",
+      }),
     pagination: z
       .object({
         cursor: z.string().nullable(),

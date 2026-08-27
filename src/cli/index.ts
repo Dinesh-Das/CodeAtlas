@@ -50,7 +50,9 @@ export function createProgram(): Command {
     .action(async (targetPath: string) => {
       const checks = await runDoctor(targetPath);
       console.log(formatDoctor(checks));
-      if (checks.some((check) => !check.ok)) process.exitCode = 1;
+      if (checks.some((check) => !check.ok && check.severity !== "warning")) {
+        process.exitCode = 1;
+      }
     });
 
   program

@@ -34,4 +34,8 @@ export interface FrameworkExtraction {
   nodes: GraphNode[];
   edges: GraphEdge[];
   detectedFrameworks: string[];
+  failures: Array<{
+    adapter: string;
+    message: string;
+  }>;
 }

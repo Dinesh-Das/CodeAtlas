@@ -20,14 +20,29 @@ export const configSchema = z
         technicalDebt: z.boolean(),
         featureDetection: z.boolean(),
         frameworks: z.boolean().default(true),
+        featureOverrides: z
+          .array(
+            z
+              .object({
+                name: z.string().trim().min(1).max(120),
+                include: z.array(z.string().trim().min(1)).min(1).max(200),
+                exclude: z.array(z.string().trim().min(1)).max(200).default([]),
+                confidence: z.number().min(0.5).max(1).default(1),
+              })
+              .strict(),
+          )
+          .max(500)
+          .default([]),
       })
       .strict(),
     limits: z
       .object({
         maxTraversalDepth: z.number().int().min(1).max(100),
         maxSourceSnippetLines: z.number().int().min(1).max(2_000),
+        maxSourceSnippetBytes: z.number().int().min(256).max(100_000).default(8_000),
         maxMcpResultNodes: z.number().int().min(1).max(10_000),
         maxExecutionPaths: z.number().int().min(1).max(1_000).default(20),
+        maxInvalidationFiles: z.number().int().min(10).max(100_000).default(2_000),
         largeFileLines: z.number().int().min(20).max(1_000_000).default(500),
         largeSymbolLines: z.number().int().min(10).max(100_000).default(80),
         highFanIn: z.number().int().min(1).max(100_000).default(10),
@@ -51,12 +66,15 @@ export const DEFAULT_CONFIG: CodeAtlasConfig = {
     technicalDebt: true,
     featureDetection: true,
     frameworks: true,
+    featureOverrides: [],
   },
   limits: {
     maxTraversalDepth: 10,
     maxSourceSnippetLines: 120,
+    maxSourceSnippetBytes: 8_000,
     maxMcpResultNodes: 200,
     maxExecutionPaths: 20,
+    maxInvalidationFiles: 2_000,
     largeFileLines: 500,
     largeSymbolLines: 80,
     highFanIn: 10,

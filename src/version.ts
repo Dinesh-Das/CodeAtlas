@@ -1,3 +1,3 @@
-export const CODEATLAS_VERSION = "0.8.0";
-export const SCHEMA_VERSION = 3;
-export const INDEXER_VERSION = "architecture-6";
+export const CODEATLAS_VERSION = "0.9.0";
+export const SCHEMA_VERSION = 4;
+export const INDEXER_VERSION = "evidence-7";

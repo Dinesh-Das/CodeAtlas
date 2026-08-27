@@ -19,10 +19,12 @@ export function runArchitectureAnalysis(
   timestamp: string,
 ): ArchitectureAnalysisResult {
   const graph = loadFileGraph(database);
+  const communities = findDependencyCommunities(repositoryId, graph);
   const grouping = buildGroupingArtifacts(
     repositoryId,
     graph,
-    config.analysis.featureDetection,
+    config,
+    communities,
   );
   removeStaleAnalysisNodes(
     database,
@@ -31,7 +33,6 @@ export function runArchitectureAnalysis(
   for (const node of grouping.nodes) upsertNode(database, node, timestamp);
   for (const edge of grouping.edges) upsertEdge(database, edge, timestamp);
 
-  const communities = findDependencyCommunities(repositoryId, graph);
   const cycles = config.analysis.technicalDebt
     ? findDependencyCycles(repositoryId, graph)
     : [];

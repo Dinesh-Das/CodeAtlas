@@ -12,7 +12,7 @@ import {
 import { answerPacketSchema, type AnswerPacket } from "./schemas.js";
 
 function packet(
-  value: Omit<AnswerPacket, "freshness">,
+  value: Omit<AnswerPacket, "freshness" | "security">,
   context: FreshContext,
 ): AnswerPacket {
   return answerPacketSchema.parse({ ...value, freshness: freshnessFor(context) });
@@ -33,30 +33,35 @@ export function statusPacket(context: FreshContext): AnswerPacket {
           statement: `Repository ${status.repository} is indexed and synchronized with the current working tree.`,
           confidence: 1,
           source_type: "config",
+          provenance: "verified",
           evidence: statusEvidence,
         },
         {
           statement: `Current commit ${status.headCommit} matches indexed commit ${status.indexedCommit}.`,
           confidence: 1,
           source_type: "git",
+          provenance: "git",
           evidence: { file: ".git/HEAD", line: 1 },
         },
         {
           statement: `Working tree dirty state is ${String(status.dirty)}; the checked fingerprint is ${status.currentFingerprint}.`,
           confidence: 1,
           source_type: "git",
+          provenance: "git",
           evidence: statusEvidence,
         },
         {
           statement: `Enabled languages are ${enabledLanguages || "none"}; the index contains ${status.files} files, ${status.symbols} symbols, and ${status.edges} relationships.`,
           confidence: 1,
           source_type: "config",
+          provenance: "verified",
           evidence: { file: ".codeatlas/config.json", line: 1 },
         },
         {
           statement: `The repository was last indexed at ${status.lastIndexedAt}.`,
           confidence: 1,
           source_type: "config",
+          provenance: "verified",
           evidence: statusEvidence,
         },
       ],
@@ -146,11 +151,23 @@ export async function sourcePacket(
     const maxLines = context.config.limits.maxSourceSnippetLines;
     const startLine = Math.min(requestedStart, Math.max(1, lines.length));
     const endLine = Math.min(requestedEnd, startLine + maxLines - 1, Math.max(1, lines.length));
-    const content = lines.slice(startLine - 1, endLine).join("\n");
+    let content = lines.slice(startLine - 1, endLine).join("\n");
+    let actualEndLine = endLine;
     const uncertainties: AnswerPacket["uncertainties"] = [];
     if (requestedEnd > endLine) {
       uncertainties.push({
         description: `The source range was truncated to config.limits.maxSourceSnippetLines (${maxLines}).`,
+        reason: "insufficient_evidence",
+        candidates: [node.id],
+      });
+    }
+    const maxBytes = context.config.limits.maxSourceSnippetBytes;
+    const encoded = Buffer.from(content, "utf8");
+    if (encoded.byteLength > maxBytes) {
+      content = encoded.subarray(0, maxBytes).toString("utf8").replace(/�+$/u, "");
+      actualEndLine = startLine + content.split("\n").length - 1;
+      uncertainties.push({
+        description: `The source range was truncated to config.limits.maxSourceSnippetBytes (${maxBytes}).`,
         reason: "insufficient_evidence",
         candidates: [node.id],
       });
@@ -160,9 +177,10 @@ export async function sourcePacket(
         answer_context: { topic: node.name, tool: "codeatlas_source" },
         facts: [
           {
-            statement: `Current working-tree source for ${node.kind} ${node.name} spans ${node.filePath}:${startLine}-${endLine}.`,
+            statement: `Current working-tree source for ${node.kind} ${node.name} spans ${node.filePath}:${startLine}-${actualEndLine}.`,
             confidence: node.confidence,
             source_type: node.sourceType,
+            provenance: node.provenance,
             evidence: evidenceForNode(node),
           },
         ],
@@ -172,7 +190,7 @@ export async function sourcePacket(
             node_id: node.id,
             file: node.filePath,
             start_line: startLine,
-            end_line: endLine,
+            end_line: actualEndLine,
             content,
             trust: "untrusted_repository_content",
           },

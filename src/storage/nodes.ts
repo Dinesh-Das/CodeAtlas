@@ -1,4 +1,5 @@
 import type { GraphNode } from "../graph/types.js";
+import { provenanceForSource } from "../graph/types.js";
 import type { AtlasDatabase } from "./database.js";
 
 export function upsertNode(database: AtlasDatabase, node: GraphNode, timestamp: string): void {
@@ -7,12 +8,12 @@ export function upsertNode(database: AtlasDatabase, node: GraphNode, timestamp: 
       `INSERT INTO nodes(
         id, kind, name, qualified_name, file_path, language,
         start_line, start_column, end_line, end_column,
-        signature, visibility, content_hash, source_type, confidence,
+        signature, visibility, content_hash, source_type, provenance_category, confidence,
         metadata_json, created_at, updated_at
       ) VALUES (
         @id, @kind, @name, @qualifiedName, @filePath, @language,
         @startLine, @startColumn, @endLine, @endColumn,
-        @signature, @visibility, @contentHash, @sourceType, @confidence,
+        @signature, @visibility, @contentHash, @sourceType, @provenance, @confidence,
         @metadataJson, @timestamp, @timestamp
       )
       ON CONFLICT(id) DO UPDATE SET
@@ -29,11 +30,17 @@ export function upsertNode(database: AtlasDatabase, node: GraphNode, timestamp: 
         visibility = excluded.visibility,
         content_hash = excluded.content_hash,
         source_type = excluded.source_type,
+        provenance_category = excluded.provenance_category,
         confidence = excluded.confidence,
         metadata_json = excluded.metadata_json,
         updated_at = excluded.updated_at`,
     )
-    .run({ ...node, metadataJson: JSON.stringify(node.metadata), timestamp });
+    .run({
+      ...node,
+      provenance: node.provenance ?? provenanceForSource(node.sourceType),
+      metadataJson: JSON.stringify(node.metadata),
+      timestamp,
+    });
 }
 
 export function deleteNodesForFile(database: AtlasDatabase, relativeFilePath: string): void {

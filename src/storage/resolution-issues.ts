@@ -1,6 +1,11 @@
 import type { AtlasDatabase } from "./database.js";
 
-export type ResolutionIssueReason = "unresolved_reference" | "multi_candidate";
+export type ResolutionIssueReason =
+  | "unresolved_reference"
+  | "multi_candidate"
+  | "dynamic_relationship"
+  | "generated_code"
+  | "unsupported_framework";
 
 export interface ResolutionIssue {
   id: string;

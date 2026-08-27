@@ -190,6 +190,33 @@ const migrations: readonly Migration[] = [
         ON dependency_communities(file_path);
     `,
   },
+  {
+    version: 4,
+    sql: `
+      ALTER TABLE nodes
+        ADD COLUMN provenance_category TEXT NOT NULL DEFAULT 'verified';
+      ALTER TABLE edges
+        ADD COLUMN provenance_category TEXT NOT NULL DEFAULT 'verified';
+      ALTER TABLE files ADD COLUMN mtime_ms REAL;
+      ALTER TABLE files ADD COLUMN ctime_ms REAL;
+
+      UPDATE nodes SET provenance_category = CASE source_type
+        WHEN 'heuristic' THEN 'inferred'
+        WHEN 'documentation' THEN 'documentation'
+        WHEN 'git' THEN 'git'
+        ELSE 'verified'
+      END;
+      UPDATE edges SET provenance_category = CASE source_type
+        WHEN 'heuristic' THEN 'inferred'
+        WHEN 'documentation' THEN 'documentation'
+        WHEN 'git' THEN 'git'
+        ELSE 'verified'
+      END;
+
+      CREATE INDEX idx_nodes_provenance ON nodes(provenance_category);
+      CREATE INDEX idx_edges_provenance ON edges(provenance_category);
+    `,
+  },
 ];
 
 export function runMigrations(database: Database.Database): void {

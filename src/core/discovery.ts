@@ -7,6 +7,8 @@ export interface DiscoveredFile {
   absolutePath: string;
   relativePath: string;
   sizeBytes: number;
+  mtimeMs: number;
+  ctimeMs: number;
 }
 
 export async function discoverFiles(
@@ -39,7 +41,13 @@ export async function discoverFiles(
         if (targetStat.isDirectory()) {
           if (!ignoreRules.ignores(relative, true)) await visit(absolutePath);
         } else if (targetStat.isFile() && !ignoreRules.ignores(relative)) {
-          files.push({ absolutePath, relativePath: relative, sizeBytes: targetStat.size });
+          files.push({
+            absolutePath,
+            relativePath: relative,
+            sizeBytes: targetStat.size,
+            mtimeMs: targetStat.mtimeMs,
+            ctimeMs: targetStat.ctimeMs,
+          });
         }
         continue;
       }
@@ -47,7 +55,13 @@ export async function discoverFiles(
       if (entry.isDirectory()) {
         if (!ignoreRules.ignores(relative, true)) await visit(absolutePath);
       } else if (entry.isFile() && !ignoreRules.ignores(relative)) {
-        files.push({ absolutePath, relativePath: relative, sizeBytes: entryLstat.size });
+        files.push({
+          absolutePath,
+          relativePath: relative,
+          sizeBytes: entryLstat.size,
+          mtimeMs: entryLstat.mtimeMs,
+          ctimeMs: entryLstat.ctimeMs,
+        });
       }
     }
   }

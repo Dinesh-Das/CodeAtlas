@@ -14,6 +14,7 @@ export interface RepositoryFingerprint {
   headCommit: string;
   trackedHash: string;
   untrackedHash: string;
+  indexHash: string;
 }
 
 function splitNullDelimited(output: string): string[] {
@@ -28,9 +29,10 @@ export async function computeRepositoryFingerprint(
   files: readonly HashedWorkingFile[],
   ignoreRules: IgnoreRules,
 ): Promise<RepositoryFingerprint> {
-  const [trackedOutput, untrackedOutput] = await Promise.all([
+  const [trackedOutput, untrackedOutput, indexOutput] = await Promise.all([
     runGit(repository.root, ["ls-files", "--cached", "-z"]),
     runGit(repository.root, ["ls-files", "--others", "--exclude-standard", "-z"]),
+    runGit(repository.root, ["ls-files", "--stage", "-z"]),
   ]);
   const fileHashes = new Map(files.map((file) => [file.relativePath, file.contentHash]));
 
@@ -46,10 +48,14 @@ export async function computeRepositoryFingerprint(
 
   const trackedHash = hashSortedEntries(trackedEntries);
   const untrackedHash = hashSortedEntries(untrackedEntries);
+  const indexHash = sha256(indexOutput);
   return {
-    fingerprint: sha256(`${repository.headCommit}|${trackedHash}|${untrackedHash}`),
+    fingerprint: sha256(
+      `${repository.headCommit}|${indexHash}|${trackedHash}|${untrackedHash}`,
+    ),
     headCommit: repository.headCommit,
     trackedHash,
     untrackedHash,
+    indexHash,
   };
 }

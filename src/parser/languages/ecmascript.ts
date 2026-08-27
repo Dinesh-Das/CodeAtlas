@@ -38,6 +38,38 @@ const METHOD_TYPES = new Set([
   "abstract_method_signature",
 ]);
 
+const CALLBACK_METHODS = new Set([
+  "catch",
+  "filter",
+  "finally",
+  "flatMap",
+  "forEach",
+  "map",
+  "reduce",
+  "setImmediate",
+  "setInterval",
+  "setTimeout",
+  "some",
+  "then",
+]);
+const EVENT_SUBSCRIBE_METHODS = new Set([
+  "addEventListener",
+  "addListener",
+  "on",
+  "once",
+  "subscribe",
+]);
+const QUEUE_SUBSCRIBE_METHODS = new Set(["consume", "process", "worker"]);
+const EVENT_PUBLISH_METHODS = new Set(["dispatch", "dispatchEvent", "emit"]);
+const QUEUE_PUBLISH_METHODS = new Set([
+  "addJob",
+  "enqueue",
+  "publish",
+  "sendToQueue",
+]);
+const REGISTRATION_METHODS = new Set(["bind", "provide", "register", "registerHandler"]);
+const REFLECTION_CALLS = new Set(["eval", "Function", "Reflect", "Proxy"]);
+
 function qualifiedName(scope: Scope, name: string): string {
   return scope.qualifiedName === "" ? name : `${scope.qualifiedName}.${name}`;
 }
@@ -96,6 +128,29 @@ function referenceTarget(node: SyntaxNode | null): string | null {
     return object === null || property === null ? null : `${object}.${property}`;
   }
   return null;
+}
+
+function memberParts(node: SyntaxNode | null): { object: string | null; method: string | null } {
+  if (node === null || node.type !== "member_expression") {
+    return { object: null, method: validName(node) };
+  }
+  return {
+    object: referenceTarget(node.childForFieldName("object")),
+    method: validName(node.childForFieldName("property")),
+  };
+}
+
+function callArguments(node: SyntaxNode): SyntaxNode[] {
+  return node.childForFieldName("arguments")?.namedChildren ?? [];
+}
+
+function generatedSource(input: ParseInput): boolean {
+  return (
+    /(?:^|\/)(?:generated|__generated__|gen)(?:\/|$)/iu.test(input.relativeFilePath) ||
+    /(?:@generated|auto-generated|automatically generated|do not edit)/iu.test(
+      input.content.slice(0, 2_000),
+    )
+  );
 }
 
 function addImportReferences(
@@ -201,6 +256,7 @@ export class EcmaScriptAdapter implements LanguageAdapter {
     const tree = createTree(this.grammar, input.content);
     const root = tree.rootNode;
     const builder = new ParseGraphBuilder(input, root);
+    const generated = generatedSource(input);
     const moduleScope: Scope = {
       parentNodeId: builder.moduleNodeId,
       qualifiedName: "",
@@ -475,6 +531,8 @@ export class EcmaScriptAdapter implements LanguageAdapter {
 
       if (node.type === "call_expression") {
         const callable = node.childForFieldName("function");
+        const { object, method } = memberParts(callable);
+        const args = callArguments(node);
         if (callable?.text === "require" || callable?.type === "import") {
           const argument = node.childForFieldName("arguments")?.namedChildren[0] ?? null;
           const name = stringValue(argument);
@@ -510,6 +568,100 @@ export class EcmaScriptAdapter implements LanguageAdapter {
             builder.addReference(
               { name, kind: "call", sourceNodeId: scope.parentNodeId },
               callable ?? node,
+            );
+          } else {
+            builder.addReference(
+              { name: "computed_callable", kind: "reflection", sourceNodeId: scope.parentNodeId },
+              callable ?? node,
+              {
+                provenance: "dynamic",
+                confidence: 0.25,
+                metadata: { behavior: "computed_or_reflective_call" },
+              },
+            );
+          }
+
+          const addDynamicTarget = (
+            argument: SyntaxNode | undefined,
+            kind:
+              | "callback"
+              | "event_subscribe"
+              | "queue_subscribe"
+              | "dependency_injection"
+              | "runtime_registration",
+            behavior: string,
+            confidence: number,
+          ): void => {
+            const target = referenceTarget(argument ?? null);
+            if (target === null) return;
+            builder.addReference(
+              { name: target, kind, sourceNodeId: scope.parentNodeId },
+              argument ?? node,
+              {
+                provenance: "dynamic",
+                confidence,
+                metadata: { behavior, registration_method: method },
+              },
+            );
+          };
+
+          if (method !== null && CALLBACK_METHODS.has(method)) {
+            addDynamicTarget(args[0], "callback", "callback_invocation", 0.75);
+          }
+          if (callable?.type === "identifier" && CALLBACK_METHODS.has(callable.text)) {
+            addDynamicTarget(args[0], "callback", "scheduled_callback", 0.75);
+          }
+          if (method !== null && EVENT_SUBSCRIBE_METHODS.has(method)) {
+            addDynamicTarget(args.at(-1), "event_subscribe", "event_subscription", 0.7);
+          }
+          if (method !== null && QUEUE_SUBSCRIBE_METHODS.has(method)) {
+            addDynamicTarget(args.at(-1), "queue_subscribe", "queue_consumer", 0.65);
+          }
+          if (method !== null && REGISTRATION_METHODS.has(method)) {
+            addDynamicTarget(args.at(-1), "runtime_registration", "runtime_registration", 0.6);
+          }
+          if (
+            method === "resolve" ||
+            method === "inject" ||
+            (method === "get" && /(?:container|injector|provider|services?)/iu.test(object ?? ""))
+          ) {
+            addDynamicTarget(args[0], "dependency_injection", "dependency_injection", 0.65);
+          }
+          if (method !== null && EVENT_PUBLISH_METHODS.has(method)) {
+            builder.addReference(
+              { name: "runtime_event_target", kind: "event_publish", sourceNodeId: scope.parentNodeId },
+              args[0] ?? node,
+              {
+                provenance: "dynamic",
+                confidence: 0.35,
+                metadata: { behavior: "event_publish", publisher_method: method },
+              },
+            );
+          }
+          if (method !== null && QUEUE_PUBLISH_METHODS.has(method)) {
+            builder.addReference(
+              { name: "runtime_queue_target", kind: "queue_publish", sourceNodeId: scope.parentNodeId },
+              args[0] ?? node,
+              {
+                provenance: "dynamic",
+                confidence: 0.35,
+                metadata: { behavior: "queue_publish", publisher_method: method },
+              },
+            );
+          }
+          if (
+            REFLECTION_CALLS.has(callable?.text ?? "") ||
+            object === "Reflect" ||
+            callable?.type === "subscript_expression"
+          ) {
+            builder.addReference(
+              { name: "reflective_target", kind: "reflection", sourceNodeId: scope.parentNodeId },
+              callable ?? node,
+              {
+                provenance: "dynamic",
+                confidence: 0.2,
+                metadata: { behavior: "reflection" },
+              },
             );
           }
         }
@@ -559,6 +711,29 @@ export class EcmaScriptAdapter implements LanguageAdapter {
       }
     }
 
-    return builder.result();
+    if (generated) {
+      builder.addReference(
+        { name: "generated_code_target", kind: "generated" },
+        root,
+        {
+          provenance: "dynamic",
+          confidence: 0.3,
+          metadata: { behavior: "generated_code" },
+        },
+      );
+    }
+    const result = builder.result();
+    if (generated) {
+      for (const node of result.nodes) {
+        node.provenance = "dynamic";
+        node.metadata.generated = true;
+      }
+      for (const edge of result.edges) {
+        edge.provenance = "dynamic";
+        edge.confidence = Math.min(edge.confidence, 0.9);
+        edge.metadata.generated = true;
+      }
+    }
+    return result;
   }
 }

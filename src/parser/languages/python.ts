@@ -15,6 +15,29 @@ interface Scope {
   type: "module" | "class" | "function";
 }
 
+const CALLBACK_CALLS = new Set(["filter", "map", "reduce"]);
+const CALLBACK_METHODS = new Set(["apply_async", "submit", "then"]);
+const EVENT_SUBSCRIBE_METHODS = new Set([
+  "add_listener",
+  "connect",
+  "listen",
+  "on",
+  "subscribe",
+]);
+const QUEUE_SUBSCRIBE_METHODS = new Set(["consume", "process", "worker"]);
+const EVENT_PUBLISH_METHODS = new Set(["dispatch", "emit", "send"]);
+const QUEUE_PUBLISH_METHODS = new Set(["delay", "enqueue", "publish", "send_task"]);
+const REGISTRATION_METHODS = new Set(["bind", "provide", "register", "register_handler"]);
+const REFLECTION_CALLS = new Set([
+  "__import__",
+  "eval",
+  "exec",
+  "getattr",
+  "globals",
+  "locals",
+  "setattr",
+]);
+
 function qualifiedName(scope: Scope, name: string): string {
   return scope.qualifiedName === "" ? name : `${scope.qualifiedName}.${name}`;
 }
@@ -39,6 +62,19 @@ function referenceTarget(node: SyntaxNode | null): string | null {
     return parts.length === 0 ? null : parts.join(".");
   }
   return null;
+}
+
+function callArguments(node: SyntaxNode): SyntaxNode[] {
+  return node.childForFieldName("arguments")?.namedChildren ?? [];
+}
+
+function generatedSource(input: ParseInput): boolean {
+  return (
+    /(?:^|\/)(?:generated|__generated__|gen)(?:\/|$)/iu.test(input.relativeFilePath) ||
+    /(?:@generated|auto-generated|automatically generated|do not edit)/iu.test(
+      input.content.slice(0, 2_000),
+    )
+  );
 }
 
 function importNameAndAlias(node: SyntaxNode): {
@@ -107,6 +143,7 @@ export const pythonAdapter: LanguageAdapter = {
     const tree = createTree(PythonLanguage, input.content);
     const root = tree.rootNode;
     const builder = new ParseGraphBuilder(input, root);
+    const generated = generatedSource(input);
     const moduleScope: Scope = {
       parentNodeId: builder.moduleNodeId,
       qualifiedName: "",
@@ -302,10 +339,97 @@ export const pythonAdapter: LanguageAdapter = {
       if (node.type === "call") {
         const callable = node.childForFieldName("function");
         const name = referenceTarget(callable);
+        const args = callArguments(node);
         if (name !== null) {
           builder.addReference(
             { name, kind: "call", sourceNodeId: scope.parentNodeId },
             callable ?? node,
+          );
+        } else {
+          builder.addReference(
+            { name: "computed_callable", kind: "reflection", sourceNodeId: scope.parentNodeId },
+            callable ?? node,
+            {
+              provenance: "dynamic",
+              confidence: 0.25,
+              metadata: { behavior: "computed_or_reflective_call" },
+            },
+          );
+        }
+
+        const method = name?.split(".").at(-1) ?? null;
+        const addDynamicTarget = (
+          argument: SyntaxNode | undefined,
+          kind:
+            | "callback"
+            | "event_subscribe"
+            | "queue_subscribe"
+            | "dependency_injection"
+            | "runtime_registration",
+          behavior: string,
+          confidence: number,
+        ): void => {
+          const target = referenceTarget(argument ?? null);
+          if (target === null) return;
+          builder.addReference(
+            { name: target, kind, sourceNodeId: scope.parentNodeId },
+            argument ?? node,
+            {
+              provenance: "dynamic",
+              confidence,
+              metadata: { behavior, registration_method: method },
+            },
+          );
+        };
+        if (name !== null && CALLBACK_CALLS.has(name)) {
+          addDynamicTarget(args[0], "callback", "callback_invocation", 0.75);
+        }
+        if (method !== null && CALLBACK_METHODS.has(method)) {
+          addDynamicTarget(args[0], "callback", "scheduled_callback", 0.7);
+        }
+        if (method !== null && EVENT_SUBSCRIBE_METHODS.has(method)) {
+          addDynamicTarget(args.at(-1), "event_subscribe", "event_subscription", 0.7);
+        }
+        if (method !== null && QUEUE_SUBSCRIBE_METHODS.has(method)) {
+          addDynamicTarget(args.at(-1), "queue_subscribe", "queue_consumer", 0.65);
+        }
+        if (method !== null && REGISTRATION_METHODS.has(method)) {
+          addDynamicTarget(args.at(-1), "runtime_registration", "runtime_registration", 0.6);
+        }
+        if (name === "Depends" || method === "resolve" || method === "inject") {
+          addDynamicTarget(args[0], "dependency_injection", "dependency_injection", 0.65);
+        }
+        if (method !== null && EVENT_PUBLISH_METHODS.has(method)) {
+          builder.addReference(
+            { name: "runtime_event_target", kind: "event_publish", sourceNodeId: scope.parentNodeId },
+            args[0] ?? node,
+            {
+              provenance: "dynamic",
+              confidence: 0.35,
+              metadata: { behavior: "event_publish", publisher_method: method },
+            },
+          );
+        }
+        if (method !== null && QUEUE_PUBLISH_METHODS.has(method)) {
+          builder.addReference(
+            { name: "runtime_queue_target", kind: "queue_publish", sourceNodeId: scope.parentNodeId },
+            args[0] ?? node,
+            {
+              provenance: "dynamic",
+              confidence: 0.35,
+              metadata: { behavior: "queue_publish", publisher_method: method },
+            },
+          );
+        }
+        if (name !== null && (REFLECTION_CALLS.has(name) || callable?.type === "subscript")) {
+          builder.addReference(
+            { name: "reflective_target", kind: "reflection", sourceNodeId: scope.parentNodeId },
+            callable ?? node,
+            {
+              provenance: "dynamic",
+              confidence: 0.2,
+              metadata: { behavior: "reflection" },
+            },
           );
         }
       }
@@ -338,6 +462,29 @@ export const pythonAdapter: LanguageAdapter = {
       }
     }
 
-    return builder.result();
+    if (generated) {
+      builder.addReference(
+        { name: "generated_code_target", kind: "generated" },
+        root,
+        {
+          provenance: "dynamic",
+          confidence: 0.3,
+          metadata: { behavior: "generated_code" },
+        },
+      );
+    }
+    const result = builder.result();
+    if (generated) {
+      for (const node of result.nodes) {
+        node.provenance = "dynamic";
+        node.metadata.generated = true;
+      }
+      for (const edge of result.edges) {
+        edge.provenance = "dynamic";
+        edge.confidence = Math.min(edge.confidence, 0.9);
+        edge.metadata.generated = true;
+      }
+    }
+    return result;
   },
 };

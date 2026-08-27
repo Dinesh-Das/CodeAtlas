@@ -29,6 +29,12 @@ structures those facts, and an LLM may explain them later.
   `REFERENCES` relationships.
 - Explicit unresolved and multi-candidate resolution records; ambiguous edges use confidence
   scaled by import-graph distance.
+- Explicit dynamic analysis for callbacks, async continuations, event emitters, queues,
+  dependency-injection containers, runtime registration, reflection, polymorphic calls, and
+  generated code. Candidate targets have reduced confidence; unverifiable targets remain
+  explicit diagnostics.
+- First-class provenance categories on every graph node and edge: `verified`, `inferred`,
+  `dynamic`, `documentation`, `git`, and `unresolved`.
 - Literal-safe signatures that redact assigned/default string values before persistence.
 - Transactional structural indexing, deleted-file cleanup, status checks, and a single-writer
   workspace lock.
@@ -42,6 +48,10 @@ structures those facts, and an LLM may explain them later.
 - Evidence-bearing `api_route` and `database_model` nodes with `EXPOSES`, `HANDLES`,
   `CONTAINS`, and `REFERENCES` relationships.
 - Deterministic feature/domain grouping and dependency communities derived from the current graph.
+- Weighted feature evidence from directory boundaries, symbol vocabulary, routes, tests, imports,
+  database models, and dependency communities, with configuration-based manual overrides.
+- README, ADR, documentation-heading, intent-comment, and test-file indexing that remains clearly
+  separated from deterministic code facts and bounded Git-history explanations.
 - Persisted fan-in, fan-out, dependency depth, cross-domain coupling, size, and bounded Git-history
   metrics.
 - Evidence-bearing cycle, high-coupling, large-symbol/file, and churn/connectivity hotspot signals.
@@ -50,10 +60,16 @@ structures those facts, and an LLM may explain them later.
   dependency-neighborhood, and current-source MCP responses.
 - Bounded traversal, definite-versus-potential impact classification, opaque query-bound cursors,
   ambiguity reporting, and stable node IDs for follow-up queries.
+- Relevance ranking by query similarity, feature membership, graph distance, symbol type, direct
+  dependency strength, and confidence; candidate sets and SQL materialization are strictly capped.
 - Current-working-tree source excerpts capped by configuration, path-contained within the
   repository, and labeled `untrusted_repository_content`.
 - Official-SDK MCP stdio server with all ten required tools, validated inputs, typed Answer
   Packets, configured limits, and a mandatory freshness gate before every tool call.
+- Evidence-only MCP policy metadata that marks repository content untrusted, indexing local-only,
+  and external LLM/provider behavior as outside CodeAtlas.
+- Expanded `codeatlas doctor` diagnostics for unsupported languages, unresolved imports, dynamic
+  relationships, parser failures, stale files, graph corruption, and framework coverage gaps.
 - Parser and call-graph snapshots plus unit, integration, compiled-CLI, and MCP protocol tests
   using disposable Git repositories.
 
@@ -183,7 +199,9 @@ CodeAtlas was installed, restart it so the new executable is available on `PATH`
 The server uses stdio and writes no protocol-breaking output to stdout. Every tool request first
 checks the current repository fingerprint and performs an incremental index update when needed.
 All source snippets in the stable Answer Packet contract are labeled
-`untrusted_repository_content`.
+`untrusted_repository_content`. Empty or ambiguous results return explicit uncertainty such as
+`insufficient_evidence`, `unresolved_reference`, or `dynamic_relationship`; the MCP layer never
+manufactures a missing relationship or answer.
 
 The available tools are `codeatlas_status`, `codeatlas_overview`, `codeatlas_search`,
 `codeatlas_get_node`, `codeatlas_explain_feature`, `codeatlas_trace`, `codeatlas_impact`,
@@ -249,13 +267,16 @@ identifiers, evidence locations, and structural relationships remain queryable.
     "gitHistory": true,
     "technicalDebt": true,
     "featureDetection": true,
-    "frameworks": true
+    "frameworks": true,
+    "featureOverrides": []
   },
   "limits": {
     "maxTraversalDepth": 10,
     "maxSourceSnippetLines": 120,
+    "maxSourceSnippetBytes": 8000,
     "maxMcpResultNodes": 200,
     "maxExecutionPaths": 20,
+    "maxInvalidationFiles": 2000,
     "largeFileLines": 500,
     "largeSymbolLines": 80,
     "highFanIn": 10,
@@ -265,6 +286,19 @@ identifiers, evidence locations, and structural relationships remain queryable.
 ```
 
 Unknown keys, missing keys, invalid JSON, and invalid value ranges fail with a diagnostic.
+
+Manual feature membership uses ordered override entries. `include` and `exclude` accept
+repository-relative `*`, `**`, and `?` patterns; matching files are removed from automatic feature
+membership and assigned to the configured feature with explicit `config` evidence:
+
+```json
+{
+  "name": "Billing",
+  "include": ["src/payments/**"],
+  "exclude": ["src/payments/fixtures/**"],
+  "confidence": 1
+}
+```
 
 ## Ignore and secret rules
 
@@ -282,22 +316,26 @@ The stored fingerprint follows the specification exactly:
 ```text
 sha256(
   HEAD + "|" +
+  sha256(Git index entries) + "|" +
   sha256(sorted tracked "path:content_hash" entries) + "|" +
   sha256(sorted untracked "path:content_hash" entries)
 )
 ```
 
 Tracked deletions receive an explicit deletion marker. Untracked files respect Git ignore
-rules plus CodeAtlas exclusions. `codeatlas status` recomputes this value from the current
-working tree; `codeatlas index` classifies Git state, verifies file hashes, recomputes only the
+rules plus CodeAtlas exclusions. This covers HEAD, staged, unstaged, untracked, renamed, and
+deleted state. `codeatlas status` recomputes this value from the current working tree, reusing a
+stored hash only when file size and modification/change timestamps still match; `codeatlas index`
+classifies Git state, verifies file hashes, recomputes only the
 required dependency neighborhood, and updates the database and fingerprint in one SQLite
 transaction. When the graph changes, feature/domain memberships and graph-only architecture
 metrics are recomputed in that same transaction without reparsing unrelated files.
 
 ## Architecture analysis
 
-Feature and domain nodes are heuristic groupings with explicit confidence and evidence. Dependency
-communities are deterministic connected components of analyzable source/model files. Technical-debt
+Feature and domain nodes are multi-signal groupings with explicit confidence, supporting evidence,
+and optional configuration overrides. Dependency communities are deterministic connected
+components of analyzable source/model files. Technical-debt
 signals include circular dependencies, configurable high fan-in/fan-out thresholds, configurable
 large file/symbol thresholds, and files combining elevated recent churn with connectivity.
 
@@ -329,6 +367,10 @@ MCP → Freshness gate → Graph query contracts
 
 Parser code will not depend on MCP. MCP tools will not parse source. Graph/storage entities do
 not contain Tree-sitter-specific objects.
+
+Framework adapters implement the public `FrameworkAdapter` contract and can be registered with
+`registerFrameworkAdapter` without editing parser or graph-engine code. Adapter exceptions are
+isolated to the affected file, recorded for `codeatlas doctor`, and fall back to generic AST facts.
 
 ## Privacy
 

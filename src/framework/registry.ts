@@ -11,18 +11,40 @@ import type {
   RepositoryContext,
 } from "./types.js";
 
-const adapters: readonly FrameworkAdapter[] = [
-  expressAdapter,
-  fastApiAdapter,
-  prismaAdapter,
-  sqlAlchemyAdapter,
-];
+const adapters = new Map<string, FrameworkAdapter>();
+
+export function registerFrameworkAdapter(
+  adapter: FrameworkAdapter,
+  options: { replace?: boolean } = {},
+): () => void {
+  if (adapter.name.trim() === "" || adapter.version.trim() === "") {
+    throw new Error("Framework adapters require non-empty name and version values.");
+  }
+  if (adapters.has(adapter.name) && options.replace !== true) {
+    throw new Error(`Framework adapter ${adapter.name} is already registered.`);
+  }
+  adapters.set(adapter.name, adapter);
+  return () => {
+    if (adapters.get(adapter.name) === adapter) adapters.delete(adapter.name);
+  };
+}
+
+for (const adapter of [expressAdapter, fastApiAdapter, prismaAdapter, sqlAlchemyAdapter]) {
+  registerFrameworkAdapter(adapter);
+}
 
 export function supportsFrameworkExtraction(
   relativeFilePath: string,
   language: DetectedLanguage | null,
 ): boolean {
-  return adapters.some((adapter) => adapter.supports(relativeFilePath, language));
+  for (const adapter of adapters.values()) {
+    try {
+      if (adapter.supports(relativeFilePath, language)) return true;
+    } catch {
+      // A faulty optional adapter must not disable generic AST analysis.
+    }
+  }
+  return false;
 }
 
 export function extractFrameworkGraph(
@@ -31,21 +53,30 @@ export function extractFrameworkGraph(
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
   const detectedFrameworks: string[] = [];
-  for (const adapter of adapters) {
-    if (!adapter.supports(context.relativeFilePath, context.language)) continue;
-    if (!adapter.detect(context)) continue;
-    detectedFrameworks.push(adapter.name);
-    const entities = {
-      routes: adapter.extractRoutes(context),
-      models: adapter.extractModels(context),
-    };
-    nodes.push(...entities.routes, ...entities.models);
-    edges.push(...adapter.extractFrameworkRelationships(context, entities));
+  const failures: FrameworkExtraction["failures"] = [];
+  for (const adapter of adapters.values()) {
+    try {
+      if (!adapter.supports(context.relativeFilePath, context.language)) continue;
+      if (!adapter.detect(context)) continue;
+      const entities = {
+        routes: adapter.extractRoutes(context),
+        models: adapter.extractModels(context),
+      };
+      nodes.push(...entities.routes, ...entities.models);
+      edges.push(...adapter.extractFrameworkRelationships(context, entities));
+      detectedFrameworks.push(adapter.name);
+    } catch (error) {
+      failures.push({
+        adapter: adapter.name,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
   return {
     nodes,
     edges,
     detectedFrameworks: detectedFrameworks.sort((left, right) => left.localeCompare(right)),
+    failures,
   };
 }
 
@@ -53,7 +84,12 @@ export function mergeFrameworkGraph(
   parsedFile: ParsedFile | null,
   extraction: FrameworkExtraction,
 ): ParsedFile | null {
-  if (parsedFile === null && extraction.nodes.length === 0 && extraction.edges.length === 0) {
+  if (
+    parsedFile === null &&
+    extraction.nodes.length === 0 &&
+    extraction.edges.length === 0 &&
+    extraction.failures.length === 0
+  ) {
     return null;
   }
   const base: ParsedFile = parsedFile ?? {
@@ -70,9 +106,22 @@ export function mergeFrameworkGraph(
     ...base,
     nodes: [...nodes.values()],
     edges: [...edges.values()],
+    errors: [
+      ...base.errors,
+      ...extraction.failures.map((failure) => ({
+        message: `Framework adapter ${failure.adapter} failed; generic AST analysis was retained: ${failure.message}`,
+        severity: "warning" as const,
+        evidence: {
+          sourceType: "framework" as const,
+          file: base.nodes[0]?.filePath ?? ".",
+          line: 1,
+          column: 0,
+        },
+      })),
+    ],
   };
 }
 
 export function availableFrameworkAdapters(): readonly FrameworkAdapter[] {
-  return adapters;
+  return [...adapters.values()];
 }

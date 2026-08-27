@@ -1,4 +1,9 @@
-import type { GraphEdge, GraphNode, SourceType } from "../graph/types.js";
+import type {
+  GraphEdge,
+  GraphNode,
+  ProvenanceCategory,
+  SourceType,
+} from "../graph/types.js";
 
 export interface ParseInput {
   repositoryId: string;
@@ -25,10 +30,28 @@ export interface ParsedFile {
 
 export interface UnresolvedReference {
   name: string;
-  kind: "import" | "export" | "call" | "extends" | "implements" | "reference";
+  kind:
+    | "import"
+    | "export"
+    | "call"
+    | "extends"
+    | "implements"
+    | "reference"
+    | "callback"
+    | "event_subscribe"
+    | "event_publish"
+    | "queue_subscribe"
+    | "queue_publish"
+    | "dependency_injection"
+    | "runtime_registration"
+    | "reflection"
+    | "generated";
   sourceNodeId: string;
   localName: string | null;
   importedName: string | null;
+  provenance: ProvenanceCategory;
+  confidence: number;
+  metadata: Record<string, unknown>;
   evidence: Evidence;
 }
 

@@ -20,6 +20,7 @@ import {
   type StoredNode,
 } from "./query.js";
 import { answerPacketSchema, type AnswerPacket } from "./schemas.js";
+import { rankEdges, rankNodes } from "./relevance.js";
 
 interface PageInput {
   cursor?: string | null;
@@ -50,6 +51,7 @@ interface ExplainFeatureInput extends PageInput {
 
 const SEARCHABLE_KINDS: readonly NodeKind[] = [
   "file",
+  "documentation",
   "class",
   "interface",
   "function",
@@ -97,7 +99,7 @@ const TRACE_EDGE_TYPES: readonly EdgeType[] = [
 ];
 
 function packet(
-  value: Omit<AnswerPacket, "freshness">,
+  value: Omit<AnswerPacket, "freshness" | "security">,
   context: FreshContext,
 ): AnswerPacket {
   return answerPacketSchema.parse({ ...value, freshness: freshnessFor(context) });
@@ -143,7 +145,6 @@ function searchNodes(
   database: AtlasDatabase,
   query: string,
   limit: number,
-  offset: number,
 ): StoredNode[] {
   const kinds = SEARCHABLE_KINDS.map(() => "?").join(", ");
   const expression = searchExpression(query);
@@ -156,15 +157,16 @@ function searchNodes(
            nodes.language, nodes.start_line AS startLine,
            nodes.start_column AS startColumn, nodes.end_line AS endLine,
            nodes.end_column AS endColumn, nodes.signature, nodes.visibility,
-           nodes.source_type AS sourceType, nodes.confidence,
+           nodes.source_type AS sourceType,
+           nodes.provenance_category AS provenance, nodes.confidence,
            nodes.metadata_json AS metadataJson
          FROM nodes_fts
          JOIN nodes ON nodes.id = nodes_fts.id
          WHERE nodes_fts MATCH ? AND nodes.kind IN (${kinds})
          ORDER BY bm25(nodes_fts), nodes.kind, nodes.name, nodes.id
-         LIMIT ? OFFSET ?`,
+         LIMIT ?`,
       )
-      .all(expression, ...SEARCHABLE_KINDS, limit, offset) as StoredNode[];
+      .all(expression, ...SEARCHABLE_KINDS, limit) as StoredNode[];
   }
 
   return database
@@ -173,25 +175,28 @@ function searchNodes(
          id, kind, name, qualified_name AS qualifiedName, file_path AS filePath,
          language, start_line AS startLine, start_column AS startColumn,
          end_line AS endLine, end_column AS endColumn, signature, visibility,
-         source_type AS sourceType, confidence, metadata_json AS metadataJson
+         source_type AS sourceType, provenance_category AS provenance,
+         confidence, metadata_json AS metadataJson
        FROM nodes
        WHERE kind IN (${kinds})
          AND (instr(lower(name), lower(?)) > 0
            OR instr(lower(coalesce(qualified_name, '')), lower(?)) > 0
            OR instr(lower(coalesce(file_path, '')), lower(?)) > 0)
        ORDER BY kind, name, id
-       LIMIT ? OFFSET ?`,
+       LIMIT ?`,
     )
-    .all(...SEARCHABLE_KINDS, query, query, query, limit, offset) as StoredNode[];
+    .all(...SEARCHABLE_KINDS, query, query, query, limit) as StoredNode[];
 }
 
 export function searchPacket(context: FreshContext, input: SearchInput): AnswerPacket {
   return withDatabase(context, (database) => {
     const scope = input.query.trim().toLowerCase();
     const offset = decodeCursor(input.cursor, "search", scope);
-    const rows = searchNodes(database, input.query, input.limit + 1, offset);
-    const hasMore = rows.length > input.limit;
-    const page = rows.slice(0, input.limit);
+    const candidateLimit = context.config.limits.maxMcpResultNodes;
+    const rows = searchNodes(database, input.query, candidateLimit);
+    const ranked = rankNodes(database, rows, { query: input.query });
+    const hasMore = ranked.length > offset + input.limit;
+    const page = ranked.slice(offset, offset + input.limit);
     const uncertainties: AnswerPacket["uncertainties"] = [];
     if (page.length === 0) {
       uncertainties.push({
@@ -206,6 +211,13 @@ export function searchPacket(context: FreshContext, input: SearchInput): AnswerP
         description: "Some search results are heuristic architecture groups.",
         reason: "heuristic_only",
         candidates: heuristic.map((node) => node.id),
+      });
+    }
+    if (rows.length === candidateLimit) {
+      uncertainties.push({
+        description: "Search ranking considered only the configured maximum candidate set.",
+        reason: "insufficient_evidence",
+        candidates: [],
       });
     }
     return packet(
@@ -237,6 +249,7 @@ function descriptiveFacts(node: StoredNode): AnswerPacket["facts"] {
       statement: `${node.name} has ${details.join(", ")}.`,
       confidence: node.confidence,
       source_type: node.sourceType,
+      provenance: node.provenance,
       evidence: evidenceForNode(node),
     });
   }
@@ -264,7 +277,11 @@ export function getNodePacket(
       context.config.limits.maxMcpResultNodes + 1,
     );
     const truncated = edgeRows.length > context.config.limits.maxMcpResultNodes;
-    const selectedEdges = edgeRows.slice(0, context.config.limits.maxMcpResultNodes);
+    const selectedEdges = rankEdges(
+      database,
+      edgeRows.slice(0, context.config.limits.maxMcpResultNodes),
+      resolution.node.id,
+    );
     const uncertainties = uncertaintiesForNodes(
       database,
       [resolution.node.id],
@@ -320,16 +337,17 @@ export function dependenciesPacket(
     }
     const scope = `${resolution.node.id}:${input.direction}`;
     const offset = decodeCursor(input.cursor, "dependencies", scope);
-    const rows = listEdgesForNode(
+    const allRows = listEdgesForNode(
       database,
       resolution.node.id,
       input.direction,
-      input.limit + 1,
-      offset,
+      context.config.limits.maxMcpResultNodes,
+      0,
       DEPENDENCY_EDGE_TYPES,
     );
-    const hasMore = rows.length > input.limit;
-    const page = rows.slice(0, input.limit);
+    const rows = rankEdges(database, allRows, resolution.node.id);
+    const hasMore = rows.length > offset + input.limit;
+    const page = rows.slice(offset, offset + input.limit);
     const related = getNodesByIds(database, relatedNodeIds(page, resolution.node.id));
     const uncertainties = uncertaintiesForNodes(
       database,
@@ -406,13 +424,15 @@ function traverse(
       .prepare(
         `SELECT
            id, source_node_id AS sourceNodeId, target_node_id AS targetNodeId,
-           edge_type AS edgeType, source_type AS sourceType, confidence,
+           edge_type AS edgeType, source_type AS sourceType,
+           provenance_category AS provenance, confidence,
            file_path AS filePath, line, metadata_json AS metadataJson
          FROM edges
          WHERE ${predicate} AND edge_type IN (${edgePlaceholders})
-         ORDER BY edge_type, source_node_id, target_node_id, id`,
+         ORDER BY edge_type, source_node_id, target_node_id, id
+         LIMIT ?`,
       )
-      .all(current.nodeId, ...edgeTypes) as StoredEdge[];
+      .all(current.nodeId, ...edgeTypes, Math.max(1, maxNodes - items.length)) as StoredEdge[];
 
     for (const edge of edges) {
       if (seenEdges.has(edge.id)) continue;
@@ -480,13 +500,19 @@ function traceTraverse(
       .prepare(
         `SELECT
            id, source_node_id AS sourceNodeId, target_node_id AS targetNodeId,
-           edge_type AS edgeType, source_type AS sourceType, confidence,
+           edge_type AS edgeType, source_type AS sourceType,
+           provenance_category AS provenance, confidence,
            file_path AS filePath, line, metadata_json AS metadataJson
          FROM edges
          WHERE source_node_id = ? AND edge_type IN (${edgePlaceholders})
-         ORDER BY edge_type, target_node_id, id`,
+         ORDER BY edge_type, target_node_id, id
+         LIMIT ?`,
       )
-      .all(current.nodeId, ...TRACE_EDGE_TYPES) as StoredEdge[];
+      .all(
+        current.nodeId,
+        ...TRACE_EDGE_TYPES,
+        Math.max(1, maxNodes - visitedNodes.size + 1),
+      ) as StoredEdge[];
     const nextEdges = outgoing.filter((edge) => !current.visited.has(edge.targetNodeId));
     if (nextEdges.length === 0) {
       completedPaths += 1;
@@ -560,10 +586,30 @@ export function tracePacket(context: FreshContext, input: TraceInput): AnswerPac
       context.config.limits.maxMcpResultNodes,
       context.config.limits.maxExecutionPaths,
     );
+    const distanceByNodeId = new Map<string, number>();
+    for (const item of result.items) {
+      distanceByNodeId.set(
+        item.edge.targetNodeId,
+        Math.min(distanceByNodeId.get(item.edge.targetNodeId) ?? item.depth, item.depth),
+      );
+    }
+    const rankedEdges = rankEdges(
+      database,
+      result.items.map((item) => item.edge),
+      resolution.node.id,
+      distanceByNodeId,
+    );
+    const edgeRank = new Map(rankedEdges.map((edge, index) => [edge.id, index]));
+    const rankedItems = [...result.items].sort(
+      (left, right) =>
+        (edgeRank.get(left.edge.id) ?? Number.MAX_SAFE_INTEGER) -
+          (edgeRank.get(right.edge.id) ?? Number.MAX_SAFE_INTEGER) ||
+        left.depth - right.depth,
+    );
     const scope = `${resolution.node.id}:${input.max_depth}`;
     const offset = decodeCursor(input.cursor, "trace", scope);
-    const hasMore = result.items.length > offset + input.limit;
-    const page = result.items.slice(offset, offset + input.limit);
+    const hasMore = rankedItems.length > offset + input.limit;
+    const page = rankedItems.slice(offset, offset + input.limit);
     const reachedIds = page.map((item) => item.edge.targetNodeId);
     const reached = new Map(getNodesByIds(database, reachedIds).map((node) => [node.id, node]));
     const facts: AnswerPacket["facts"] = [nodeFact(resolution.node, "Trace start")];
@@ -574,6 +620,7 @@ export function tracePacket(context: FreshContext, input: TraceInput): AnswerPac
         statement: `Trace depth ${item.depth} reaches ${node.kind} ${node.name}.`,
         confidence: item.confidence,
         source_type: item.edge.sourceType,
+        provenance: item.edge.provenance,
         evidence: evidenceFrom(parseMetadata(item.edge.metadataJson), item.edge.filePath, item.edge.line),
       });
     }
@@ -627,6 +674,7 @@ export function impactPacket(context: FreshContext, input: ImpactInput): AnswerP
           `source_node_id IN (${result.nodeIds.map(() => "?").join(", ")})
            AND edge_type = 'BELONGS_TO_FEATURE'`,
           result.nodeIds,
+          context.config.limits.maxMcpResultNodes,
         );
     const combined: TraversalItem[] = [
       ...result.items,
@@ -637,6 +685,28 @@ export function impactPacket(context: FreshContext, input: ImpactInput): AnswerP
         deterministic: false,
       })),
     ];
+    const distanceByNodeId = new Map<string, number>();
+    for (const item of combined) {
+      const relatedId = item.edge.edgeType === "BELONGS_TO_FEATURE"
+        ? item.edge.targetNodeId
+        : item.edge.sourceNodeId;
+      distanceByNodeId.set(
+        relatedId,
+        Math.min(distanceByNodeId.get(relatedId) ?? item.depth, item.depth),
+      );
+    }
+    const rankedEdges = rankEdges(
+      database,
+      combined.map((item) => item.edge),
+      resolution.node.id,
+      distanceByNodeId,
+    );
+    const edgeRank = new Map(rankedEdges.map((edge, index) => [edge.id, index]));
+    combined.sort(
+      (left, right) =>
+        (edgeRank.get(left.edge.id) ?? Number.MAX_SAFE_INTEGER) -
+        (edgeRank.get(right.edge.id) ?? Number.MAX_SAFE_INTEGER),
+    );
     const scope = resolution.node.id;
     const offset = decodeCursor(input.cursor, "impact", scope);
     const hasMore = combined.length > offset + input.limit;
@@ -658,6 +728,7 @@ export function impactPacket(context: FreshContext, input: ImpactInput): AnswerP
         statement: `${classification}: ${node.kind} ${node.name} (${distance}).`,
         confidence: item.confidence,
         source_type: item.edge.sourceType,
+        provenance: item.edge.provenance,
         evidence: evidenceFrom(parseMetadata(item.edge.metadataJson), item.edge.filePath, item.edge.line),
       });
     }
@@ -723,16 +794,21 @@ export function explainFeaturePacket(
       .prepare(
         `SELECT
            id, source_node_id AS sourceNodeId, target_node_id AS targetNodeId,
-           edge_type AS edgeType, source_type AS sourceType, confidence,
+           edge_type AS edgeType, source_type AS sourceType,
+           provenance_category AS provenance, confidence,
            file_path AS filePath, line, metadata_json AS metadataJson
          FROM edges
          WHERE target_node_id = ? AND edge_type = 'BELONGS_TO_FEATURE'
          ORDER BY source_node_id, id
-         LIMIT ? OFFSET ?`,
+         LIMIT ?`,
       )
-      .all(resolution.node.id, input.limit + 1, offset) as StoredEdge[];
-    const hasMore = memberships.length > input.limit;
-    const page = memberships.slice(0, input.limit);
+      .all(
+        resolution.node.id,
+        context.config.limits.maxMcpResultNodes,
+      ) as StoredEdge[];
+    const rankedMemberships = rankEdges(database, memberships, resolution.node.id);
+    const hasMore = rankedMemberships.length > offset + input.limit;
+    const page = rankedMemberships.slice(offset, offset + input.limit);
     const members = getNodesByIds(database, page.map((edge) => edge.sourceNodeId));
     const memberIds = members.map((node) => node.id);
     const remainingRelationshipBudget = Math.max(
@@ -746,7 +822,8 @@ export function explainFeaturePacket(
           `source_node_id IN (${memberIds.map(() => "?").join(", ")})
            AND edge_type IN (${TRACE_EDGE_TYPES.map(() => "?").join(", ")})`,
           [...memberIds, ...TRACE_EDGE_TYPES],
-        ).slice(0, remainingRelationshipBudget);
+          remainingRelationshipBudget,
+        );
     const uncertainties = uncertaintiesForNodes(
       database,
       memberIds,

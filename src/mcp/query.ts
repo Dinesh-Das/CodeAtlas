@@ -1,6 +1,11 @@
 import { sha256 } from "../core/hashing.js";
 import { CodeAtlasError } from "../core/errors.js";
-import type { EdgeType, NodeKind, SourceType } from "../graph/types.js";
+import type {
+  EdgeType,
+  NodeKind,
+  ProvenanceCategory,
+  SourceType,
+} from "../graph/types.js";
 import type { AtlasDatabase } from "../storage/database.js";
 import type { FreshContext } from "./freshness.js";
 import type { AnswerPacket } from "./schemas.js";
@@ -19,6 +24,7 @@ export interface StoredNode {
   signature: string | null;
   visibility: string | null;
   sourceType: SourceType;
+  provenance: ProvenanceCategory;
   confidence: number;
   metadataJson: string | null;
 }
@@ -29,6 +35,7 @@ export interface StoredEdge {
   targetNodeId: string;
   edgeType: EdgeType;
   sourceType: SourceType;
+  provenance: ProvenanceCategory;
   confidence: number;
   filePath: string | null;
   line: number | null;
@@ -36,7 +43,12 @@ export interface StoredEdge {
 }
 
 interface ResolutionIssueRow {
-  reason: "unresolved_reference" | "multi_candidate";
+  reason:
+    | "unresolved_reference"
+    | "multi_candidate"
+    | "dynamic_relationship"
+    | "generated_code"
+    | "unsupported_framework";
   reference_name: string | null;
   candidate_node_ids_json: string;
   file_path: string;
@@ -47,12 +59,14 @@ const NODE_COLUMNS = `
   id, kind, name, qualified_name AS qualifiedName, file_path AS filePath,
   language, start_line AS startLine, start_column AS startColumn,
   end_line AS endLine, end_column AS endColumn, signature, visibility,
-  source_type AS sourceType, confidence, metadata_json AS metadataJson
+  source_type AS sourceType, provenance_category AS provenance,
+  confidence, metadata_json AS metadataJson
 `;
 
 const EDGE_COLUMNS = `
   id, source_node_id AS sourceNodeId, target_node_id AS targetNodeId,
-  edge_type AS edgeType, source_type AS sourceType, confidence,
+  edge_type AS edgeType, source_type AS sourceType,
+  provenance_category AS provenance, confidence,
   file_path AS filePath, line, metadata_json AS metadataJson
 `;
 
@@ -113,6 +127,7 @@ export function relationshipFromEdge(edge: StoredEdge): AnswerPacket["relationsh
     edge_type: edge.edgeType,
     confidence: edge.confidence,
     source_type: edge.sourceType,
+    provenance: edge.provenance,
     evidence: { file: evidence.file, line: evidence.line },
   };
 }
@@ -248,6 +263,7 @@ export function nodeFact(node: StoredNode, prefix = "Graph node"): AnswerPacket[
     statement: `${prefix} ${qualified} [node_id: ${node.id}] is a ${node.kind} at ${location}.`,
     confidence: node.confidence,
     source_type: node.sourceType,
+    provenance: node.provenance,
     evidence: evidenceForNode(node),
   };
 }
@@ -308,7 +324,17 @@ export function uncertaintiesForNodes(
     }
     const reference = row.reference_name === null ? "a redacted reference" : row.reference_name;
     return {
-      description: `${reference} at ${row.file_path}:${row.line} was ${row.reason === "multi_candidate" ? "ambiguous" : "not resolved"}.`,
+      description: `${reference} at ${row.file_path}:${row.line} was ${
+        row.reason === "multi_candidate"
+          ? "ambiguous"
+          : row.reason === "dynamic_relationship"
+            ? "dynamic and not statically verifiable"
+            : row.reason === "generated_code"
+              ? "generated and not safely resolvable"
+              : row.reason === "unsupported_framework"
+                ? "handled only by generic AST analysis"
+                : "not resolved"
+      }.`,
       reason: row.reason,
       candidates,
     };
@@ -331,8 +357,9 @@ export function queryEdges(
   database: AtlasDatabase,
   predicate: string,
   parameters: readonly unknown[],
+  limit: number,
 ): StoredEdge[] {
   return database
-    .prepare(`SELECT ${EDGE_COLUMNS} FROM edges WHERE ${predicate} ORDER BY id`)
-    .all(...parameters) as StoredEdge[];
+    .prepare(`SELECT ${EDGE_COLUMNS} FROM edges WHERE ${predicate} ORDER BY id LIMIT ?`)
+    .all(...parameters, limit) as StoredEdge[];
 }

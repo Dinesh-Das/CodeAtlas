@@ -39,6 +39,18 @@ interface CandidateSet {
   exact: boolean;
 }
 
+const MAX_DYNAMIC_CANDIDATES = 20;
+const DYNAMIC_REFERENCE_KINDS = new Set<UnresolvedReference["kind"]>([
+  "callback",
+  "event_subscribe",
+  "event_publish",
+  "queue_subscribe",
+  "queue_publish",
+  "dependency_injection",
+  "runtime_registration",
+  "reflection",
+]);
+
 export interface ResolutionResult {
   edges: number;
   unresolved: number;
@@ -153,18 +165,41 @@ function edgeTypeFor(reference: UnresolvedReference): EdgeType {
     case "export":
       return "EXPORTS";
     case "call":
+    case "callback":
       return "CALLS";
+    case "event_subscribe":
+    case "queue_subscribe":
+      return "SUBSCRIBES";
+    case "event_publish":
+    case "queue_publish":
+      return "PUBLISHES";
+    case "dependency_injection":
+      return "DEPENDS_ON";
+    case "runtime_registration":
+      return "CONFIGURES";
     case "extends":
       return "EXTENDS";
     case "implements":
       return "IMPLEMENTS";
     case "reference":
+    case "reflection":
+    case "generated":
       return "REFERENCES";
   }
 }
 
 function expectedKinds(reference: UnresolvedReference): ReadonlySet<NodeKind> {
-  if (reference.kind === "call") return new Set(["function", "method", "class"]);
+  if (
+    reference.kind === "call" ||
+    reference.kind === "callback" ||
+    reference.kind === "event_subscribe" ||
+    reference.kind === "queue_subscribe"
+  ) {
+    return new Set(["function", "method", "class"]);
+  }
+  if (reference.kind === "dependency_injection") {
+    return new Set(["class", "interface", "function"]);
+  }
   if (reference.kind === "extends") return new Set(["class", "interface"]);
   if (reference.kind === "implements") return new Set(["interface"]);
   return SYMBOL_KINDS;
@@ -314,6 +349,25 @@ function symbolCandidates(
       ),
     );
     if (qualified.length > 0) return { nodes: qualified, exact: true };
+    if (
+      reference.kind === "call" ||
+      reference.kind === "callback" ||
+      DYNAMIC_REFERENCE_KINDS.has(reference.kind)
+    ) {
+      const sourceModule = modulesByFile.get(reference.evidence.file);
+      const reachableModules =
+        sourceModule === undefined ? undefined : distances.get(sourceModule.id);
+      const polymorphic = nodes
+        .filter((node) => {
+          if (node.name !== last || !kinds.has(node.kind) || node.filePath === null) {
+            return false;
+          }
+          const module = modulesByFile.get(node.filePath);
+          return module !== undefined && reachableModules?.has(module.id) === true;
+        })
+        .slice(0, MAX_DYNAMIC_CANDIDATES);
+      if (polymorphic.length > 0) return { nodes: polymorphic, exact: false };
+    }
     return { nodes: [], exact: false };
   }
 
@@ -404,7 +458,11 @@ function confidenceFor(distance: number, candidateCount: number, exact: boolean)
 function persistIssue(
   database: AtlasDatabase,
   reference: UnresolvedReference,
-  reason: "unresolved_reference" | "multi_candidate",
+  reason:
+    | "unresolved_reference"
+    | "multi_candidate"
+    | "dynamic_relationship"
+    | "generated_code",
   candidates: readonly StoredNode[],
   timestamp: string,
 ): void {
@@ -436,6 +494,10 @@ function persistIssue(
           line: reference.evidence.line,
           column: reference.evidence.column,
         },
+        provenance: reason === "unresolved_reference" ? "unresolved" : reference.provenance,
+        relationship_kind: reference.kind,
+        confidence: reference.confidence,
+        ...reference.metadata,
       },
     },
     timestamp,
@@ -471,7 +533,16 @@ function persistEdges(
       targetNodeId: candidate.id,
       edgeType,
       sourceType,
-      confidence: confidenceFor(distance, candidates.length, exact),
+      provenance:
+        reference.provenance === "dynamic" || reference.provenance === "documentation"
+          ? reference.provenance
+          : sourceType === "heuristic"
+            ? "inferred"
+            : "verified",
+      confidence: Math.min(
+        reference.confidence,
+        confidenceFor(distance, candidates.length, exact),
+      ),
       filePath: reference.evidence.file,
       line: reference.evidence.line,
       metadata: {
@@ -484,6 +555,8 @@ function persistEdges(
         resolution: candidates.length > 1 ? "ambiguous" : exact ? "exact" : "unique_candidate",
         candidate_count: candidates.length,
         import_graph_distance: distance === 20 ? null : distance,
+        relationship_kind: reference.kind,
+        ...reference.metadata,
       },
     };
     upsertEdge(database, edge, timestamp);
@@ -589,12 +662,30 @@ export function resolveReferences(
       distances,
     );
     if (candidates.nodes.length === 0) {
-      persistIssue(database, reference, "unresolved_reference", [], timestamp);
+      persistIssue(
+        database,
+        reference,
+        reference.kind === "generated"
+          ? "generated_code"
+          : DYNAMIC_REFERENCE_KINDS.has(reference.kind)
+            ? "dynamic_relationship"
+            : "unresolved_reference",
+        [],
+        timestamp,
+      );
       unresolved += 1;
       continue;
     }
     if (candidates.nodes.length > 1) {
-      persistIssue(database, reference, "multi_candidate", candidates.nodes, timestamp);
+      persistIssue(
+        database,
+        reference,
+        DYNAMIC_REFERENCE_KINDS.has(reference.kind)
+          ? "dynamic_relationship"
+          : "multi_candidate",
+        candidates.nodes,
+        timestamp,
+      );
       ambiguous += 1;
     }
     persistEdges(

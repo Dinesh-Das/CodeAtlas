@@ -12,7 +12,7 @@ export function removeStaleAnalysisNodes(
   const existing = database
     .prepare(
       `SELECT id FROM nodes
-       WHERE kind IN ('feature', 'domain') AND source_type = 'heuristic'`,
+       WHERE kind IN ('feature', 'domain')`,
     )
     .all() as Array<{ id: string }>;
   const remove = database.prepare("DELETE FROM nodes WHERE id = ?");
