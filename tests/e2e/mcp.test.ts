@@ -4,7 +4,9 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeRepository } from "../../src/cli/init.js";
 import { getStatus } from "../../src/cli/status.js";
+import { workspacePaths } from "../../src/core/workspace.js";
 import { answerPacketSchema } from "../../src/mcp/schemas.js";
+import { openDatabase } from "../../src/storage/database.js";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
 
 const repositories: TestRepository[] = [];
@@ -96,6 +98,73 @@ describe("MCP stdio contract", () => {
           working_tree_checked: true,
         });
         await expect(getStatus(repository.root)).resolves.toMatchObject({ synchronized: true });
+      } finally {
+        await client.close();
+      }
+    },
+    30_000,
+  );
+
+  it(
+    "refreshes changed dependencies and removes obsolete relationships before responding",
+    async () => {
+      const repository = await createTestRepository();
+      repositories.push(repository);
+      await repository.write(
+        "src/service.ts",
+        "export function oldOperation(): boolean { return true; }\n",
+      );
+      await repository.write(
+        "src/caller.ts",
+        'import { oldOperation } from "./service.js";\nexport function invoke(): boolean { return oldOperation(); }\n',
+      );
+      await repository.git("add", ".");
+      await repository.git("commit", "-m", "freshness dependency fixture");
+      await initializeRepository(repository.root);
+
+      const transport = new StdioClientTransport({
+        command: process.execPath,
+        args: [path.resolve("dist", "cli", "index.js"), "mcp", repository.root],
+        cwd: repository.root,
+        stderr: "pipe",
+      });
+      const client = new Client({ name: "codeatlas-freshness-tests", version: "1.0.0" });
+      await client.connect(transport);
+      try {
+        await repository.write(
+          "src/service.ts",
+          "export function newOperation(): boolean { return false; }\n",
+        );
+        await expect(getStatus(repository.root)).resolves.toMatchObject({ synchronized: false });
+        const response = await client.callTool({ name: "codeatlas_status", arguments: {} });
+        const packet = answerPacketSchema.parse(response.structuredContent);
+        const status = await getStatus(repository.root);
+        expect(status.synchronized).toBe(true);
+        expect(packet.freshness.fingerprint).toBe(status.currentFingerprint);
+
+        const database = openDatabase(workspacePaths(repository.root).database, {
+          readonly: true,
+        });
+        try {
+          expect(
+            database.prepare("SELECT count(*) FROM nodes WHERE qualified_name = 'oldOperation'").pluck().get(),
+          ).toBe(0);
+          expect(
+            database.prepare("SELECT count(*) FROM nodes WHERE qualified_name = 'newOperation'").pluck().get(),
+          ).toBe(1);
+          expect(
+            database
+              .prepare(
+                `SELECT count(*) FROM edges
+                 JOIN nodes target ON target.id = edges.target_node_id
+                 WHERE edges.edge_type = 'CALLS' AND target.qualified_name = 'oldOperation'`,
+              )
+              .pluck()
+              .get(),
+          ).toBe(0);
+        } finally {
+          database.close();
+        }
       } finally {
         await client.close();
       }

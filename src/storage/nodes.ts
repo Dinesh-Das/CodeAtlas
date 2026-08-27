@@ -42,6 +42,7 @@ export function deleteNodesForFile(database: AtlasDatabase, relativeFilePath: st
     .run(relativeFilePath);
 }
 
-export function clearDirectoryNodes(database: AtlasDatabase): void {
-  database.prepare("DELETE FROM nodes WHERE kind = 'directory'").run();
+export function deleteNodesById(database: AtlasDatabase, nodeIds: readonly string[]): void {
+  const statement = database.prepare("DELETE FROM nodes WHERE id = ?");
+  for (const nodeId of nodeIds) statement.run(nodeId);
 }

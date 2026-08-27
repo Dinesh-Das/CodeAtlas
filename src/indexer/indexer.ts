@@ -14,10 +14,16 @@ import {
 } from "../core/languages.js";
 import { acquireIndexLock, workspacePaths, writeJsonAtomic } from "../core/workspace.js";
 import { createEdgeId, createNodeId } from "../graph/ids.js";
+import {
+  loadRenamePathAliases,
+  planGraphRename,
+  type RenamePlan,
+} from "../graph/renames.js";
 import { resolveReferences } from "../graph/resolver.js";
 import type { GraphEdge, GraphNode } from "../graph/types.js";
 import type { RepositoryInfo } from "../git/repository.js";
 import { detectRepository } from "../git/repository.js";
+import { detectGitState } from "../git/changes.js";
 import type { ParsedFile } from "../parser/parser.js";
 import {
   availableLanguageAdapters,
@@ -25,11 +31,17 @@ import {
   TREE_SITTER_VERSION,
 } from "../parser/registry.js";
 import { openDatabase, removeDatabaseFiles, type AtlasDatabase } from "../storage/database.js";
-import { clearContainmentEdges, upsertEdge } from "../storage/edges.js";
+import { deleteEdgesForFile, upsertEdge } from "../storage/edges.js";
 import { deleteFile, listFiles, upsertFile, type FileRecord } from "../storage/files.js";
-import { clearDirectoryNodes, deleteNodesForFile, upsertNode } from "../storage/nodes.js";
+import { deleteNodesById, deleteNodesForFile, upsertNode } from "../storage/nodes.js";
+import { deleteResolutionIssuesForFile } from "../storage/resolution-issues.js";
 import { getRepositoryState, setRepositoryStates } from "../storage/state.js";
 import { CODEATLAS_VERSION, INDEXER_VERSION, SCHEMA_VERSION } from "../version.js";
+import { classifyRepositoryChanges } from "./changes.js";
+import {
+  findDependencyNeighborhood,
+  findUnresolvedImporters,
+} from "./invalidation.js";
 
 export interface IndexOptions {
   startPath?: string;
@@ -41,7 +53,13 @@ export interface IndexResult {
   fingerprint: string;
   files: number;
   changedFiles: number;
+  addedFiles: number;
+  modifiedFiles: number;
   deletedFiles: number;
+  renamedFiles: number;
+  invalidatedFiles: number;
+  fullRebuild: boolean;
+  dirtyWorkingTree: boolean;
   nodes: number;
   edges: number;
   symbols: number;
@@ -176,28 +194,89 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
     }
 
     try {
-      const storedRoot = getRepositoryState(database, "repository_root");
-      if (storedRoot !== null && storedRoot !== repository.root && !options.full) {
-        throw new Error("Repository root changed; run `codeatlas index --full` to rebuild the index.");
-      }
-
       const existing = new Map(listFiles(database).map((file) => [file.path, file]));
+      const currentByPath = new Map(
+        candidates.map((candidate) => [candidate.relativePath, candidate]),
+      );
+      const storedRoot = getRepositoryState(database, "repository_root");
+      const storedCommit = getRepositoryState(database, "last_indexed_commit");
+      const gitState = await detectGitState(repository.root, storedCommit, repository.headCommit);
       const indexerChanged = getRepositoryState(database, "indexer_version") !== INDEXER_VERSION;
-      const candidatePaths = new Set(candidates.map((file) => file.relativePath));
-      const deleted = [...existing.keys()].filter((filePath) => !candidatePaths.has(filePath));
-      const changed = candidates.filter((file) => {
-        const previous = existing.get(file.relativePath);
+      const schemaChanged =
+        getRepositoryState(database, "schema_version") !== String(SCHEMA_VERSION);
+      const parserChanged = [...existing.values()].some((previous) => {
+        const current = currentByPath.get(previous.path);
+        if (current === undefined) return false;
+        const parserVersion =
+          current.adapterVersion === "none" ? "none" : TREE_SITTER_VERSION;
         return (
-          options.full === true ||
-          indexerChanged ||
-          previous === undefined ||
-          previous.contentHash !== file.contentHash ||
-          previous.language !== file.language ||
-          !statusMatches(previous.parseStatus, file.parseStatus) ||
-          previous.parserVersion !== (file.adapterVersion === "none" ? "none" : TREE_SITTER_VERSION) ||
-          previous.adapterVersion !== file.adapterVersion
+          previous.parserVersion !== parserVersion ||
+          previous.adapterVersion !== current.adapterVersion
         );
       });
+      const fullRebuild =
+        options.full === true ||
+        schemaChanged ||
+        parserChanged ||
+        indexerChanged ||
+        (storedRoot !== null && storedRoot !== repository.root) ||
+        !gitState.historyConsistent;
+      const changes = classifyRepositoryChanges(
+        new Set(existing.keys()),
+        candidates,
+        gitState,
+        (candidate) => candidate.relativePath,
+        (file) => {
+          const previous = existing.get(file.relativePath);
+          return (
+            previous === undefined ||
+            previous.contentHash !== file.contentHash ||
+            previous.language !== file.language ||
+            !statusMatches(previous.parseStatus, file.parseStatus) ||
+            previous.parserVersion !==
+              (file.adapterVersion === "none" ? "none" : TREE_SITTER_VERSION) ||
+            previous.adapterVersion !== file.adapterVersion
+          );
+        },
+        loadRenamePathAliases(database),
+      );
+      const directlyChangedPaths = new Set([
+        ...changes.added.map((candidate) => candidate.relativePath),
+        ...changes.modified.map((candidate) => candidate.relativePath),
+        ...changes.renamed.map((rename) => rename.path),
+      ]);
+      const unresolvedImporters = fullRebuild
+        ? new Set<string>()
+        : findUnresolvedImporters(database, [
+            ...changes.added.map((candidate) => candidate.relativePath),
+            ...changes.renamed.map((rename) => rename.path),
+          ]);
+      const dependencySeeds = [
+        ...changes.modified.map((candidate) => candidate.relativePath),
+        ...changes.deleted,
+        ...changes.renamed.map((rename) => rename.previousPath),
+        ...unresolvedImporters,
+      ];
+      const dependencyNeighborhood = fullRebuild
+        ? new Set<string>()
+        : findDependencyNeighborhood(
+            database,
+            dependencySeeds,
+            config.limits.maxTraversalDepth,
+          );
+      const invalidatedPaths = new Set(
+        [...unresolvedImporters, ...dependencyNeighborhood].filter(
+          (filePath) =>
+            currentByPath.has(filePath) && !directlyChangedPaths.has(filePath),
+        ),
+      );
+      const changed = fullRebuild
+        ? candidates
+        : candidates.filter(
+            (candidate) =>
+              directlyChangedPaths.has(candidate.relativePath) ||
+              invalidatedPaths.has(candidate.relativePath),
+          );
       await mapWithConcurrency(changed, 4, async (candidate) => {
         if (candidate.parseStatus !== "pending_parse") return;
         const adapter = getLanguageAdapter(candidate.language);
@@ -224,22 +303,73 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           candidate.parseStatus = "parse_error";
         }
       });
+      const renamePlans = new Map<string, RenamePlan>();
+      if (!fullRebuild) {
+        for (const rename of changes.renamed) {
+          const parsedFile = rename.current.parsedFile ?? {
+            nodes: [],
+            edges: [],
+            unresolvedReferences: [],
+            errors: [],
+          };
+          const plan = planGraphRename(
+            database,
+            repository.id,
+            rename.previousPath,
+            rename.path,
+            rename.similarity,
+            parsedFile,
+          );
+          renamePlans.set(rename.path, plan);
+          if (rename.current.parsedFile !== null) rename.current.parsedFile = plan.parsedFile;
+        }
+      }
       const indexedAt = new Date().toISOString();
       const configHash = sha256(JSON.stringify(config));
       const changedPaths = new Set(changed.map((candidate) => candidate.relativePath));
+      const directoryPaths = getDirectoryPaths(candidates);
+      const currentDirectoryPaths = new Set(directoryPaths);
+      const existingDirectoryPaths = new Set(
+        (
+          database
+            .prepare(
+              "SELECT file_path FROM nodes WHERE kind = 'directory' AND file_path IS NOT NULL",
+            )
+            .all() as Array<{ file_path: string }>
+        ).map((row) => row.file_path),
+      );
+      const directoriesToWrite = fullRebuild
+        ? directoryPaths
+        : directoryPaths.filter((directory) => !existingDirectoryPaths.has(directory));
+      const removedDirectoryNodeIds = fullRebuild
+        ? []
+        : [...existingDirectoryPaths]
+            .filter((directory) => !currentDirectoryPaths.has(directory))
+            .map((directory) =>
+              createNodeId(repository.id, "directory", directory, directory),
+            );
 
       const writeIndex = database.transaction(() => {
-        if (options.full) {
+        if (fullRebuild) {
           database.exec("DELETE FROM edges; DELETE FROM nodes; DELETE FROM files;");
         } else {
-          for (const filePath of deleted) {
+          for (const filePath of changes.deleted) {
             deleteNodesForFile(database, filePath);
             deleteFile(database, filePath);
           }
+          for (const plan of renamePlans.values()) {
+            deleteEdgesForFile(database, plan.previousPath);
+            deleteResolutionIssuesForFile(database, plan.previousPath);
+            deleteNodesById(database, plan.removedNodeIds);
+            deleteFile(database, plan.previousPath);
+          }
+          deleteNodesById(database, removedDirectoryNodeIds);
         }
 
         for (const candidate of changed) {
-          deleteNodesForFile(database, candidate.relativePath);
+          if (!renamePlans.has(candidate.relativePath)) {
+            deleteNodesForFile(database, candidate.relativePath);
+          }
           const record: FileRecord = {
             path: candidate.relativePath,
             language: candidate.language,
@@ -255,8 +385,6 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         }
 
         database.prepare("UPDATE files SET indexed_commit = ?").run(repository.headCommit);
-        clearContainmentEdges(database);
-        clearDirectoryNodes(database);
 
         const repositoryNodeId = createNodeId(repository.id, "repository", ".", repository.name);
         upsertNode(
@@ -272,9 +400,12 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         );
 
         const directoryNodeIds = new Map<string, string>();
-        for (const directory of getDirectoryPaths(candidates)) {
+        for (const directory of directoryPaths) {
           const id = createNodeId(repository.id, "directory", directory, directory);
           directoryNodeIds.set(directory, id);
+        }
+        for (const directory of directoriesToWrite) {
+          const id = directoryNodeIds.get(directory)!;
           upsertNode(
             database,
             graphNode({
@@ -288,7 +419,10 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           );
 
           const parentDirectory = path.posix.dirname(directory);
-          const parentId = parentDirectory === "." ? repositoryNodeId : directoryNodeIds.get(parentDirectory);
+          const parentId =
+            parentDirectory === "."
+              ? repositoryNodeId
+              : directoryNodeIds.get(parentDirectory);
           if (parentId !== undefined) {
             upsertEdge(
               database,
@@ -304,13 +438,20 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           }
         }
 
+        const fileNodeIds = new Map(
+          candidates.map((candidate) => [
+            candidate.relativePath,
+            renamePlans.get(candidate.relativePath)?.fileNodeId ??
+              createNodeId(
+                repository.id,
+                "file",
+                candidate.relativePath,
+                candidate.relativePath,
+              ),
+          ]),
+        );
         for (const candidate of candidates) {
-          const id = createNodeId(
-            repository.id,
-            "file",
-            candidate.relativePath,
-            candidate.relativePath,
-          );
+          const id = fileNodeIds.get(candidate.relativePath)!;
           if (changedPaths.has(candidate.relativePath)) {
             upsertNode(
               database,
@@ -336,7 +477,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           const parentDirectory = path.posix.dirname(candidate.relativePath);
           const parentId =
             parentDirectory === "." ? repositoryNodeId : directoryNodeIds.get(parentDirectory);
-          if (parentId !== undefined) {
+          if (parentId !== undefined && changedPaths.has(candidate.relativePath)) {
             upsertEdge(
               database,
               graphEdge({
@@ -362,6 +503,9 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           for (const node of candidate.parsedFile.nodes) upsertNode(database, node, indexedAt);
           for (const edge of candidate.parsedFile.edges) upsertEdge(database, edge, indexedAt);
         }
+        for (const plan of renamePlans.values()) {
+          for (const edge of plan.renameEdges) upsertEdge(database, edge, indexedAt);
+        }
 
         resolveReferences(
           database,
@@ -384,6 +528,19 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           repository_id: repository.id,
           dirty_fingerprint: fingerprint.fingerprint,
           config_hash: configHash,
+          working_tree_dirty: String(gitState.dirty),
+          last_change_summary: JSON.stringify({
+            added: changes.added.map((candidate) => candidate.relativePath),
+            modified: changes.modified.map((candidate) => candidate.relativePath),
+            deleted: changes.deleted,
+            renamed: changes.renamed.map((rename) => ({
+              from: rename.previousPath,
+              to: rename.path,
+              similarity: rename.similarity,
+            })),
+            invalidated: [...invalidatedPaths].sort((left, right) => left.localeCompare(right)),
+            fullRebuild,
+          }),
         });
       });
       writeIndex();
@@ -432,6 +589,16 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         edges: counts.edges,
         symbols: counts.symbols,
         parseErrors: counts.parseErrors,
+        changes: {
+          updated: changed.length,
+          added: changes.added.length,
+          modified: changes.modified.length,
+          deleted: changes.deleted.length,
+          renamed: changes.renamed.length,
+          invalidated: invalidatedPaths.size,
+          fullRebuild,
+          dirtyWorkingTree: gitState.dirty,
+        },
       });
 
       return {
@@ -439,7 +606,13 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         fingerprint: fingerprint.fingerprint,
         files: candidates.length,
         changedFiles: changed.length,
-        deletedFiles: deleted.length,
+        addedFiles: changes.added.length,
+        modifiedFiles: changes.modified.length,
+        deletedFiles: changes.deleted.length,
+        renamedFiles: changes.renamed.length,
+        invalidatedFiles: invalidatedPaths.size,
+        fullRebuild,
+        dirtyWorkingTree: gitState.dirty,
         nodes: counts.nodes,
         edges: counts.edges,
         symbols: counts.symbols,

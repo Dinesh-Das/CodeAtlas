@@ -94,3 +94,10 @@ export function listResolutionIssues(
     metadata: JSON.parse(row.metadata_json) as Record<string, unknown>,
   }));
 }
+
+export function deleteResolutionIssuesForFile(
+  database: AtlasDatabase,
+  relativeFilePath: string,
+): void {
+  database.prepare("DELETE FROM resolution_issues WHERE file_path = ?").run(relativeFilePath);
+}

@@ -2,8 +2,9 @@
 
 CodeAtlas builds a local, persistent structural index of a Git repository. The long-term
 product exposes an evidence-bearing knowledge graph to AI coding agents through MCP; the
-current implementation includes the Phase 1 foundation, Phase 2 structural indexer, and Phase 3
-relationship resolver/MCP contract defined by the product specification.
+current implementation includes the Phase 1 foundation, Phase 2 structural indexer, Phase 3
+relationship resolver/MCP contract, and Phase 4 incremental indexing defined by the product
+specification.
 
 The governing principle is simple: the working tree owns the facts, deterministic analysis
 structures those facts, and an LLM may explain them later.
@@ -29,6 +30,12 @@ structures those facts, and an LLM may explain them later.
 - Literal-safe signatures that redact assigned/default string values before persistence.
 - Transactional structural indexing, deleted-file cleanup, status checks, and a single-writer
   workspace lock.
+- Git-derived added/modified/deleted/renamed change classification backed by authoritative file
+  hashes, including dirty and committed changes.
+- Reverse dependency-neighborhood invalidation so changed targets re-resolve their callers without
+  reparsing unrelated files.
+- Identity-preserving Git renames at 50% or greater similarity, recorded with `RENAMED_FROM`
+  provenance edges; lower-similarity moves remain delete plus create.
 - Official-SDK MCP stdio server with all ten required tools, validated inputs, typed Answer
   Packets, configured limits, and a mandatory freshness gate before every tool call.
 - Parser and call-graph snapshots plus unit, integration, compiled-CLI, and MCP protocol tests
@@ -71,7 +78,7 @@ node /absolute/path/to/CodeAtlas/dist/cli/index.js init
 
 ```text
 codeatlas init [path]         Create the workspace and initial structural graph
-codeatlas index [path]        Synchronize changed/deleted files and AST entities
+codeatlas index [path]        Synchronize changes and their dependency neighborhoods
 codeatlas index --full [path] Rebuild the structural graph transactionally
 codeatlas status [path]       Compare the working tree with the stored fingerprint
 codeatlas status --json       Return machine-readable status
@@ -178,7 +185,9 @@ sha256(
 
 Tracked deletions receive an explicit deletion marker. Untracked files respect Git ignore
 rules plus CodeAtlas exclusions. `codeatlas status` recomputes this value from the current
-working tree; `codeatlas index` updates the database and fingerprint in one SQLite transaction.
+working tree; `codeatlas index` classifies Git state, verifies file hashes, recomputes only the
+required dependency neighborhood, and updates the database and fingerprint in one SQLite
+transaction.
 
 ## Architecture
 
@@ -217,10 +226,9 @@ CodeAtlas will not discard it and fall back to defaults.
 
 ## Roadmap from the specification
 
-1. Incremental dependency-neighborhood invalidation and Git rename identity preservation.
-2. Express, FastAPI, Prisma, and SQLAlchemy adapters.
-3. Feature/domain grouping, cycles, coupling, churn, and health signals.
-4. Full grounded MCP query tools, hardening, packaging, and public release documentation.
+1. Express, FastAPI, Prisma, and SQLAlchemy adapters.
+2. Feature/domain grouping, cycles, coupling, churn, and health signals.
+3. Full grounded MCP query tools, hardening, packaging, and public release documentation.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
 [CHANGELOG.md](CHANGELOG.md).

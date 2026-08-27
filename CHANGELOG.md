@@ -2,6 +2,27 @@
 
 All notable changes follow semantic versioning.
 
+## 0.4.0 - 2026-08-27
+
+### Added
+
+- Phase 4 Git-state classification for added, modified, deleted, and renamed files.
+- Reverse dependency-neighborhood invalidation with unresolved-import wakeups.
+- Git rename identity preservation at the specified 50% similarity threshold.
+- Evidence-bearing `RENAMED_FROM` edges with Git provenance and 0.95 confidence.
+- Incremental regression coverage for committed, staged, uncommitted, hidden, deleted, and
+  renamed changes.
+- Critical MCP freshness coverage that verifies obsolete relationships are removed before a
+  response is returned.
+
+### Changed
+
+- Indexing algorithm version is now `incremental-4` and CodeAtlas is version `0.4.0`.
+- Required full rebuilds are automatic for indexer-version, repository-root, or inconsistent Git
+  history changes.
+- Index results now report direct change categories, dependency invalidations, rename counts,
+  dirty state, and full-rebuild status.
+
 ## 0.3.0 - 2026-08-27
 
 ### Added

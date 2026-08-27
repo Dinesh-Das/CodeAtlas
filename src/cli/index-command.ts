@@ -18,7 +18,14 @@ export function formatIndexResult(result: IndexResult): string {
   return [
     `✓ Indexed ${result.files} files`,
     `✓ Updated ${result.changedFiles} files`,
+    result.addedFiles > 0 ? `✓ Added ${result.addedFiles} files` : null,
+    result.modifiedFiles > 0 ? `✓ Modified ${result.modifiedFiles} files` : null,
+    result.renamedFiles > 0 ? `✓ Preserved identity for ${result.renamedFiles} renamed files` : null,
+    result.invalidatedFiles > 0
+      ? `✓ Recomputed ${result.invalidatedFiles} dependent files`
+      : null,
     result.deletedFiles > 0 ? `✓ Removed ${result.deletedFiles} deleted files` : null,
+    result.fullRebuild ? "✓ Completed a required full graph rebuild" : null,
     `✓ Graph contains ${result.symbols} symbols and ${result.edges} relationships`,
     result.parseErrors > 0 ? `! ${result.parseErrors} files contain parse errors` : null,
   ]
