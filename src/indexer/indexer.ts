@@ -1,5 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { runArchitectureAnalysis } from "../analysis/architecture.js";
+import type { ArchitectureAnalysisResult } from "../analysis/types.js";
 import { mapWithConcurrency } from "../core/async.js";
 import { loadConfig } from "../core/config.js";
 import { discoverFiles } from "../core/discovery.js";
@@ -30,6 +32,7 @@ import type { GraphEdge, GraphNode } from "../graph/types.js";
 import type { RepositoryInfo } from "../git/repository.js";
 import { detectRepository } from "../git/repository.js";
 import { detectGitState } from "../git/changes.js";
+import { collectRecentFileHistory } from "../git/history.js";
 import type { ParsedFile } from "../parser/parser.js";
 import {
   availableLanguageAdapters,
@@ -72,6 +75,12 @@ export interface IndexResult {
   parseErrors: number;
   apiRoutes: number;
   databaseModels: number;
+  features: number;
+  domains: number;
+  communities: number;
+  cycles: number;
+  hotspots: number;
+  findings: number;
   languages: Record<string, number>;
   frameworks: string[];
   indexedAt: string;
@@ -392,6 +401,18 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       }
       const indexedAt = new Date().toISOString();
       const changedPaths = new Set(changed.map((candidate) => candidate.relativePath));
+      const analysisRequired =
+        fullRebuild ||
+        changed.length > 0 ||
+        changes.deleted.length > 0 ||
+        changes.renamed.length > 0;
+      const history =
+        analysisRequired && config.analysis.gitHistory
+          ? await collectRecentFileHistory(
+              repository.root,
+              new Set(candidates.map((candidate) => candidate.relativePath)),
+            )
+          : new Map();
       const directoryPaths = getDirectoryPaths(candidates);
       const currentDirectoryPaths = new Set(directoryPaths);
       const existingDirectoryPaths = new Set(
@@ -414,6 +435,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
               createNodeId(repository.id, "directory", directory, directory),
             );
 
+      let analysisResult: ArchitectureAnalysisResult | null = null;
       const writeIndex = database.transaction(() => {
         if (fullRebuild) {
           database.exec("DELETE FROM edges; DELETE FROM nodes; DELETE FROM files;");
@@ -584,7 +606,17 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           indexedAt,
         );
 
-        setRepositoryStates(database, {
+        if (analysisRequired) {
+          analysisResult = runArchitectureAnalysis(
+            database,
+            repository.id,
+            config,
+            history,
+            indexedAt,
+          );
+        }
+
+        const repositoryStates: Record<string, string> = {
           schema_version: String(SCHEMA_VERSION),
           codeatlas_version: CODEATLAS_VERSION,
           indexer_version: INDEXER_VERSION,
@@ -607,7 +639,11 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             invalidated: [...invalidatedPaths].sort((left, right) => left.localeCompare(right)),
             fullRebuild,
           }),
-        });
+        };
+        if (analysisResult !== null) {
+          repositoryStates.architecture_summary = JSON.stringify(analysisResult);
+        }
+        setRepositoryStates(database, repositoryStates);
       });
       writeIndex();
 
@@ -617,9 +653,19 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             (SELECT count(*) FROM nodes) AS nodes,
             (SELECT count(*) FROM edges) AS edges,
             (SELECT count(*) FROM nodes
-              WHERE kind NOT IN ('repository', 'directory', 'file', 'module')) AS symbols,
+              WHERE kind NOT IN (
+                'repository', 'directory', 'file', 'module', 'feature', 'domain'
+              )) AS symbols,
             (SELECT count(*) FROM nodes WHERE kind = 'api_route') AS apiRoutes,
             (SELECT count(*) FROM nodes WHERE kind = 'database_model') AS databaseModels,
+            (SELECT count(*) FROM nodes WHERE kind = 'feature') AS features,
+            (SELECT count(*) FROM nodes WHERE kind = 'domain') AS domains,
+            (SELECT count(DISTINCT community_id) FROM dependency_communities) AS communities,
+            (SELECT count(*) FROM architecture_findings
+              WHERE finding_type = 'circular_dependency') AS cycles,
+            (SELECT count(*) FROM architecture_findings
+              WHERE finding_type = 'change_hotspot') AS hotspots,
+            (SELECT count(*) FROM architecture_findings) AS findings,
             (SELECT count(*) FROM files
               WHERE parse_status IN ('parsed_with_errors', 'parse_error')) AS parseErrors`,
         )
@@ -629,6 +675,12 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           symbols: number;
           apiRoutes: number;
           databaseModels: number;
+          features: number;
+          domains: number;
+          communities: number;
+          cycles: number;
+          hotspots: number;
+          findings: number;
           parseErrors: number;
         };
       const languages: Record<string, number> = {};
@@ -681,6 +733,12 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         parseErrors: counts.parseErrors,
         apiRoutes: counts.apiRoutes,
         databaseModels: counts.databaseModels,
+        features: counts.features,
+        domains: counts.domains,
+        communities: counts.communities,
+        cycles: counts.cycles,
+        hotspots: counts.hotspots,
+        findings: counts.findings,
         changes: {
           updated: changed.length,
           added: changes.added.length,
@@ -711,6 +769,12 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         parseErrors: counts.parseErrors,
         apiRoutes: counts.apiRoutes,
         databaseModels: counts.databaseModels,
+        features: counts.features,
+        domains: counts.domains,
+        communities: counts.communities,
+        cycles: counts.cycles,
+        hotspots: counts.hotspots,
+        findings: counts.findings,
         languages,
         frameworks,
         indexedAt,

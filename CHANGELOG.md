@@ -2,6 +2,30 @@
 
 All notable changes follow semantic versioning.
 
+## 0.6.0 - 2026-08-27
+
+### Added
+
+- Phase 6 deterministic feature and domain grouping with evidence-bearing membership edges.
+- Dependency-community discovery and persisted file-level fan-in, fan-out, dependency-depth,
+  cross-domain, line-count, and Git-history metrics.
+- Circular-dependency, high-coupling, large-file, large-symbol, and churn/connectivity hotspot
+  signals with configurable thresholds.
+- Schema 3 architecture metric, finding, and dependency-community storage.
+- Graph-backed, paginated `codeatlas_overview` and `codeatlas_health` MCP responses with facts,
+  relationships, evidence, confidence, freshness, and heuristic uncertainty labels.
+- Medium-repository tests covering features, domains, communities, cycles, coupling, hotspots,
+  pagination, and MCP evidence.
+
+### Changed
+
+- Indexing now recomputes graph-only architecture analysis transactionally after affected graph
+  sections are refreshed, without reparsing unrelated files.
+- Git history analysis is bounded to 500 commits in a 90-day window and persists aggregate counts,
+  hashes, and dates rather than commit diffs or contributor identities.
+- The database schema is now version 3, the indexing contract is `architecture-6`, and CodeAtlas
+  is version `0.6.0`.
+
 ## 0.5.0 - 2026-08-27
 
 ### Added

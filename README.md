@@ -4,7 +4,7 @@ CodeAtlas builds a local, persistent structural index of a Git repository. The l
 product exposes an evidence-bearing knowledge graph to AI coding agents through MCP; the
 current implementation includes the Phase 1 foundation, Phase 2 structural indexer, Phase 3
 relationship resolver/MCP contract, Phase 4 incremental indexing, and Phase 5 framework adapters
-defined by the product specification.
+plus the Phase 6 architecture-analysis layer defined by the product specification.
 
 The governing principle is simple: the working tree owns the facts, deterministic analysis
 structures those facts, and an LLM may explain them later.
@@ -39,14 +39,20 @@ structures those facts, and an LLM may explain them later.
 - Optional, separately registered framework adapters for Express, FastAPI, Prisma, and SQLAlchemy.
 - Evidence-bearing `api_route` and `database_model` nodes with `EXPOSES`, `HANDLES`,
   `CONTAINS`, and `REFERENCES` relationships.
+- Deterministic feature/domain grouping and dependency communities derived from the current graph.
+- Persisted fan-in, fan-out, dependency depth, cross-domain coupling, size, and bounded Git-history
+  metrics.
+- Evidence-bearing cycle, high-coupling, large-symbol/file, and churn/connectivity hotspot signals.
+- Meaningful, paginated `codeatlas_overview` and `codeatlas_health` MCP responses.
 - Official-SDK MCP stdio server with all ten required tools, validated inputs, typed Answer
   Packets, configured limits, and a mandatory freshness gate before every tool call.
 - Parser and call-graph snapshots plus unit, integration, compiled-CLI, and MCP protocol tests
   using disposable Git repositories.
 
-The Phase 3 MCP tools intentionally return grounded empty result sets with an
-`insufficient_evidence` uncertainty. Later phases fill those stable contracts with graph query
-results without changing the protocol shape.
+The Phase 6 overview and health tools return graph-backed facts and relationships. The remaining
+Phase 3 MCP tool contracts still return grounded empty result sets with an
+`insufficient_evidence` uncertainty until the Phase 7 query implementation fills them without
+changing the protocol shape.
 
 ## Requirements
 
@@ -172,7 +178,11 @@ identifiers, evidence locations, and structural relationships remain queryable.
   "limits": {
     "maxTraversalDepth": 10,
     "maxSourceSnippetLines": 120,
-    "maxMcpResultNodes": 200
+    "maxMcpResultNodes": 200,
+    "largeFileLines": 500,
+    "largeSymbolLines": 80,
+    "highFanIn": 10,
+    "highFanOut": 10
   }
 }
 ```
@@ -204,7 +214,19 @@ Tracked deletions receive an explicit deletion marker. Untracked files respect G
 rules plus CodeAtlas exclusions. `codeatlas status` recomputes this value from the current
 working tree; `codeatlas index` classifies Git state, verifies file hashes, recomputes only the
 required dependency neighborhood, and updates the database and fingerprint in one SQLite
-transaction.
+transaction. When the graph changes, feature/domain memberships and graph-only architecture
+metrics are recomputed in that same transaction without reparsing unrelated files.
+
+## Architecture analysis
+
+Feature and domain nodes are heuristic groupings with explicit confidence and evidence. Dependency
+communities are deterministic connected components of analyzable source/model files. Technical-debt
+signals include circular dependencies, configurable high fan-in/fan-out thresholds, configurable
+large file/symbol thresholds, and files combining elevated recent churn with connectivity.
+
+These are signals rather than quality judgments. Git history collection is optional, bounded to a
+90-day/500-commit window, and stores aggregate churn/commit/contributor counts plus the most recent
+commit hash/date. Commit diffs and contributor identities are not persisted.
 
 ## Architecture
 
@@ -225,6 +247,7 @@ MCP → Freshness gate → Graph query contracts
 - `src/indexer`: orchestration and transactional graph writes
 - `src/parser`: normalized parser contract, adapter registry, and Tree-sitter implementations
 - `src/framework`: optional detection and semantic extraction kept separate from language parsing
+- `src/analysis`: grouping, communities, cycles, coupling, churn, and architecture orchestration
 - `src/mcp`: provider-independent schemas, freshness gate, packets, and stdio server
 
 Parser code will not depend on MCP. MCP tools will not parse source. Graph/storage entities do
@@ -245,9 +268,8 @@ CodeAtlas will not discard it and fall back to defaults.
 
 ## Roadmap from the specification
 
-1. Feature/domain grouping, cycles, coupling, churn, and health signals.
-2. Full grounded MCP query tools and accuracy hardening.
-3. Packaging and public release validation.
+1. Complete the remaining grounded MCP query tools and accuracy hardening.
+2. Packaging and public release validation.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
 [CHANGELOG.md](CHANGELOG.md).

@@ -113,7 +113,10 @@ function incomingDependencyFiles(
          JOIN nodes target ON target.id = edges.target_node_id
          WHERE target.file_path IN (${placeholders})
            AND source.file_path IS NOT NULL
-           AND edges.edge_type NOT IN ('CONTAINS', 'EXPORTS', 'RENAMED_FROM')
+           AND edges.edge_type NOT IN (
+             'CONTAINS', 'EXPORTS', 'RENAMED_FROM',
+             'BELONGS_TO_FEATURE', 'BELONGS_TO_DOMAIN'
+           )
          ORDER BY source.file_path`,
       )
       .all(...chunk) as Array<{ file_path: string }>;

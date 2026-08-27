@@ -286,7 +286,9 @@ describe("Phase 4 incremental indexing", () => {
     const identities = before
       .prepare(
         `SELECT id, kind, created_at AS createdAt
-         FROM nodes WHERE file_path = 'src/service.ts' ORDER BY kind`,
+         FROM nodes
+         WHERE file_path = 'src/service.ts' AND kind NOT IN ('feature', 'domain')
+         ORDER BY kind`,
       )
       .all() as Array<{ id: string; kind: string; createdAt: string }>;
     before.close();
@@ -312,7 +314,9 @@ describe("Phase 4 incremental indexing", () => {
       const renamed = database
         .prepare(
           `SELECT id, kind, created_at AS createdAt
-           FROM nodes WHERE file_path = 'src/payment-service.ts' ORDER BY kind`,
+           FROM nodes
+           WHERE file_path = 'src/payment-service.ts' AND kind NOT IN ('feature', 'domain')
+           ORDER BY kind`,
         )
         .all() as Array<{ id: string; kind: string; createdAt: string }>;
       expect(renamed).toEqual(identities);
@@ -360,7 +364,9 @@ describe("Phase 4 incremental indexing", () => {
       const renamedAgain = afterSecondRename
         .prepare(
           `SELECT id, kind, created_at AS createdAt
-           FROM nodes WHERE file_path = 'src/billing-service.ts' ORDER BY kind`,
+           FROM nodes
+           WHERE file_path = 'src/billing-service.ts' AND kind NOT IN ('feature', 'domain')
+           ORDER BY kind`,
         )
         .all() as Array<{ id: string; kind: string; createdAt: string }>;
       expect(renamedAgain).toEqual(identities);

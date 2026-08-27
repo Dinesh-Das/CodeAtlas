@@ -31,7 +31,7 @@ describe("compiled CLI", () => {
 
     const initialized = await runCli("init", repository.root);
     expect(initialized.stderr).toBe("");
-    expect(initialized.stdout).toContain("CodeAtlas structural index is ready");
+    expect(initialized.stdout).toContain("CodeAtlas architecture index is ready");
 
     const statusResult = await runCli("status", repository.root, "--json");
     const status = JSON.parse(statusResult.stdout) as { synchronized: boolean; files: number };
@@ -39,7 +39,7 @@ describe("compiled CLI", () => {
     expect(status.files).toBeGreaterThan(0);
 
     const doctor = await runCli("doctor", repository.root);
-    expect(doctor.stdout).toContain("✓ SQLite: quick_check=ok, journal_mode=wal, schema=2");
+    expect(doctor.stdout).toContain("✓ SQLite: quick_check=ok, journal_mode=wal, schema=3");
 
     const cleaned = await runCli("clean", repository.root, "--force");
     expect(cleaned.stdout).toContain("Removed .codeatlas/");

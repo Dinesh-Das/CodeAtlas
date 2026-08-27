@@ -4,6 +4,7 @@ import type { z } from "zod";
 import { CodeAtlasError } from "../core/errors.js";
 import { CODEATLAS_VERSION } from "../version.js";
 import { ensureFreshIndex, type FreshContext } from "./freshness.js";
+import { architectureHealthPacket, architectureOverviewPacket } from "./architecture.js";
 import { emptyAnswerPacket } from "./packet.js";
 import {
   answerPacketSchema,
@@ -42,6 +43,10 @@ function validateConfiguredLimits(
 
 function resultFor(tool: string, topic: string, context: FreshContext) {
   const packet = emptyAnswerPacket(tool, topic, context);
+  return resultFromPacket(packet);
+}
+
+function resultFromPacket(packet: z.infer<typeof answerPacketSchema>) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(packet) }],
     structuredContent: packet,
@@ -62,7 +67,7 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
     async (input: z.infer<typeof overviewInputSchema>) => {
       const context = await ensureFreshIndex(repositoryPath);
       validateConfiguredLimits(input, context);
-      return resultFor("codeatlas_overview", "repository overview", context);
+      return resultFromPacket(architectureOverviewPacket(context, input));
     },
   );
   server.registerTool(
@@ -128,7 +133,7 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
     async (input: z.infer<typeof healthInputSchema>) => {
       const context = await ensureFreshIndex(repositoryPath);
       validateConfiguredLimits(input, context);
-      return resultFor("codeatlas_health", "repository health", context);
+      return resultFromPacket(architectureHealthPacket(context, input));
     },
   );
 

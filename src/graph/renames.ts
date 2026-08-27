@@ -51,7 +51,7 @@ function loadIdentityNodes(
       .prepare(
         `SELECT id, kind, qualified_name
          FROM nodes
-         WHERE file_path = ?
+         WHERE file_path = ? AND kind NOT IN ('feature', 'domain', 'directory', 'repository')
          ORDER BY kind, qualified_name, id`,
       )
       .all(filePath) as IdentityNodeRow[]

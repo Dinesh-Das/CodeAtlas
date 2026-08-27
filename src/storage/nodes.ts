@@ -38,7 +38,10 @@ export function upsertNode(database: AtlasDatabase, node: GraphNode, timestamp: 
 
 export function deleteNodesForFile(database: AtlasDatabase, relativeFilePath: string): void {
   database
-    .prepare("DELETE FROM nodes WHERE file_path = ? AND kind <> 'directory'")
+    .prepare(
+      `DELETE FROM nodes
+       WHERE file_path = ? AND kind NOT IN ('directory', 'feature', 'domain')`,
+    )
     .run(relativeFilePath);
 }
 

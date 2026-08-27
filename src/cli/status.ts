@@ -27,6 +27,11 @@ export interface StatusResult {
   features: number;
   apiRoutes: number;
   databaseModels: number;
+  domains: number;
+  communities: number;
+  cycles: number;
+  hotspots: number;
+  findings: number;
   lastIndexedAt: string | null;
   currentFingerprint: string;
   indexedFingerprint: string | null;
@@ -51,17 +56,20 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
 
   try {
     const state = getRepositoryStates(database);
-    const counts = database
+    const baseCounts = database
       .prepare(
         `SELECT
           (SELECT count(*) FROM files) AS files,
           (SELECT count(*) FROM nodes) AS nodes,
           (SELECT count(*) FROM nodes
-            WHERE kind NOT IN ('repository', 'directory', 'file', 'module')) AS symbols,
+            WHERE kind NOT IN (
+              'repository', 'directory', 'file', 'module', 'feature', 'domain'
+            )) AS symbols,
           (SELECT count(*) FROM edges) AS edges,
           (SELECT count(*) FROM nodes WHERE kind = 'feature') AS features,
           (SELECT count(*) FROM nodes WHERE kind = 'api_route') AS apiRoutes,
-          (SELECT count(*) FROM nodes WHERE kind = 'database_model') AS databaseModels`,
+          (SELECT count(*) FROM nodes WHERE kind = 'database_model') AS databaseModels,
+          (SELECT count(*) FROM nodes WHERE kind = 'domain') AS domains`,
       )
       .get() as {
         files: number;
@@ -71,7 +79,28 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
         features: number;
         apiRoutes: number;
         databaseModels: number;
+        domains: number;
       };
+    const architectureCounts =
+      state.schema_version === String(SCHEMA_VERSION)
+        ? (database
+            .prepare(
+              `SELECT
+                 (SELECT count(DISTINCT community_id)
+                    FROM dependency_communities) AS communities,
+                 (SELECT count(*) FROM architecture_findings
+                    WHERE finding_type = 'circular_dependency') AS cycles,
+                 (SELECT count(*) FROM architecture_findings
+                    WHERE finding_type = 'change_hotspot') AS hotspots,
+                 (SELECT count(*) FROM architecture_findings) AS findings`,
+            )
+            .get() as {
+            communities: number;
+            cycles: number;
+            hotspots: number;
+            findings: number;
+          })
+        : { communities: 0, cycles: 0, hotspots: 0, findings: 0 };
     const indexedFingerprint = state.dirty_fingerprint ?? null;
     const configIsCurrent = state.config_hash === sha256(JSON.stringify(config));
     const indexContractIsCurrent =
@@ -87,13 +116,18 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
       synchronized:
         indexedFingerprint === current.fingerprint && configIsCurrent && indexContractIsCurrent,
       dirty,
-      files: counts.files,
-      nodes: counts.nodes,
-      symbols: counts.symbols,
-      edges: counts.edges,
-      features: counts.features,
-      apiRoutes: counts.apiRoutes,
-      databaseModels: counts.databaseModels,
+      files: baseCounts.files,
+      nodes: baseCounts.nodes,
+      symbols: baseCounts.symbols,
+      edges: baseCounts.edges,
+      features: baseCounts.features,
+      apiRoutes: baseCounts.apiRoutes,
+      databaseModels: baseCounts.databaseModels,
+      domains: baseCounts.domains,
+      communities: architectureCounts.communities,
+      cycles: architectureCounts.cycles,
+      hotspots: architectureCounts.hotspots,
+      findings: architectureCounts.findings,
       lastIndexedAt: state.last_indexed_at ?? null,
       currentFingerprint: current.fingerprint,
       indexedFingerprint,
@@ -118,6 +152,11 @@ export function formatStatus(result: StatusResult): string {
     `  API routes: ${result.apiRoutes}`,
     `  Database models: ${result.databaseModels}`,
     `  Features: ${result.features}`,
+    `  Domains: ${result.domains}`,
+    `  Dependency communities: ${result.communities}`,
+    `  Architecture signals: ${result.findings}`,
+    `  Circular dependencies: ${result.cycles}`,
+    `  Change hotspots: ${result.hotspots}`,
     "",
     `Last indexed: ${result.lastIndexedAt ?? "never"}`,
   ].join("\n");

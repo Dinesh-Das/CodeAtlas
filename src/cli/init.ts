@@ -59,10 +59,15 @@ export function formatInitResult(result: InitResult): string {
     result.databaseModels > 0
       ? `✓ Detected ${result.databaseModels} database models`
       : null,
+    result.features > 0 ? `✓ Grouped ${result.features} features` : null,
+    result.domains > 0 ? `✓ Identified ${result.domains} domains` : null,
+    result.findings > 0
+      ? `! Recorded ${result.findings} architecture signals`
+      : "✓ No architecture signals crossed configured thresholds",
     result.parseErrors > 0
       ? `! ${result.parseErrors} files contain parse errors`
       : "✓ All supported source files parsed",
-    "✓ CodeAtlas structural index is ready",
+    "✓ CodeAtlas architecture index is ready",
     "",
     "Run:",
     "  codeatlas status",

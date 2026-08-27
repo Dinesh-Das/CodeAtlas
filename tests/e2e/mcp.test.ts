@@ -71,13 +71,18 @@ describe("MCP stdio contract", () => {
         for (const call of calls) {
           const result = await client.callTool(call);
           expect(result.isError).not.toBe(true);
-          expect(answerPacketSchema.parse(result.structuredContent)).toMatchObject({
+          const packet = answerPacketSchema.parse(result.structuredContent);
+          expect(packet).toMatchObject({
             answer_context: { tool: call.name },
-            facts: [],
-            relationships: [],
             source_snippets: [],
             pagination: { cursor: null, has_more: false },
           });
+          if (call.name === "codeatlas_overview" || call.name === "codeatlas_health") {
+            expect(packet.facts.length).toBeGreaterThan(0);
+          } else {
+            expect(packet.facts).toEqual([]);
+            expect(packet.relationships).toEqual([]);
+          }
         }
 
         const legacyTrace = await client.callTool({

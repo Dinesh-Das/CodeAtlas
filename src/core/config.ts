@@ -27,6 +27,10 @@ export const configSchema = z
         maxTraversalDepth: z.number().int().min(1).max(100),
         maxSourceSnippetLines: z.number().int().min(1).max(2_000),
         maxMcpResultNodes: z.number().int().min(1).max(10_000),
+        largeFileLines: z.number().int().min(20).max(1_000_000).default(500),
+        largeSymbolLines: z.number().int().min(10).max(100_000).default(80),
+        highFanIn: z.number().int().min(1).max(100_000).default(10),
+        highFanOut: z.number().int().min(1).max(100_000).default(10),
       })
       .strict(),
   })
@@ -51,6 +55,10 @@ export const DEFAULT_CONFIG: CodeAtlasConfig = {
     maxTraversalDepth: 10,
     maxSourceSnippetLines: 120,
     maxMcpResultNodes: 200,
+    largeFileLines: 500,
+    largeSymbolLines: 80,
+    highFanIn: 10,
+    highFanOut: 10,
   },
 };
 

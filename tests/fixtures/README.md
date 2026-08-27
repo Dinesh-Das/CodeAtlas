@@ -16,4 +16,6 @@ and distance-scaled ambiguous candidates. Integration fixtures are additionally 
 temporary Git repositories so tests exercise tracked, untracked, modified, and deleted
 working-tree state. Phase 5 fixtures cover Express and FastAPI routes plus Prisma and SQLAlchemy
 models, including evidence, handler/model relationships, incremental replacement, optional
-disablement, and literal-value redaction.
+disablement, and literal-value redaction. Phase 6 medium-repository fixtures exercise deterministic
+features/domains, dependency communities, cycles, coupling thresholds, Git-backed hotspots, and
+paginated evidence-bearing overview/health packets.

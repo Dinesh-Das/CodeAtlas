@@ -135,6 +135,61 @@ const migrations: readonly Migration[] = [
       CREATE INDEX idx_resolution_issues_reason ON resolution_issues(reason);
     `,
   },
+  {
+    version: 3,
+    sql: `
+      CREATE TABLE architecture_metrics (
+        file_node_id TEXT PRIMARY KEY,
+        file_path TEXT NOT NULL UNIQUE,
+        fan_in INTEGER NOT NULL,
+        fan_out INTEGER NOT NULL,
+        dependency_depth INTEGER NOT NULL,
+        cross_domain_dependencies INTEGER NOT NULL,
+        line_count INTEGER NOT NULL,
+        recent_commit_count INTEGER NOT NULL,
+        recent_churn INTEGER NOT NULL,
+        contributor_count INTEGER NOT NULL,
+        hotspot_score REAL NOT NULL,
+        last_modified_commit TEXT,
+        last_modified_date TEXT,
+        metadata_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(file_node_id) REFERENCES nodes(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE architecture_findings (
+        id TEXT PRIMARY KEY,
+        finding_type TEXT NOT NULL,
+        severity TEXT NOT NULL,
+        title TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        source_type TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        evidence_node_ids_json TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE dependency_communities (
+        community_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        member_count INTEGER NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(community_id, node_id),
+        FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX idx_architecture_metrics_hotspot
+        ON architecture_metrics(hotspot_score DESC);
+      CREATE INDEX idx_architecture_findings_type
+        ON architecture_findings(finding_type, severity);
+      CREATE INDEX idx_dependency_communities_file
+        ON dependency_communities(file_path);
+    `,
+  },
 ];
 
 export function runMigrations(database: Database.Database): void {

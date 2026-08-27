@@ -23,6 +23,9 @@ Framework adapters do not persist route or database-table string literal values.
 only cryptographic hashes alongside methods, structural identifiers, relationships, and source
 evidence.
 
+Architecture history analysis never stores commit diffs or contributor identities. It persists
+only bounded aggregate churn, commit/contributor counts, and the latest commit hash/date per file.
+
 Users should still protect `.codeatlas/` with normal filesystem permissions. Although the
 database is automatically ignored by Git, it contains repository names, paths, symbol metadata
 in later phases, and structural relationships.
