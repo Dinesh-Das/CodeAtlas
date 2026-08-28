@@ -7,6 +7,7 @@ import { CodeAtlasError } from "../core/errors.js";
 import {
   computeRepositoryFingerprint,
   computeWorktreeSignature,
+  type WorktreeSignature,
 } from "../core/freshness.js";
 import { hashFile, sha256 } from "../core/hashing.js";
 import { loadIgnoreRules } from "../core/ignore.js";
@@ -62,6 +63,7 @@ interface FastStatusEntry {
   checkedAt: number;
   dirty: boolean;
   watchers: FSWatcher[];
+  worktree: WorktreeSignature;
 }
 
 const fastStatusEntries = new Map<string, FastStatusEntry>();
@@ -105,7 +107,11 @@ function createWatchers(repositoryRoot: string, entry: FastStatusEntry): FSWatch
   return watchers;
 }
 
-function cacheFastStatus(startPath: string, status: StatusResult): void {
+function cacheFastStatus(
+  startPath: string,
+  status: StatusResult,
+  worktree: WorktreeSignature,
+): void {
   const existing = fastStatusEntries.get(status.root);
   if (existing === undefined) {
     const entry: FastStatusEntry = {
@@ -113,6 +119,7 @@ function cacheFastStatus(startPath: string, status: StatusResult): void {
       checkedAt: Date.now(),
       dirty: false,
       watchers: [],
+      worktree,
     };
     entry.watchers = createWatchers(status.root, entry);
     fastStatusEntries.set(status.root, entry);
@@ -120,12 +127,24 @@ function cacheFastStatus(startPath: string, status: StatusResult): void {
     existing.status = status;
     existing.checkedAt = Date.now();
     existing.dirty = false;
+    existing.worktree = worktree;
   }
   fastRootByStartPath.set(path.resolve(startPath), status.root);
   if (fastStatusEntries.size > 32) {
     const oldestRoot = [...fastStatusEntries.keys()].find((root) => root !== status.root);
     if (oldestRoot !== undefined) clearFastStatusCache(oldestRoot);
   }
+}
+
+export function getFastIndexInputs(repositoryRoot: string): {
+  ignoreRules: IgnoreRules;
+  worktree: WorktreeSignature;
+} | null {
+  const entry = fastStatusEntries.get(repositoryRoot);
+  const ignoreRules = fastIgnoreRules.get(repositoryRoot);
+  return entry === undefined || ignoreRules === undefined
+    ? null
+    : { ignoreRules, worktree: entry.worktree };
 }
 
 export function clearFastStatusCache(repositoryRoot: string): void {
@@ -200,13 +219,23 @@ function readStoredStatus(
     state.config_hash === sha256(JSON.stringify(config)) &&
     parserContractMatches;
   const generations = generationsFromState(state);
-  const structuralSynchronized = freshnessMatches && contractMatches && generations.structural > 0;
+  const structuralSynchronized =
+    freshnessMatches &&
+    contractMatches &&
+    generations.structural > 0 &&
+    state.structural_status !== "stale";
   const semanticSynchronized =
-    structuralSynchronized && generations.semantic === generations.structural;
+    structuralSynchronized &&
+    (state.semantic_status === "current" ||
+      (state.semantic_status === undefined && generations.semantic === generations.structural));
   const searchSynchronized =
-    structuralSynchronized && generations.search === generations.structural;
+    structuralSynchronized &&
+    (state.search_status === "current" ||
+      (state.search_status === undefined && generations.search === generations.structural));
   const architectureSynchronized =
-    structuralSynchronized && generations.architecture === generations.structural;
+    structuralSynchronized &&
+    (state.architecture_status === "current" ||
+      (state.architecture_status === undefined && generations.architecture === generations.structural));
   return {
     repository: repository.name,
     root: repository.root,
@@ -273,7 +302,7 @@ export async function getFastStatus(startPath = process.cwd()): Promise<StatusRe
       worktree.dirty,
       matches,
     );
-    cacheFastStatus(startPath, status);
+    cacheFastStatus(startPath, status, worktree);
     return status;
   } finally {
     database.close();

@@ -331,6 +331,6 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
 
 export function formatDoctor(checks: readonly DoctorCheck[]): string {
   return checks
-    .map((check) => `${check.ok ? "✓" : check.severity === "warning" ? "!" : "✗"} ${check.name}: ${check.detail}`)
+    .map((check) => `${check.ok ? "[OK]" : check.severity === "warning" ? "[!]" : "[X]"} ${check.name}: ${check.detail}`)
     .join("\n");
 }

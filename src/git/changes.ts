@@ -141,13 +141,14 @@ export async function detectGitState(
   repositoryRoot: string,
   baselineCommit: string | null,
   headCommit: string,
+  precomputedStatusOutput?: string,
 ): Promise<GitState> {
   const historyConsistent = await historyIsConsistent(
     repositoryRoot,
     baselineCommit,
     headCommit,
   );
-  const statusOutput = await runGit(repositoryRoot, [
+  const statusOutput = precomputedStatusOutput ?? await runGit(repositoryRoot, [
     "status",
     "--porcelain=v1",
     "-z",
@@ -171,7 +172,8 @@ export async function detectGitState(
     );
   }
 
-  if (headCommit !== "unborn") {
+  const needsRenameSimilarity = collected.some((change) => change.kind === "renamed");
+  if (headCommit !== "unborn" && (precomputedStatusOutput === undefined || needsRenameSimilarity)) {
     const [workingTree, index] = await Promise.all([
       runGit(repositoryRoot, [
         "diff",

@@ -303,6 +303,69 @@ const migrations: readonly Migration[] = [
       INSERT INTO nodes_fts(nodes_fts) VALUES ('rebuild');
     `,
   },
+  {
+    version: 7,
+    sql: `
+      CREATE TABLE file_semantics (
+        path TEXT PRIMARY KEY,
+        token_fingerprint TEXT NOT NULL,
+        symbols_fingerprint TEXT NOT NULL,
+        imports_fingerprint TEXT NOT NULL,
+        exports_fingerprint TEXT NOT NULL,
+        references_fingerprint TEXT NOT NULL,
+        public_api_fingerprint TEXT NOT NULL,
+        framework_fingerprint TEXT NOT NULL,
+        architecture_fingerprint TEXT NOT NULL,
+        search_fingerprint TEXT NOT NULL,
+        exported_symbols_json TEXT NOT NULL,
+        references_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(path) REFERENCES files(path) ON DELETE CASCADE
+      );
+
+      CREATE TABLE resolved_edges (
+        file_path TEXT NOT NULL,
+        edge_id TEXT NOT NULL,
+        PRIMARY KEY(file_path, edge_id),
+        FOREIGN KEY(edge_id) REFERENCES edges(id) ON DELETE CASCADE
+      );
+      CREATE INDEX idx_resolved_edges_file ON resolved_edges(file_path);
+
+      CREATE TABLE file_git_history (
+        file_path TEXT PRIMARY KEY,
+        recent_commit_count INTEGER NOT NULL,
+        recent_churn INTEGER NOT NULL,
+        contributor_count INTEGER NOT NULL,
+        last_modified_commit TEXT,
+        last_modified_date TEXT
+      );
+
+      DROP TRIGGER nodes_fts_update;
+      CREATE TRIGGER nodes_fts_update
+      AFTER UPDATE OF name, qualified_name, file_path, signature, metadata_json ON nodes
+      WHEN old.name IS NOT new.name
+        OR old.qualified_name IS NOT new.qualified_name
+        OR old.file_path IS NOT new.file_path
+        OR old.signature IS NOT new.signature
+        OR old.metadata_json IS NOT new.metadata_json
+      BEGIN
+        INSERT INTO nodes_fts(
+          nodes_fts, rowid, name, qualified_name, file_path, signature, metadata_json
+        ) VALUES (
+          'delete', old.rowid, old.name, coalesce(old.qualified_name, ''),
+          coalesce(old.file_path, ''), coalesce(old.signature, ''),
+          coalesce(old.metadata_json, '')
+        );
+        INSERT INTO nodes_fts(
+          rowid, name, qualified_name, file_path, signature, metadata_json
+        ) VALUES (
+          new.rowid, new.name, coalesce(new.qualified_name, ''),
+          coalesce(new.file_path, ''), coalesce(new.signature, ''),
+          coalesce(new.metadata_json, '')
+        );
+      END;
+    `,
+  },
 ];
 
 export function runMigrations(database: Database.Database): void {

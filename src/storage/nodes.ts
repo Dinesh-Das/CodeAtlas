@@ -55,3 +55,21 @@ export function deleteNodesById(database: AtlasDatabase, nodeIds: readonly strin
   const statement = cachedStatement(database, "DELETE FROM nodes WHERE id = ?");
   for (const nodeId of nodeIds) statement.run(nodeId);
 }
+
+export function deleteStaleNodesForFile(
+  database: AtlasDatabase,
+  relativeFilePath: string,
+  currentNodeIds: ReadonlySet<string>,
+): void {
+  const rows = database
+    .prepare(
+      `SELECT id FROM nodes
+       WHERE file_path = ?
+         AND kind NOT IN ('file', 'directory', 'feature', 'domain')`,
+    )
+    .all(relativeFilePath) as Array<{ id: string }>;
+  const remove = cachedStatement(database, "DELETE FROM nodes WHERE id = ?");
+  for (const row of rows) {
+    if (!currentNodeIds.has(row.id)) remove.run(row.id);
+  }
+}

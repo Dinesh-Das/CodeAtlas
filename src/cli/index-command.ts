@@ -8,7 +8,12 @@ import type { IndexProgress } from "../core/telemetry.js";
 import { detectRepository } from "../git/repository.js";
 import { runIndex, type IndexResult } from "../indexer/indexer.js";
 import { openDatabase } from "../storage/database.js";
-import { clearFastStatusCache, getFastStatus, type StatusResult } from "./status.js";
+import {
+  clearFastStatusCache,
+  getFastIndexInputs,
+  getFastStatus,
+  type StatusResult,
+} from "./status.js";
 
 function noChangeResult(
   status: StatusResult,
@@ -86,6 +91,29 @@ function noChangeResult(
       frameworks,
       indexedAt: status.lastIndexedAt ?? new Date().toISOString(),
       generations: status.generations,
+      semanticChanges: {
+        content_only: 0,
+        implementation_only: 0,
+        outgoing_change: 0,
+        public_contract_change: 0,
+        module_resolution_change: 0,
+        added: 0,
+        deleted: 0,
+        renamed: 0,
+      },
+      work: {
+        filesRead: 0,
+        filesParsed: 0,
+        filesSemanticallyAnalyzed: 0,
+        dependentFilesInvalidated: 0,
+        symbolsRewritten: 0,
+        referencesRewritten: 0,
+        candidateCount: 0,
+        resolvedEdgeCount: 0,
+        sqliteMutations: 0,
+        ftsMutations: 0,
+        architectureFiles: 0,
+      },
       phaseMetrics,
       peakRssBytes: Math.max(...phaseMetrics.map((metric) => metric.peakRssBytes)),
       timingsMs: {
@@ -125,9 +153,23 @@ export async function indexRepository(
     }
     const freshnessMs = performance.now() - freshnessStartedAt;
     if (status.synchronized) return noChangeResult(status, startedAt, freshnessMs);
+    const fastInputs = getFastIndexInputs(status.root);
     const result = await runIndex({
       startPath: status.root,
+      precomputedRepository: {
+        root: status.root,
+        id: sha256(status.root),
+        name: status.repository,
+        headCommit: status.headCommit,
+        branch: status.branch,
+      },
       full: false,
+      ...(fastInputs === null
+        ? {}
+        : {
+            precomputedWorktree: fastInputs.worktree,
+            precomputedIgnoreRules: fastInputs.ignoreRules,
+          }),
       ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
     });
     clearFastStatusCache(status.root);
@@ -148,36 +190,38 @@ export async function indexRepository(
 
 export function formatIndexResult(result: IndexResult): string {
   return [
-    `✓ Indexed ${result.files} files`,
-    `✓ Updated ${result.changedFiles} files`,
-    result.addedFiles > 0 ? `✓ Added ${result.addedFiles} files` : null,
-    result.modifiedFiles > 0 ? `✓ Modified ${result.modifiedFiles} files` : null,
-    result.renamedFiles > 0 ? `✓ Preserved identity for ${result.renamedFiles} renamed files` : null,
+    `[OK] Indexed ${result.files} files`,
+    `[OK] Updated ${result.changedFiles} files`,
+    result.addedFiles > 0 ? `[OK] Added ${result.addedFiles} files` : null,
+    result.modifiedFiles > 0 ? `[OK] Modified ${result.modifiedFiles} files` : null,
+    result.renamedFiles > 0 ? `[OK] Preserved identity for ${result.renamedFiles} renamed files` : null,
     result.invalidatedFiles > 0
-      ? `✓ Recomputed ${result.invalidatedFiles} dependent files`
+      ? `[OK] Recomputed ${result.invalidatedFiles} dependent files`
       : null,
     result.invalidationTruncated
-      ? `! Invalidation reached ${result.invalidationTruncationReason}; a full reconciliation was performed`
+      ? `[!] Invalidation reached ${result.invalidationTruncationReason}; a full reconciliation was performed`
       : null,
-    result.deletedFiles > 0 ? `✓ Removed ${result.deletedFiles} deleted files` : null,
-    result.fullRebuild ? "✓ Completed a required full graph rebuild" : null,
-    result.apiRoutes > 0 ? `✓ Detected ${result.apiRoutes} API routes` : null,
+    result.deletedFiles > 0 ? `[OK] Removed ${result.deletedFiles} deleted files` : null,
+    result.fullRebuild ? "[OK] Completed a required full graph rebuild" : null,
+    result.apiRoutes > 0 ? `[OK] Detected ${result.apiRoutes} API routes` : null,
     result.databaseModels > 0
-      ? `✓ Detected ${result.databaseModels} database models`
+      ? `[OK] Detected ${result.databaseModels} database models`
       : null,
-    result.features > 0 ? `✓ Grouped ${result.features} features` : null,
-    result.domains > 0 ? `✓ Identified ${result.domains} domains` : null,
+    result.features > 0 ? `[OK] Grouped ${result.features} features` : null,
+    result.domains > 0 ? `[OK] Identified ${result.domains} domains` : null,
     result.communities > 0
-      ? `✓ Found ${result.communities} dependency communities`
+      ? `[OK] Found ${result.communities} dependency communities`
       : null,
     result.findings > 0
-      ? `! Recorded ${result.findings} architecture signals`
-      : "✓ No architecture signals crossed configured thresholds",
-    `✓ Graph contains ${result.symbols} symbols and ${result.edges} relationships`,
-    `✓ Generations structural=${result.generations.structural}, semantic=${result.generations.semantic}, search=${result.generations.search}, architecture=${result.generations.architecture}`,
-    `✓ Index timing ${result.timingsMs.total.toFixed(0)} ms (discover ${result.timingsMs.discovery.toFixed(0)}, fingerprint ${result.timingsMs.fingerprint.toFixed(0)}, parse ${result.timingsMs.parsing.toFixed(0)}, persist ${result.timingsMs.persistence.toFixed(0)}, architecture ${result.timingsMs.architecture.toFixed(0)})`,
-    `✓ Peak observed RSS ${(result.peakRssBytes / 1024 / 1024).toFixed(1)} MB`,
-    result.parseErrors > 0 ? `! ${result.parseErrors} files contain parse errors` : null,
+      ? `[!] Recorded ${result.findings} architecture signals`
+      : "[OK] No architecture signals crossed configured thresholds",
+    `[OK] Graph contains ${result.symbols} symbols and ${result.edges} relationships`,
+    `[OK] Semantic changes content=${result.semanticChanges.content_only}, implementation=${result.semanticChanges.implementation_only}, outgoing=${result.semanticChanges.outgoing_change}, public=${result.semanticChanges.public_contract_change}, config=${result.semanticChanges.module_resolution_change}`,
+    `[OK] Work parsed=${result.work.filesParsed}, dependents=${result.work.dependentFilesInvalidated}, candidates=${result.work.candidateCount}, resolved=${result.work.resolvedEdgeCount}, sqlite=${result.work.sqliteMutations}, fts=${result.work.ftsMutations}`,
+    `[OK] Generations structural=${result.generations.structural}, semantic=${result.generations.semantic}, search=${result.generations.search}, architecture=${result.generations.architecture}`,
+    `[OK] Index timing ${result.timingsMs.total.toFixed(0)} ms (discover ${result.timingsMs.discovery.toFixed(0)}, fingerprint ${result.timingsMs.fingerprint.toFixed(0)}, parse ${result.timingsMs.parsing.toFixed(0)}, persist ${result.timingsMs.persistence.toFixed(0)}, architecture ${result.timingsMs.architecture.toFixed(0)})`,
+    `[OK] Peak observed RSS ${(result.peakRssBytes / 1024 / 1024).toFixed(1)} MB`,
+    result.parseErrors > 0 ? `[!] ${result.parseErrors} files contain parse errors` : null,
   ]
     .filter((line): line is string => line !== null)
     .join("\n");

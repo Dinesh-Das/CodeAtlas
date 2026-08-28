@@ -36,7 +36,11 @@ export async function initializeRepository(startPath = process.cwd()): Promise<I
     await createDefaultConfig(repository.root);
   }
 
-  const result = await runIndex({ startPath: repository.root, full: createdWorkspace || !hadDatabase });
+  const result = await runIndex({
+    startPath: repository.root,
+    full: createdWorkspace || !hadDatabase,
+    precomputedRepository: repository,
+  });
   return { ...result, addedToGitignore, createdWorkspace };
 }
 
@@ -47,27 +51,27 @@ export function formatInitResult(result: InitResult): string {
     .join(", ");
 
   return [
-    "✓ Repository detected",
-    languageNames ? `✓ Languages detected: ${languageNames}` : "✓ No supported languages detected",
+    "[OK] Repository detected",
+    languageNames ? `[OK] Languages detected: ${languageNames}` : "[OK] No supported languages detected",
     result.addedToGitignore
-      ? "✓ Added .codeatlas/ to .gitignore"
-      : "✓ .codeatlas/ already ignored",
-    `✓ Indexed ${result.files} files`,
-    `✓ Extracted ${result.symbols} symbols`,
-    `✓ Created ${result.edges} graph relationships`,
-    result.apiRoutes > 0 ? `✓ Detected ${result.apiRoutes} API routes` : null,
+      ? "[OK] Added .codeatlas/ to .gitignore"
+      : "[OK] .codeatlas/ already ignored",
+    `[OK] Indexed ${result.files} files`,
+    `[OK] Extracted ${result.symbols} symbols`,
+    `[OK] Created ${result.edges} graph relationships`,
+    result.apiRoutes > 0 ? `[OK] Detected ${result.apiRoutes} API routes` : null,
     result.databaseModels > 0
-      ? `✓ Detected ${result.databaseModels} database models`
+      ? `[OK] Detected ${result.databaseModels} database models`
       : null,
-    result.features > 0 ? `✓ Grouped ${result.features} features` : null,
-    result.domains > 0 ? `✓ Identified ${result.domains} domains` : null,
+    result.features > 0 ? `[OK] Grouped ${result.features} features` : null,
+    result.domains > 0 ? `[OK] Identified ${result.domains} domains` : null,
     result.findings > 0
-      ? `! Recorded ${result.findings} architecture signals`
-      : "✓ No architecture signals crossed configured thresholds",
+      ? `[!] Recorded ${result.findings} architecture signals`
+      : "[OK] No architecture signals crossed configured thresholds",
     result.parseErrors > 0
-      ? `! ${result.parseErrors} files contain parse errors`
-      : "✓ All supported source files parsed",
-    "✓ CodeAtlas is ready",
+      ? `[!] ${result.parseErrors} files contain parse errors`
+      : "[OK] All supported source files parsed",
+    "[OK] CodeAtlas is ready",
     "",
     "Run:",
     "  codeatlas status",

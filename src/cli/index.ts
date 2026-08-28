@@ -2,13 +2,7 @@
 import { Command } from "commander";
 import { CodeAtlasError } from "../core/errors.js";
 import { CODEATLAS_VERSION } from "../version.js";
-import { cleanRepository } from "./clean.js";
-import { formatDoctor, runDoctor } from "./doctor.js";
-import { formatIndexResult, indexRepository } from "./index-command.js";
 import type { IndexProgress } from "../core/telemetry.js";
-import { formatInitResult, initializeRepository } from "./init.js";
-import { startMcpServer } from "./mcp.js";
-import { formatStatus, getStatus } from "./status.js";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -22,6 +16,7 @@ export function createProgram(): Command {
     .description("Initialize CodeAtlas in the current Git repository.")
     .argument("[path]", "A path inside the repository", process.cwd())
     .action(async (targetPath: string) => {
+      const { formatInitResult, initializeRepository } = await import("./init.js");
       console.log(formatInitResult(await initializeRepository(targetPath)));
     });
 
@@ -36,6 +31,7 @@ export function createProgram(): Command {
       targetPath: string,
       options: { full: boolean; quiet: boolean; json: boolean },
     ) => {
+      const { formatIndexResult, indexRepository } = await import("./index-command.js");
       const onProgress = options.quiet || options.json
         ? undefined
         : (progress: IndexProgress): void => {
@@ -69,6 +65,7 @@ export function createProgram(): Command {
     .argument("[path]", "A path inside the repository", process.cwd())
     .option("--json", "Print machine-readable JSON", false)
     .action(async (targetPath: string, options: { json: boolean }) => {
+      const { formatStatus, getStatus } = await import("./status.js");
       const result = await getStatus(targetPath);
       console.log(options.json ? JSON.stringify(result, null, 2) : formatStatus(result));
     });
@@ -78,6 +75,7 @@ export function createProgram(): Command {
     .description("Validate Git, configuration, storage, and runtime prerequisites.")
     .argument("[path]", "A path inside the repository", process.cwd())
     .action(async (targetPath: string) => {
+      const { formatDoctor, runDoctor } = await import("./doctor.js");
       const checks = await runDoctor(targetPath);
       console.log(formatDoctor(checks));
       if (checks.some((check) => !check.ok && check.severity !== "warning")) {
@@ -89,7 +87,10 @@ export function createProgram(): Command {
     .command("mcp")
     .description("Start the CodeAtlas MCP server over stdio.")
     .argument("[path]", "A path inside the repository", process.cwd())
-    .action(async (targetPath: string) => startMcpServer(targetPath));
+    .action(async (targetPath: string) => {
+      const { startMcpServer } = await import("./mcp.js");
+      return startMcpServer(targetPath);
+    });
 
   program
     .command("clean")
@@ -97,8 +98,9 @@ export function createProgram(): Command {
     .argument("[path]", "A path inside the repository", process.cwd())
     .option("--force", "Skip the confirmation prompt", false)
     .action(async (targetPath: string, options: { force: boolean }) => {
+      const { cleanRepository } = await import("./clean.js");
       const removed = await cleanRepository(targetPath, options.force);
-      console.log(removed ? "✓ Removed .codeatlas/" : "CodeAtlas workspace was not removed.");
+      console.log(removed ? "[OK] Removed .codeatlas/" : "CodeAtlas workspace was not removed.");
     });
 
   return program;

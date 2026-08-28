@@ -125,6 +125,85 @@ function incomingDependencyFiles(
   return [...result].sort((left, right) => left.localeCompare(right));
 }
 
+export function findConsumersOfSymbols(
+  database: AtlasDatabase,
+  targetNodeIds: readonly string[],
+): Set<string> {
+  const result = new Set<string>();
+  const uniqueIds = [...new Set(targetNodeIds)];
+  for (let offset = 0; offset < uniqueIds.length; offset += 400) {
+    const chunk = uniqueIds.slice(offset, offset + 400);
+    if (chunk.length === 0) continue;
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = database
+      .prepare(
+        `SELECT DISTINCT source.file_path AS file_path
+         FROM edges
+         JOIN nodes source ON source.id = edges.source_node_id
+         WHERE edges.target_node_id IN (${placeholders})
+           AND source.file_path IS NOT NULL
+           AND edges.edge_type NOT IN (
+             'CONTAINS', 'EXPORTS', 'RENAMED_FROM',
+             'BELONGS_TO_FEATURE', 'BELONGS_TO_DOMAIN'
+           )
+         ORDER BY source.file_path`,
+      )
+      .all(...chunk) as Array<{ file_path: string }>;
+    for (const row of rows) result.add(row.file_path);
+  }
+  return result;
+}
+
+export function findImportersOfFiles(
+  database: AtlasDatabase,
+  targetFiles: readonly string[],
+): Set<string> {
+  if (targetFiles.length === 0) return new Set();
+  const result = new Set<string>();
+  for (let offset = 0; offset < targetFiles.length; offset += 400) {
+    const chunk = targetFiles.slice(offset, offset + 400);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = database
+      .prepare(
+        `SELECT DISTINCT source.file_path AS file_path
+         FROM edges
+         JOIN nodes source ON source.id = edges.source_node_id
+         JOIN nodes target ON target.id = edges.target_node_id
+         WHERE target.file_path IN (${placeholders})
+           AND source.file_path IS NOT NULL
+           AND edges.edge_type = 'IMPORTS'
+         ORDER BY source.file_path`,
+      )
+      .all(...chunk) as Array<{ file_path: string }>;
+    for (const row of rows) result.add(row.file_path);
+  }
+  return result;
+}
+
+export function findUnresolvedConsumersByName(
+  database: AtlasDatabase,
+  names: readonly string[],
+): Set<string> {
+  const uniqueNames = [...new Set(names)].filter((name) => name !== "");
+  if (uniqueNames.length === 0) return new Set();
+  const result = new Set<string>();
+  for (let offset = 0; offset < uniqueNames.length; offset += 400) {
+    const chunk = uniqueNames.slice(offset, offset + 400);
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = database
+      .prepare(
+        `SELECT DISTINCT file_path
+         FROM resolution_issues
+         WHERE reference_name IN (${placeholders})
+           AND reason = 'unresolved_reference'
+         ORDER BY file_path`,
+      )
+      .all(...chunk) as Array<{ file_path: string }>;
+    for (const row of rows) result.add(row.file_path);
+  }
+  return result;
+}
+
 export function findDependencyNeighborhood(
   database: AtlasDatabase,
   seedPaths: readonly string[],

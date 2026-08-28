@@ -20,12 +20,18 @@ describe("Phase 4 incremental indexing", () => {
   it("keeps structural facts usable and repairs architecture after a post-commit crash", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);
-    await repository.write("src/crash.ts", "export const version = 1;\n");
+    await repository.write(
+      "src/crash.ts",
+      "export function version(value: number): number { return value; }\n",
+    );
     await repository.git("add", ".");
     await repository.git("commit", "-m", "crash generation fixture");
     await initializeRepository(repository.root);
 
-    await repository.write("src/crash.ts", "export const version = 2;\n");
+    await repository.write(
+      "src/crash.ts",
+      "export function version(value: string): string { return value; }\n",
+    );
     await expect(
       runIndex({
         startPath: repository.root,
@@ -69,6 +75,10 @@ describe("Phase 4 incremental indexing", () => {
     const repository = await createTestRepository();
     repositories.push(repository);
     await repository.write("src/shared.ts", "export const shared = 1;\n");
+    await repository.write(
+      "tsconfig.json",
+      JSON.stringify({ compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext" } }),
+    );
     for (let index = 0; index < 15; index += 1) {
       await repository.write(
         `src/consumer-${index}.ts`,
@@ -87,13 +97,22 @@ describe("Phase 4 incremental indexing", () => {
     await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
     await indexRepository(repository.root);
 
-    await repository.write("src/shared.ts", "export const shared = 2;\n");
+    await repository.write(
+      "tsconfig.json",
+      JSON.stringify({
+        compilerOptions: {
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          baseUrl: ".",
+        },
+      }),
+    );
     const result = await indexRepository(repository.root);
     expect(result).toMatchObject({
       fullRebuild: true,
       invalidationTruncated: true,
       invalidationTruncationReason: "max_files",
-      changedFiles: 17,
+      changedFiles: 18,
     });
     await expect(getStatus(repository.root)).resolves.toMatchObject({ synchronized: true });
   });
@@ -233,12 +252,12 @@ describe("Phase 4 incremental indexing", () => {
     );
     const result = await indexRepository(repository.root);
     expect(result).toMatchObject({
-      changedFiles: 3,
+      changedFiles: 1,
       addedFiles: 0,
       modifiedFiles: 1,
       deletedFiles: 0,
       renamedFiles: 0,
-      invalidatedFiles: 2,
+      invalidatedFiles: 1,
       fullRebuild: false,
       dirtyWorkingTree: true,
     });
@@ -253,8 +272,8 @@ describe("Phase 4 incremental indexing", () => {
         ).map((row) => [row.path, row.indexed_at]),
       );
       expect(indexedAfter.get("src/service.ts")).not.toBe(indexedBefore.get("src/service.ts"));
-      expect(indexedAfter.get("src/caller.ts")).not.toBe(indexedBefore.get("src/caller.ts"));
-      expect(indexedAfter.get("src/upstream.ts")).not.toBe(indexedBefore.get("src/upstream.ts"));
+      expect(indexedAfter.get("src/caller.ts")).toBe(indexedBefore.get("src/caller.ts"));
+      expect(indexedAfter.get("src/upstream.ts")).toBe(indexedBefore.get("src/upstream.ts"));
       expect(indexedAfter.get("src/unrelated.ts")).toBe(indexedBefore.get("src/unrelated.ts"));
       expect(
         database
@@ -314,7 +333,7 @@ describe("Phase 4 incremental indexing", () => {
     );
     const result = await indexRepository(repository.root);
     expect(result).toMatchObject({
-      changedFiles: 2,
+      changedFiles: 1,
       addedFiles: 1,
       modifiedFiles: 0,
       invalidatedFiles: 1,

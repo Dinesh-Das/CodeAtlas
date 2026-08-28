@@ -4,6 +4,7 @@ import { sha256 } from "../core/hashing.js";
 import type { ParsedFile, UnresolvedReference } from "../parser/parser.js";
 import type { AtlasDatabase } from "../storage/database.js";
 import { upsertEdge } from "../storage/edges.js";
+import { upsertResolvedEdge } from "../storage/semantic.js";
 import { upsertResolutionIssue } from "../storage/resolution-issues.js";
 import { createEdgeId } from "./ids.js";
 import type { EdgeType, GraphEdge, NodeKind, SourceType } from "./types.js";
@@ -78,6 +79,7 @@ const DYNAMIC_REFERENCE_KINDS = new Set<UnresolvedReference["kind"]>([
 
 export interface ResolutionResult {
   edges: number;
+  candidates: number;
   unresolved: number;
   ambiguous: number;
   candidateGenerationMs: number;
@@ -815,6 +817,7 @@ function persistEdges(
       },
     };
     upsertEdge(database, edge, timestamp);
+    upsertResolvedEdge(database, reference.evidence.file, id);
     edgeIds.add(id);
   }
 }
@@ -857,6 +860,7 @@ export function resolveReferences(
 
   let unresolved = 0;
   let ambiguous = 0;
+  let candidateCount = 0;
   const edgeIds = new Set<string>();
 
   for (const reference of importReferences) {
@@ -868,6 +872,7 @@ export function resolveReferences(
       pythonModules,
     );
     candidateGenerationMs += performance.now() - candidateStartedAt;
+    candidateCount += candidates.length;
     if (candidates.length === 0) {
       persistIssue(database, reference, "unresolved_reference", [], timestamp, {
         import_classification: projectResolver.classifyUnresolvedModule(
@@ -956,6 +961,7 @@ export function resolveReferences(
       projectResolver,
     );
     candidateGenerationMs += performance.now() - candidateStartedAt;
+    candidateCount += candidates.nodes.length;
     if (candidates.nodes.length === 0) {
       persistIssue(
         database,
@@ -999,6 +1005,7 @@ export function resolveReferences(
 
   return {
     edges: edgeIds.size,
+    candidates: candidateCount,
     unresolved,
     ambiguous,
     candidateGenerationMs,

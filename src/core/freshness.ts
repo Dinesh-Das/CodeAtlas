@@ -23,6 +23,11 @@ export interface WorktreeSignature {
   signature: string;
   dirty: boolean;
   changedFiles: number;
+  changedPaths: string[];
+  trackedPaths: string[];
+  untrackedPaths: string[];
+  indexHash: string;
+  statusOutput: string;
 }
 
 interface CachedHash {
@@ -46,10 +51,44 @@ function assumeUnchangedPaths(output: string): string[] {
     .split("\0")
     .flatMap((entry) => {
       if (entry.length < 3 || entry[1] !== " ") return [];
+      const tab = entry.indexOf("\t");
       return entry[0] === entry[0]?.toLowerCase()
-        ? [toPosixPath(entry.slice(2))]
+        ? [toPosixPath(tab < 0 ? entry.slice(2) : entry.slice(tab + 1))]
         : [];
     });
+}
+
+function stagedPaths(output: string): string[] {
+  return output
+    .split("\0")
+    .flatMap((entry) => {
+      const tab = entry.indexOf("\t");
+      return tab < 0 ? [] : [toPosixPath(entry.slice(tab + 1))];
+    })
+    .filter((entry) => entry.length > 0);
+}
+
+function porcelainPaths(output: string): {
+  changedPaths: string[];
+  untrackedPaths: string[];
+} {
+  const entries = output.split("\0");
+  const changedPaths: string[] = [];
+  const untrackedPaths: string[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry === undefined || entry.length < 4) continue;
+    const status = entry.slice(0, 2);
+    const filePath = toPosixPath(entry.slice(3));
+    if (filePath.length > 0) changedPaths.push(filePath);
+    if (status === "??" && filePath.length > 0) untrackedPaths.push(filePath);
+    if (status.includes("R") || status.includes("C")) {
+      const originalPath = toPosixPath(entries[index + 1] ?? "");
+      if (originalPath.length > 0) changedPaths.push(originalPath);
+      index += 1;
+    }
+  }
+  return { changedPaths, untrackedPaths };
 }
 
 async function cachedFileHash(absolutePath: string): Promise<string> {
@@ -84,21 +123,19 @@ export async function computeWorktreeSignature(
   repository: RepositoryInfo,
   ignoreRules: IgnoreRules,
 ): Promise<WorktreeSignature> {
-  const [trackedOutput, stagedOutput, untrackedOutput, statusOutput] = await Promise.all([
-    runGit(repository.root, ["diff", "--name-only", "-z", "HEAD", "--"], true),
-    runGit(repository.root, ["diff", "--name-only", "--cached", "-z", "HEAD", "--"], true),
-    runGit(repository.root, ["ls-files", "--others", "--exclude-standard", "-z"]),
-    runGit(repository.root, ["status", "--porcelain=v1", "--untracked-files=all"]),
+  // Git for Windows can transiently reject concurrent reads while another
+  // process replaces the index, so keep the complete-index reads sequential.
+  const statusOutput = await runGit(repository.root, [
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--untracked-files=all",
   ]);
-  // Keep the two complete-index reads sequential on Windows; concurrent Git readers can
-  // transiently fail while a checkout replaces the index file.
-  const indexOutput = await runGit(repository.root, ["ls-files", "--stage", "-z"]);
-  const verboseFiles = await runGit(repository.root, ["ls-files", "-v", "-z"]);
+  const indexOutput = await runGit(repository.root, ["ls-files", "--stage", "-v", "-z"]);
+  const status = porcelainPaths(statusOutput);
   const changedPaths = [...new Set([
-    ...splitNullDelimited(trackedOutput),
-    ...splitNullDelimited(stagedOutput),
-    ...splitNullDelimited(untrackedOutput),
-    ...assumeUnchangedPaths(verboseFiles),
+    ...status.changedPaths,
+    ...assumeUnchangedPaths(indexOutput),
   ])]
     .filter((filePath) => !ignoreRules.ignores(filePath))
     .sort((left, right) => left.localeCompare(right));
@@ -110,12 +147,48 @@ export async function computeWorktreeSignature(
       return `${filePath}:__deleted__`;
     }
   }));
+  const trackedPaths = stagedPaths(indexOutput)
+    .filter((filePath) => !ignoreRules.ignores(filePath))
+    .sort((left, right) => left.localeCompare(right));
+  const untrackedPaths = status.untrackedPaths
+    .filter((filePath) => !ignoreRules.ignores(filePath))
+    .sort((left, right) => left.localeCompare(right));
+  const indexHash = sha256(indexOutput);
   return {
     signature: sha256(
-      `${repository.headCommit}|${sha256(indexOutput)}|${hashSortedEntries(entries)}`,
+      `${repository.headCommit}|${indexHash}|${hashSortedEntries(entries)}`,
     ),
-    dirty: statusOutput.length > 0,
+    dirty: status.changedPaths.length > 0,
     changedFiles: changedPaths.length,
+    changedPaths,
+    trackedPaths,
+    untrackedPaths,
+    indexHash,
+    statusOutput,
+  };
+}
+
+export function repositoryFingerprintFromWorktree(
+  repository: RepositoryInfo,
+  files: readonly HashedWorkingFile[],
+  worktree: WorktreeSignature,
+): RepositoryFingerprint {
+  const fileHashes = new Map(files.map((file) => [file.relativePath, file.contentHash]));
+  const trackedHash = hashSortedEntries(
+    worktree.trackedPaths.map((filePath) => `${filePath}:${fileHashes.get(filePath) ?? "__deleted__"}`),
+  );
+  const untrackedHash = hashSortedEntries(
+    worktree.untrackedPaths.flatMap((filePath) => {
+      const contentHash = fileHashes.get(filePath);
+      return contentHash === undefined ? [] : [`${filePath}:${contentHash}`];
+    }),
+  );
+  return {
+    fingerprint: sha256(`${repository.headCommit}|${worktree.indexHash}|${trackedHash}|${untrackedHash}`),
+    headCommit: repository.headCommit,
+    trackedHash,
+    untrackedHash,
+    indexHash: worktree.indexHash,
   };
 }
 
@@ -127,7 +200,7 @@ export async function computeRepositoryFingerprint(
   const [trackedOutput, untrackedOutput, indexOutput] = await Promise.all([
     runGit(repository.root, ["ls-files", "--cached", "-z"]),
     runGit(repository.root, ["ls-files", "--others", "--exclude-standard", "-z"]),
-    runGit(repository.root, ["ls-files", "--stage", "-z"]),
+    runGit(repository.root, ["ls-files", "--stage", "-v", "-z"]),
   ]);
   const fileHashes = new Map(files.map((file) => [file.relativePath, file.contentHash]));
 
