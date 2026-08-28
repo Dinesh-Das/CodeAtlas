@@ -40,15 +40,16 @@ structures those facts, and an LLM may explain them later.
 - First-class provenance categories on every graph node and edge: `verified`, `inferred`,
   `dynamic`, `documentation`, `git`, and `unresolved`.
 - Literal-safe signatures that redact assigned/default string values before persistence.
-- Transactional structural indexing, deleted-file cleanup, status checks, and a single-writer
-  workspace lock.
+- Transactional structural/semantic/search indexing, generation-tracked architecture
+  materialization, deleted-file cleanup, status checks, and a single-writer workspace lock.
 - Git-derived added/modified/deleted/renamed change classification backed by authoritative file
   hashes, including dirty and committed changes.
 - Reverse dependency-neighborhood invalidation so changed targets re-resolve their callers without
   reparsing unrelated files.
 - Identity-preserving Git renames at 50% or greater similarity, recorded with `RENAMED_FROM`
   provenance edges; lower-similarity moves remain delete plus create.
-- Optional, separately registered framework adapters for Express, FastAPI, Prisma, and SQLAlchemy.
+- Optional, separately registered framework adapters for Express, Fastify, FastAPI, Prisma, and
+  SQLAlchemy.
 - Evidence-bearing `api_route` and `database_model` nodes with `EXPOSES`, `HANDLES`,
   `CONTAINS`, and `REFERENCES` relationships.
 - Deterministic feature/domain grouping and modularity-optimized dependency communities derived
@@ -72,7 +73,8 @@ structures those facts, and an LLM may explain them later.
 - Official-SDK MCP stdio server with all ten required tools, validated inputs, typed Answer
   Packets, configured limits, and a Git-indexed freshness gate that hashes only dirty paths.
 - Repeatable generated-repository benchmarks (`npm run benchmark` and `npm run benchmark:full`)
-  with cold/incremental phase timing, p50/p95 search and freshness latency, RSS, and database size.
+  plus detached-worktree real-repository scenarios (`npm run benchmark:real -- --repository PATH`),
+  with detailed phase work, p50/p95/p99 queries, external peak RSS, and database size.
 - Evidence-only MCP policy metadata that marks repository content untrusted, indexing local-only,
   and external LLM/provider behavior as outside CodeAtlas.
 - Expanded `codeatlas doctor` diagnostics for unsupported languages, unresolved imports, dynamic
@@ -148,6 +150,8 @@ node /absolute/path/to/CodeAtlas/dist/cli/index.js init
 codeatlas init [path]         Create the workspace and initial structural graph
 codeatlas index [path]        Synchronize changes and their dependency neighborhoods
 codeatlas index --full [path] Rebuild the structural graph transactionally
+codeatlas index --quiet       Suppress progress output
+codeatlas index --json        Emit a machine-readable result (progress stays on stderr)
 codeatlas status [path]       Compare the working tree with the stored fingerprint
 codeatlas status --json       Return machine-readable status
 codeatlas doctor [path]       Check Node, parsers, Git, config, SQLite, and WAL
@@ -250,6 +254,7 @@ facts.
 | Framework | Extraction |
 |---|---|
 | Express | Application/router HTTP calls and local handler relationships |
+| Fastify | Shorthand HTTP methods and `route({ method, url, handler })` registrations |
 | FastAPI | Decorated application/router routes and handler relationships |
 | Prisma | Schema models, fields, and local model references |
 | SQLAlchemy | Declarative mapped classes, mapped fields, and local model relationships |
@@ -331,18 +336,24 @@ sha256(
 
 Tracked deletions receive an explicit deletion marker. Untracked files respect Git ignore
 rules plus CodeAtlas exclusions. This covers HEAD, staged, unstaged, untracked, renamed, and
-deleted state. `codeatlas status` recomputes this value from the current working tree, reusing a
-stored hash only when file size and modification/change timestamps still match; `codeatlas index`
-classifies Git state, verifies file hashes, recomputes only the
-required dependency neighborhood, and updates the database and fingerprint in one SQLite
-transaction. When the graph changes, feature/domain memberships and graph-only architecture
-metrics are recomputed in that same transaction without reparsing unrelated files.
+deleted state, including tracked files marked assume-unchanged. `codeatlas status` performs the
+full reconciliation. Long-lived MCP processes invalidate a watched cache immediately on filesystem
+events and perform an authoritative reconciliation at least every 30 seconds, so repeated unchanged
+requests normally avoid Git while missed watcher events remain bounded.
+
+`codeatlas index` classifies Git state, verifies file hashes, and recomputes the required reverse
+dependency neighborhood. A bounded invalidation that reaches its depth/file cap safely falls back
+to full reconciliation rather than committing an incomplete graph. Structural, semantic, and FTS
+facts advance one generation in a single SQLite transaction; architecture is then computed outside
+that write lock and atomically materialized at the same generation. If the process stops between
+those commits, status reports a usable partial generation and an architecture request repairs only
+the stale derived layer.
 
 ## Architecture analysis
 
 Feature and domain nodes are multi-signal groupings with explicit confidence, supporting evidence,
-and optional configuration overrides. Dependency communities are deterministic connected
-components of analyzable source/model files. Technical-debt
+and optional configuration overrides. Dependency communities use deterministic multilevel Louvain
+local moving and graph aggregation over analyzable source/model files. Technical-debt
 signals include circular dependencies, configurable high fan-in/fan-out thresholds, configurable
 large file/symbol thresholds, and files combining elevated recent churn with connectivity.
 

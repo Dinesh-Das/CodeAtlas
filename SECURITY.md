@@ -25,8 +25,12 @@ and states that CodeAtlas returns evidence rather than invented answers. The MCP
 send returned context to an external provider; that provider behavior is outside CodeAtlas and is
 controlled by the user's MCP host configuration.
 
-The index writer uses an exclusive repository-local lock and a single SQLite transaction. WAL
-mode permits readers to see a prior committed graph rather than partially written state.
+The index writer uses an exclusive repository-local lock. Structural, semantic, and search facts
+advance atomically in one SQLite transaction. Architecture is computed outside that write lock and
+published in a second atomic transaction carrying the structural generation it derives from. WAL
+mode therefore lets readers see either the prior committed graph or a generation-labeled partial
+state, never partially written rows; freshness gates require the generation appropriate to each
+query and repair stale derived materialization when needed.
 
 Framework adapters do not persist route or database-table string literal values. They retain
 only cryptographic hashes alongside methods, structural identifiers, relationships, and source

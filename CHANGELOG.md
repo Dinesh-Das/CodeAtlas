@@ -9,23 +9,33 @@ All notable changes follow semantic versioning.
 - TypeScript compiler-backed module and receiver-aware call resolution, workspace package nodes,
   internal package dependencies, package exports, aliases, and project configuration support.
 - Generated 10k-to-1M+ LOC benchmark profiles with index phase timings, incremental edits,
-  p50/p95 queries and freshness checks, observed RSS, and database growth.
-- Regression coverage for 20,000-node dependency cycles, connected-graph clustering, layered
-  business features, TypeScript aliases, duplicated receiver methods, workspace exports, natural
-  questions, and pagination beyond the configured candidate cap.
+  p50/p95/p99 queries and freshness checks, externally sampled peak RSS, and database growth;
+  detached-worktree real-repository benchmarks cover implementation/export/shared-package edits,
+  5/10-file changes, rename, and deletion without modifying the source checkout.
+- Structural, semantic, search, and architecture generations, phase-level progress/telemetry,
+  categorized import/parser/relationship diagnostics, SQLite object-size reporting, Fastify route
+  extraction, and an event-invalidated fast-status cache with 30-second reconciliation.
+- Regression coverage for 20,000-node dependency cycles, 10,000 independent SCCs,
+  connected-graph clustering, layered business features, exact duplicate-method declarations,
+  500 candidate methods, workspace wildcard exports, nested non-workspaces, generation crashes,
+  invalidation truncation, natural questions, and balanced overview pagination.
 
 ### Changed
 
 - Replaced all-pairs import-distance precomputation with bounded on-demand traversal and indexed
   symbol candidate generation.
-- Replaced connected components with deterministic Louvain modularity optimization and recursive
-  Tarjan traversal with an explicit-stack implementation.
-- MCP freshness uses Git changed paths and dirty-file hashes rather than full repository discovery;
-  concurrent refreshes are coalesced.
+- Replaced connected components with deterministic multilevel Louvain modularity optimization and
+  recursive Tarjan traversal with an explicit-stack implementation plus single-pass SCC edge
+  bucketing.
+- MCP freshness uses Git/index/dirty-file signatures and a watched process cache rather than full
+  repository discovery; concurrent refreshes are coalesced and generation requirements are
+  tool-specific.
 - Search uses normalized developer intent and SQL-backed page retrieval instead of paginating a
   permanently truncated in-memory candidate set.
-- Architecture computation occurs outside the SQLite write transaction; persistence remains
-  atomic. Schema 5 adds resolver and query indexes; the indexing contract is `semantic-8`.
+- Architecture computation occurs outside the SQLite write transaction; generation-linked
+  persistence remains atomic and crash-repairable. Schema 6 adds resolver/query indexes and a
+  rowid-addressed external-content FTS index with transactional bulk rebuilds; the indexing
+  contract is `large-repo-9`.
 - The supported runtime is Node.js 22.12 or newer, matching the strictest runtime dependency; CI
   validates Node.js 22.12 and 24.
 
