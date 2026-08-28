@@ -4,9 +4,9 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { initializeRepository } from "../dist/cli/init.js";
-import { indexRepository } from "../dist/cli/index-command.js";
 import { architectureOverviewPacket } from "../dist/mcp/architecture.js";
 import {
   dependenciesPacket,
@@ -21,6 +21,7 @@ import { workspacePaths } from "../dist/core/workspace.js";
 import { openDatabase } from "../dist/storage/database.js";
 
 const execFile = promisify(execFileCallback);
+const cliEntry = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist/cli/index.js");
 const args = new Map();
 for (let index = 2; index < process.argv.length; index += 2) {
   args.set(process.argv[index], process.argv[index + 1]);
@@ -37,6 +38,32 @@ async function git(root, ...gitArgs) {
     maxBuffer: 128 * 1024 * 1024,
     windowsHide: true,
   })).stdout;
+}
+
+async function indexRepositoryInFreshProcess(root) {
+  const { stdout } = await execFile(
+    process.execPath,
+    [cliEntry, "index", root, "--json"],
+    {
+      cwd: root,
+      encoding: "utf8",
+      maxBuffer: 128 * 1024 * 1024,
+      windowsHide: true,
+    },
+  );
+  return JSON.parse(stdout);
+}
+
+async function timedFreshIndex(root) {
+  const started = performance.now();
+  const value = await indexRepositoryInFreshProcess(root);
+  return {
+    value,
+    durationMs: Number((performance.now() - started).toFixed(2)),
+    // Node does not expose resourceUsage() for a completed child process.
+    cpuMs: null,
+    peakRssBytes: value.peakRssBytes,
+  };
 }
 
 function percentile(values, fraction) {
@@ -113,6 +140,8 @@ function indexMeasurement(measurement) {
     invalidationTruncationReason: measurement.value.invalidationTruncationReason,
     fullRebuild: measurement.value.fullRebuild,
     generations: measurement.value.generations,
+    semanticChanges: measurement.value.semanticChanges,
+    work: measurement.value.work,
     timingsMs: measurement.value.timingsMs,
     phaseMetrics: measurement.value.phaseMetrics,
   };
@@ -120,6 +149,18 @@ function indexMeasurement(measurement) {
 
 async function appendMarker(root, relativePath, marker) {
   await appendFile(path.join(root, ...relativePath.split("/")), `\n// ${marker}\n`, "utf8");
+}
+
+async function appendInternalImplementation(root, relativePath) {
+  const typed = /\.[cm]?tsx?$/u.test(relativePath);
+  const signature = typed
+    ? "function codeatlasImplementationBenchmark(): number"
+    : "function codeatlasImplementationBenchmark()";
+  await appendFile(
+    path.join(root, ...relativePath.split("/")),
+    `\n${signature} { return 1; }\n`,
+    "utf8",
+  );
 }
 
 const sourceExtensions = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
@@ -191,27 +232,45 @@ try {
     throw new Error("The real-repository benchmark could not select twelve low-impact source files.");
   }
 
-  scenarios.noChange = indexMeasurement(await timed(() => indexRepository(worktreeRoot), true));
+  // Incremental indexing already reports its own peak RSS. Avoid spawning an
+  // external sampler here: its startup and shutdown otherwise dominate the
+  // sub-two-second scenarios that this harness is intended to measure.
+  scenarios.noChange = indexMeasurement(await timedFreshIndex(worktreeRoot));
 
-  await appendMarker(worktreeRoot, lowImpactFiles[0], "CodeAtlas implementation-change benchmark");
+  const requestedCentralFile = "api/src/server.ts";
+  const centralFile = sourceSet.has(requestedCentralFile)
+    ? requestedCentralFile
+    : lowImpactFiles[0];
+  const centralAbsolutePath = path.join(worktreeRoot, ...centralFile.split("/"));
+  const centralOriginal = await readFile(centralAbsolutePath, "utf8");
+  await appendMarker(worktreeRoot, centralFile, "codeatlas incremental benchmark");
+  scenarios.commentCentralFile = indexMeasurement(
+    await timedFreshIndex(worktreeRoot),
+  );
+  await writeFile(centralAbsolutePath, centralOriginal, "utf8");
+  scenarios.commentCentralFileRevert = indexMeasurement(
+    await timedFreshIndex(worktreeRoot),
+  );
+
+  await appendInternalImplementation(worktreeRoot, lowImpactFiles[0]);
   scenarios.oneImplementationChange = indexMeasurement(
-    await timed(() => indexRepository(worktreeRoot), true),
+    await timedFreshIndex(worktreeRoot),
   );
 
   const exportFile = sources.find((filePath) => /\.[cm]?tsx?$/u.test(filePath)) ?? sources[1];
   await appendFile(
     path.join(worktreeRoot, ...exportFile.split("/")),
-    `\nexport const codeatlasBenchmarkExport${Date.now()} = true;\n`,
+    "\nexport const codeatlasBenchmarkExport = true;\n",
     "utf8",
   );
   scenarios.exportedSymbolChange = indexMeasurement(
-    await timed(() => indexRepository(worktreeRoot), true),
+    await timedFreshIndex(worktreeRoot),
   );
 
   const sharedFile = sources.find((filePath) => /^(?:packages?|libs?)\//u.test(filePath)) ?? sources[2];
   await appendMarker(worktreeRoot, sharedFile, "CodeAtlas shared-package benchmark");
   scenarios.sharedPackageChange = indexMeasurement(
-    await timed(() => indexRepository(worktreeRoot), true),
+    await timedFreshIndex(worktreeRoot),
   );
 
   for (const count of [5, 10]) {
@@ -219,7 +278,7 @@ try {
       await appendMarker(worktreeRoot, filePath, `CodeAtlas ${count}-file benchmark`);
     }
     scenarios[`${count}FileChange`] = indexMeasurement(
-      await timed(() => indexRepository(worktreeRoot), true),
+      await timedFreshIndex(worktreeRoot),
     );
   }
 
@@ -229,10 +288,10 @@ try {
     `codeatlas-benchmark-renamed-${path.posix.basename(renameSource)}`,
   );
   await git(worktreeRoot, "mv", renameSource, renameTarget);
-  scenarios.rename = indexMeasurement(await timed(() => indexRepository(worktreeRoot), true));
+  scenarios.rename = indexMeasurement(await timedFreshIndex(worktreeRoot));
 
   await rm(path.join(worktreeRoot, ...lowImpactFiles[11].split("/")));
-  scenarios.deletion = indexMeasurement(await timed(() => indexRepository(worktreeRoot), true));
+  scenarios.deletion = indexMeasurement(await timedFreshIndex(worktreeRoot));
 
   const context = await ensureFreshIndex(worktreeRoot);
   const database = openDatabase(workspacePaths(worktreeRoot).database, { readonly: true });

@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
@@ -164,6 +164,26 @@ async function timedLight(operation) {
   return { value, durationMs: Number((performance.now() - started).toFixed(2)) };
 }
 
+function incrementalResult(measurement) {
+  return {
+    durationMs: measurement.durationMs,
+    peakRssBytes: Math.max(measurement.peakRssBytes, measurement.value.peakRssBytes),
+    indexedFiles: measurement.value.changedFiles,
+    addedFiles: measurement.value.addedFiles,
+    modifiedFiles: measurement.value.modifiedFiles,
+    deletedFiles: measurement.value.deletedFiles,
+    renamedFiles: measurement.value.renamedFiles,
+    invalidatedFiles: measurement.value.invalidatedFiles,
+    fullRebuild: measurement.value.fullRebuild,
+    invalidationTruncated: measurement.value.invalidationTruncated,
+    invalidationTruncationReason: measurement.value.invalidationTruncationReason,
+    semanticChanges: measurement.value.semanticChanges,
+    work: measurement.value.work,
+    phaseTimingsMs: measurement.value.timingsMs,
+    phaseMetrics: measurement.value.phaseMetrics,
+  };
+}
+
 async function benchmarkSize(loc) {
   const fixture = await generateRepository(loc);
   const startupRss = process.memoryUsage().rss;
@@ -184,15 +204,7 @@ async function benchmarkSize(loc) {
       await noChange.finishMonitoring(),
       noChange.value.peakRssBytes,
     );
-    incremental.noChange = {
-      durationMs: noChange.durationMs,
-      peakRssBytes: Math.max(noChange.peakRssBytes, noChange.value.peakRssBytes),
-      indexedFiles: noChange.value.changedFiles,
-      fullRebuild: noChange.value.fullRebuild,
-      invalidationTruncated: noChange.value.invalidationTruncated,
-      phaseTimingsMs: noChange.value.timingsMs,
-      phaseMetrics: noChange.value.phaseMetrics,
-    };
+    incremental.noChange = incrementalResult(noChange);
     for (const changedFiles of [1, 5, 10]) {
       for (const index of editTargets(fixture.fileCount, changedFiles)) {
         await appendFile(
@@ -206,22 +218,82 @@ async function benchmarkSize(loc) {
         await result.finishMonitoring(),
         result.value.peakRssBytes,
       );
-      incremental[changedFiles] = {
-        durationMs: result.durationMs,
-        peakRssBytes: Math.max(result.peakRssBytes, result.value.peakRssBytes),
-        indexedFiles: result.value.changedFiles,
-        addedFiles: result.value.addedFiles,
-        modifiedFiles: result.value.modifiedFiles,
-        deletedFiles: result.value.deletedFiles,
-        invalidatedFiles: result.value.invalidatedFiles,
-        fullRebuild: result.value.fullRebuild,
-        invalidationTruncated: result.value.invalidationTruncated,
-        invalidationTruncationReason: result.value.invalidationTruncationReason,
-        phaseTimingsMs: result.value.timingsMs,
-        phaseMetrics: result.value.phaseMetrics,
-      };
+      incremental[changedFiles] = incrementalResult(result);
       peakRss = Math.max(peakRss, process.memoryUsage().rss);
     }
+
+    const scenarios = {};
+    const centralPath = path.join(fixture.root, "src", "module-0.ts");
+    const centralBaseline = await readFile(centralPath, "utf8");
+    const runScenario = async (name, mutate, restore = async () => {
+      await writeFile(centralPath, centralBaseline, "utf8");
+    }) => {
+      await mutate();
+      const measured = await timed(() => indexRepository(fixture.root));
+      peakRss = Math.max(peakRss, await measured.finishMonitoring(), measured.value.peakRssBytes);
+      scenarios[name] = incrementalResult(measured);
+      await restore();
+      await indexRepository(fixture.root);
+    };
+
+    await runScenario("comment-only", () =>
+      appendFile(centralPath, "// deterministic comment-only scenario\n"));
+    await runScenario("format-only", () =>
+      writeFile(
+        centralPath,
+        centralBaseline.replace(
+          "export function checkoutFeature0(): number { return 0; }",
+          "export   function checkoutFeature0 ( ) : number {\n  return 0;\n}",
+        ),
+        "utf8",
+      ));
+    await runScenario("implementation-only", () =>
+      writeFile(centralPath, centralBaseline.replace("return 0;", "return 1;"), "utf8"));
+    await runScenario("local-reference-change", () =>
+      writeFile(
+        centralPath,
+        centralBaseline.replace("return 0;", "const local = 1; return local;"),
+        "utf8",
+      ));
+    await runScenario("export-change", () =>
+      writeFile(centralPath, centralBaseline.replaceAll("checkoutFeature0", "renamedFeature0"), "utf8"));
+    await runScenario("public-signature-change", () =>
+      writeFile(
+        centralPath,
+        centralBaseline.replace("checkoutFeature0()", "checkoutFeature0(value = 0)"),
+        "utf8",
+      ));
+
+    const leafPath = path.join(fixture.root, "src", "incremental-leaf.ts");
+    await runScenario(
+      "new-leaf-file",
+      () => writeFile(leafPath, "export const incrementalLeaf = true;\n", "utf8"),
+      async () => { await rm(leafPath, { force: true }); },
+    );
+    await writeFile(leafPath, "export const incrementalLeaf = true;\n", "utf8");
+    await indexRepository(fixture.root);
+    await runScenario(
+      "delete-leaf-file",
+      () => rm(leafPath, { force: true }),
+      async () => {},
+    );
+    const renameSource = path.join(fixture.root, "src", "rename-leaf.ts");
+    const renameTarget = path.join(fixture.root, "src", "renamed-leaf.ts");
+    await writeFile(renameSource, "export const renameLeaf = true;\n", "utf8");
+    await git(fixture.root, "add", "src/rename-leaf.ts");
+    await git(fixture.root, "commit", "-m", "Add rename benchmark leaf", "--", "src/rename-leaf.ts");
+    await indexRepository(fixture.root);
+    await runScenario(
+      "rename-file",
+      () => git(fixture.root, "mv", "src/rename-leaf.ts", "src/renamed-leaf.ts"),
+      () => git(fixture.root, "mv", "src/renamed-leaf.ts", "src/rename-leaf.ts"),
+    );
+    await runScenario("central-high-fan-out-export-change", () =>
+      writeFile(
+        centralPath,
+        centralBaseline.replace("checkoutFeature0()", "checkoutFeature0(extra = 0)"),
+        "utf8",
+      ));
 
     const context = await ensureFreshIndex(fixture.root);
     const queryLatencies = [];
@@ -245,6 +317,7 @@ async function benchmarkSize(loc) {
       coldPhaseTimingsMs: cold.value.timingsMs,
       coldPhaseMetrics: cold.value.phaseMetrics,
       incremental,
+      incrementalScenarios: scenarios,
       warmSearchMs: {
         p50: percentile(queryLatencies, 0.5),
         p95: percentile(queryLatencies, 0.95),
