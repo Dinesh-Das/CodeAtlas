@@ -5,6 +5,7 @@ import { getStatus } from "../../src/cli/status.js";
 import { initializeRepository } from "../../src/cli/init.js";
 import { indexRepository } from "../../src/cli/index-command.js";
 import { workspacePaths } from "../../src/core/workspace.js";
+import { INDEX_PHASES } from "../../src/core/telemetry.js";
 import { openDatabase } from "../../src/storage/database.js";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
 
@@ -35,9 +36,16 @@ describe("repository → index → graph", () => {
     expect(result.files).toBe(4); // .gitignore plus three repository files
     expect(result.symbols).toBeGreaterThanOrEqual(3);
     expect(result.languages).toMatchObject({ typescript: 1, python: 1, json: 1 });
+    expect(result.phaseMetrics.map((metric) => metric.phase)).toEqual(INDEX_PHASES);
+    expect(result.peakRssBytes).toBeGreaterThan(0);
+    expect(
+      result.phaseMetrics.find((metric) => metric.phase === "repository_discovery"),
+    ).toMatchObject({ itemsProcessed: 4 });
     await expect(readFile(paths.config, "utf8")).resolves.toContain('"maxTraversalDepth": 10');
     await expect(readFile(paths.manifest, "utf8")).resolves.toContain(result.repository.id);
-    await expect(readFile(paths.state, "utf8")).resolves.toContain(result.fingerprint);
+    const storedState = await readFile(paths.state, "utf8");
+    expect(storedState).toContain(result.fingerprint);
+    expect(storedState).toContain('"phaseMetrics"');
     await expect(readFile(path.join(repository.root, ".gitignore"), "utf8")).resolves.toContain(
       ".codeatlas/",
     );

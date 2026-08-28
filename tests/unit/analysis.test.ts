@@ -71,6 +71,20 @@ describe("scalable architecture graph algorithms", () => {
     expect(findings[0]?.evidenceNodeIds).toHaveLength(paths.length);
   });
 
+  it("buckets edges for ten thousand small SCCs in one graph pass", () => {
+    const paths = Array.from(
+      { length: 10_000 },
+      (_, index) => [`src/cycle-${index}-a.ts`, `src/cycle-${index}-b.ts`] as const,
+    );
+    const pairs = paths.flatMap(([left, right]) => [
+      [left, right] as const,
+      [right, left] as const,
+    ]);
+    const findings = findDependencyCycles("repository", graph(paths.flat(), pairs));
+    expect(findings).toHaveLength(10_000);
+    expect(findings.every((finding) => finding.evidenceNodeIds.length === 2)).toBe(true);
+  }, 15_000);
+
   it("discovers one business feature across technical-layer directories", () => {
     const paths = [
       "controllers/checkout-controller.ts",

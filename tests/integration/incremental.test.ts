@@ -1,9 +1,11 @@
-import { rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeRepository } from "../../src/cli/init.js";
 import { indexRepository } from "../../src/cli/index-command.js";
-import { getStatus } from "../../src/cli/status.js";
+import { clearFastStatusCache, getFastStatus, getStatus } from "../../src/cli/status.js";
+import { runIndex } from "../../src/indexer/indexer.js";
+import { ensureFreshIndex } from "../../src/mcp/freshness.js";
 import { workspacePaths } from "../../src/core/workspace.js";
 import { openDatabase } from "../../src/storage/database.js";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
@@ -15,6 +17,87 @@ afterEach(async () => {
 });
 
 describe("Phase 4 incremental indexing", () => {
+  it("keeps structural facts usable and repairs architecture after a post-commit crash", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write("src/crash.ts", "export const version = 1;\n");
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "crash generation fixture");
+    await initializeRepository(repository.root);
+
+    await repository.write("src/crash.ts", "export const version = 2;\n");
+    await expect(
+      runIndex({
+        startPath: repository.root,
+        afterStructuralCommit() {
+          throw new Error("simulated architecture crash");
+        },
+      }),
+    ).rejects.toThrow("simulated architecture crash");
+
+    await expect(getStatus(repository.root)).resolves.toMatchObject({
+      synchronized: false,
+      structuralSynchronized: true,
+      semanticSynchronized: true,
+      searchSynchronized: true,
+      architectureSynchronized: false,
+      generations: { structural: 2, semantic: 2, search: 2, architecture: 1 },
+    });
+    const structural = await ensureFreshIndex(repository.root, "structural");
+    expect(structural.status.architectureSynchronized).toBe(false);
+
+    const recovered = await ensureFreshIndex(repository.root, "architecture");
+    expect(recovered.status).toMatchObject({
+      synchronized: true,
+      architectureSynchronized: true,
+      generations: { structural: 2, semantic: 2, search: 2, architecture: 2 },
+    });
+
+    const firstCachedStatus = await getFastStatus(repository.root);
+    const secondCachedStatus = await getFastStatus(repository.root);
+    expect(secondCachedStatus).toBe(firstCachedStatus);
+    expect(secondCachedStatus.generations).toEqual({
+      structural: 2,
+      semantic: 2,
+      search: 2,
+      architecture: 2,
+    });
+    clearFastStatusCache(repository.root);
+  });
+
+  it("falls back to a full reconciliation when bounded invalidation truncates", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write("src/shared.ts", "export const shared = 1;\n");
+    for (let index = 0; index < 15; index += 1) {
+      await repository.write(
+        `src/consumer-${index}.ts`,
+        `import { shared } from "./shared.js";\nexport const value${index} = shared;\n`,
+      );
+    }
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "bounded invalidation fixture");
+    await initializeRepository(repository.root);
+
+    const configPath = workspacePaths(repository.root).config;
+    const config = JSON.parse(await readFile(configPath, "utf8")) as {
+      limits: { maxInvalidationFiles: number };
+    };
+    config.limits.maxInvalidationFiles = 10;
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    await indexRepository(repository.root);
+
+    await repository.write("src/shared.ts", "export const shared = 2;\n");
+    const result = await indexRepository(repository.root);
+    expect(result).toMatchObject({
+      fullRebuild: true,
+      invalidationTruncated: true,
+      invalidationTruncationReason: "max_files",
+      changedFiles: 17,
+    });
+    await expect(getStatus(repository.root)).resolves.toMatchObject({ synchronized: true });
+  });
+
   it("detects committed changes since the indexed commit without forcing a rebuild", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);

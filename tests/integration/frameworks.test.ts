@@ -26,6 +26,7 @@ async function createFrameworkRepository(): Promise<TestRepository> {
   repositories.push(repository);
   const fixtures = [
     ["src/routes.ts", "express/routes.ts"],
+    ["api/fastify-routes.ts", "fastify/routes.ts"],
     ["api/routes.py", "fastapi/routes.py"],
     ["prisma/schema.prisma", "prisma/schema.prisma"],
     ["models/models.py", "sqlalchemy/models.py"],
@@ -93,7 +94,7 @@ describe("Phase 5 framework adapters", () => {
       }
       expect(
         database.prepare("SELECT count(*) FROM edges WHERE edge_type = 'HANDLES'").pluck().get(),
-      ).toBe(4);
+      ).toBe(6);
       expect(
         database
           .prepare(
@@ -136,7 +137,7 @@ describe("Phase 5 framework adapters", () => {
       "utf8",
     );
     const result = await indexRepository(repository.root);
-    expect(result).toMatchObject({ modifiedFiles: 1, fullRebuild: false, apiRoutes: 4 });
+    expect(result).toMatchObject({ modifiedFiles: 1, fullRebuild: false, apiRoutes: 6 });
 
     const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
     try {

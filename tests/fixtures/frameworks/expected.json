@@ -1,12 +1,14 @@
 {
-  "apiRoutes": 4,
+  "apiRoutes": 6,
   "databaseModels": 4,
-  "frameworks": ["express", "fastapi", "prisma", "sqlalchemy"],
+  "frameworks": ["express", "fastapi", "fastify", "prisma", "sqlalchemy"],
   "nodes": [
     "api_route|express|GET getUser|routes.ts|13|framework|1",
     "api_route|express|POST createUser|routes.ts|14|framework|1",
     "api_route|fastapi|GET get_account|routes.py|6|framework|1",
     "api_route|fastapi|POST create_account|routes.py|10|framework|1",
+    "api_route|fastify|GET getStatus|fastify-routes.ts|8|framework|1",
+    "api_route|fastify|POST getStatus|fastify-routes.ts|9|framework|1",
     "database_model|prisma|User|schema.prisma|6|schema|1",
     "database_model|prisma|Post|schema.prisma|11|schema|1",
     "database_model|sqlalchemy|User|models.py|6|framework|1",

@@ -39,9 +39,33 @@ describe("compiled CLI", () => {
     expect(status).toMatchObject({ synchronized: true });
     expect(status.files).toBeGreaterThan(0);
 
+    await repository.write("src/index.ts", "export const ready = 'updated';\n");
+    const jsonIndexResult = await runCli("index", repository.root, "--json");
+    expect(jsonIndexResult.stderr).toBe("");
+    expect(JSON.parse(jsonIndexResult.stdout)).toMatchObject({
+      changedFiles: 1,
+      fullRebuild: false,
+      generations: {
+        structural: 2,
+        semantic: 2,
+        search: 2,
+        architecture: 2,
+      },
+      phaseMetrics: expect.arrayContaining([
+        expect.objectContaining({ phase: "tree_sitter_parsing" }),
+        expect.objectContaining({ phase: "architecture_domain_feature_analysis" }),
+      ]),
+    });
+
+    await repository.write("src/index.ts", "export const ready = 'quiet';\n");
+    const quietIndexResult = await runCli("index", repository.root, "--quiet");
+    expect(quietIndexResult).toEqual({ stdout: "", stderr: "" });
+
     const doctor = await runCli("doctor", repository.root);
-    expect(doctor.stdout).toContain("✓ SQLite: quick_check=ok, journal_mode=wal, schema=5");
+    expect(doctor.stdout).toContain("✓ SQLite: quick_check=ok, journal_mode=wal, schema=6");
     expect(doctor.stdout).toContain("✓ Graph integrity:");
+    expect(doctor.stdout).toContain("✓ Relationship quality:");
+    expect(doctor.stdout).toContain("✓ Database storage:");
     expect(doctor.stdout).toContain("✓ Stale files:");
 
     const cleaned = await runCli("clean", repository.root, "--force");

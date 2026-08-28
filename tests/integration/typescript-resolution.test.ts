@@ -11,6 +11,52 @@ afterEach(async () => {
 });
 
 describe("project-aware TypeScript resolution", () => {
+  it("preserves exact compiler declaration identity for duplicate methods in one file", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write(
+      "tsconfig.json",
+      JSON.stringify({ compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext" } }),
+    );
+    await repository.write(
+      "src/processors.ts",
+      [
+        "export class PaymentProcessor {",
+        "  process(value: string): string { return value; }",
+        "}",
+        "export class RefundProcessor {",
+        "  process(value: string): string { return value; }",
+        "}",
+        "export function checkout(): string {",
+        "  const processor = new PaymentProcessor();",
+        "  return processor.process('order');",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "same-file semantic identity");
+    await initializeRepository(repository.root);
+
+    const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
+    try {
+      const calls = database
+        .prepare(
+          `SELECT target.qualified_name AS targetName,
+                  target.start_line AS targetLine, edges.source_type AS sourceType
+           FROM edges JOIN nodes target ON target.id = edges.target_node_id
+           WHERE edges.edge_type = 'CALLS' AND edges.file_path = 'src/processors.ts'
+             AND target.name = 'process'`,
+        )
+        .all();
+      expect(calls).toEqual([
+        { targetName: "PaymentProcessor.process", targetLine: 2, sourceType: "compiler" },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
   it("resolves tsconfig paths and uses receiver types for duplicated method names", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);
@@ -89,6 +135,53 @@ describe("project-aware TypeScript resolution", () => {
     }
   });
 
+  it("scopes hundreds of ambiguous method names before applying the candidate cap", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write(
+      "tsconfig.json",
+      JSON.stringify({
+        compilerOptions: { target: "ES2022", module: "NodeNext", moduleResolution: "NodeNext" },
+        include: ["src/**/*.ts"],
+      }),
+    );
+    for (let index = 0; index < 500; index += 1) {
+      await repository.write(
+        `src/services/service-${index}.ts`,
+        `export class Service${index} { process(): number { return ${index}; } }\n`,
+      );
+    }
+    await repository.write(
+      "src/consumer.ts",
+      [
+        'import { Service499 } from "./services/service-499.js";',
+        "export function run(): number {",
+        "  const service: any = new Service499();",
+        "  return service.process();",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "ambiguous method scope");
+    await initializeRepository(repository.root);
+
+    const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
+    try {
+      const calls = database
+        .prepare(
+          `SELECT target.file_path AS targetFile
+           FROM edges JOIN nodes target ON target.id = edges.target_node_id
+           WHERE edges.edge_type = 'CALLS' AND edges.file_path = 'src/consumer.ts'
+             AND target.name = 'process'`,
+        )
+        .all();
+      expect(calls).toEqual([{ targetFile: "src/services/service-499.ts" }]);
+    } finally {
+      database.close();
+    }
+  }, 30_000);
+
   it("resolves workspace package exports and persists package boundaries", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);
@@ -149,6 +242,67 @@ describe("project-aware TypeScript resolution", () => {
         )
         .get();
       expect(dependency).toEqual({ source: "@company/api", target: "@company/core" });
+    } finally {
+      database.close();
+    }
+  });
+
+  it("resolves wildcard package exports and ignores nested non-workspace manifests", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write(
+      "package.json",
+      JSON.stringify({ name: "workspace-root", private: true, workspaces: ["packages/*"] }),
+    );
+    await repository.write(
+      "packages/core/package.json",
+      JSON.stringify({
+        name: "@company/core",
+        private: true,
+        exports: { "./*": "./src/*.ts" },
+      }),
+    );
+    await repository.write(
+      "packages/core/src/payments.ts",
+      "export function charge(value: number): number { return value; }\n",
+    );
+    await repository.write(
+      "packages/api/package.json",
+      JSON.stringify({
+        name: "@company/api",
+        private: true,
+        dependencies: { "@company/core": "workspace:*" },
+      }),
+    );
+    await repository.write(
+      "packages/api/src/main.ts",
+      'import { charge } from "@company/core/payments";\nexport const result = charge(10);\n',
+    );
+    await repository.write(
+      "vendor/embedded/package.json",
+      JSON.stringify({ name: "@vendor/not-a-workspace", private: true }),
+    );
+    await repository.write("vendor/embedded/index.ts", "export const embedded = true;\n");
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "wildcard workspace exports");
+    await initializeRepository(repository.root);
+
+    const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
+    try {
+      expect(
+        database
+          .prepare(
+            `SELECT target.file_path
+             FROM edges JOIN nodes target ON target.id = edges.target_node_id
+             WHERE edges.edge_type = 'IMPORTS'
+               AND edges.file_path = 'packages/api/src/main.ts'`,
+          )
+          .pluck()
+          .get(),
+      ).toBe("packages/core/src/payments.ts");
+      expect(
+        database.prepare("SELECT name FROM nodes WHERE kind = 'package' ORDER BY name").pluck().all(),
+      ).toEqual(["@company/api", "@company/core", "workspace-root"]);
     } finally {
       database.close();
     }

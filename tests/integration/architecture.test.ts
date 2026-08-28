@@ -198,6 +198,16 @@ describe("Phase 6 architecture analysis", () => {
     expect(secondOverview.facts).toHaveLength(2);
     expect(secondOverview.facts).not.toEqual(firstOverview.facts);
 
+    const balancedOverview = answerPacketSchema.parse(
+      architectureOverviewPacket(context, { cursor: null, limit: 7 }),
+    );
+    const overviewKinds = new Set(
+      balancedOverview.facts.map((fact) => fact.statement.split(" ", 1)[0]),
+    );
+    expect([...overviewKinds]).toEqual(
+      expect.arrayContaining(["Domain", "Feature", "Dependency", "API", "Database"]),
+    );
+
     const health = answerPacketSchema.parse(
       architectureHealthPacket(context, { cursor: null, limit: 20 }),
     );
