@@ -1,4 +1,5 @@
 import type { AtlasDatabase } from "./database.js";
+import { cachedStatement } from "./statements.js";
 
 export interface FileRecord {
   path: string;
@@ -36,8 +37,8 @@ export function listFiles(database: AtlasDatabase): FileRecord[] {
 }
 
 export function upsertFile(database: AtlasDatabase, record: FileRecord): void {
-  database
-    .prepare(
+  cachedStatement(
+    database,
       `INSERT INTO files(
         path, language, content_hash, size_bytes, mtime_ms, ctime_ms,
         parser_version, adapter_version,
@@ -58,10 +59,9 @@ export function upsertFile(database: AtlasDatabase, record: FileRecord): void {
         indexed_commit = excluded.indexed_commit,
         parse_status = excluded.parse_status,
         indexed_at = excluded.indexed_at`,
-    )
-    .run(record);
+  ).run(record);
 }
 
 export function deleteFile(database: AtlasDatabase, relativeFilePath: string): void {
-  database.prepare("DELETE FROM files WHERE path = ?").run(relativeFilePath);
+  cachedStatement(database, "DELETE FROM files WHERE path = ?").run(relativeFilePath);
 }

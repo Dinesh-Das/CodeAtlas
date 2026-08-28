@@ -76,4 +76,13 @@ export interface ArchitectureAnalysisResult {
   cycles: number;
   hotspots: number;
   findings: number;
+  timingsMs: {
+    graphLoading: number;
+    communityDetection: number;
+    domainFeatureAnalysis: number;
+    cycleDetection: number;
+    hotspotAnalysis: number;
+    persistence: number;
+    total: number;
+  };
 }

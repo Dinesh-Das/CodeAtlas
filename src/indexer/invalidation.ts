@@ -130,24 +130,57 @@ export function findDependencyNeighborhood(
   seedPaths: readonly string[],
   maxDepth: number,
   maxFiles: number,
-): Set<string> {
+): DependencyNeighborhoodResult {
   const visited = new Set(seedPaths);
   const dependents = new Set<string>();
   let frontier = [...new Set(seedPaths)];
-  for (
-    let depth = 0;
-    depth < maxDepth && frontier.length > 0 && dependents.size < maxFiles;
-    depth += 1
-  ) {
+  let depth = 0;
+  let truncated = false;
+  let reason: DependencyNeighborhoodResult["reason"] = null;
+  for (; depth < maxDepth && frontier.length > 0; depth += 1) {
     const next: string[] = [];
-    for (const filePath of incomingDependencyFiles(database, frontier)) {
+    const incoming = incomingDependencyFiles(database, frontier);
+    for (const filePath of incoming) {
       if (visited.has(filePath)) continue;
-      if (dependents.size >= maxFiles) break;
+      if (dependents.size >= maxFiles) {
+        truncated = true;
+        reason = "max_files";
+        break;
+      }
       visited.add(filePath);
       dependents.add(filePath);
       next.push(filePath);
     }
+    if (truncated) {
+      frontier = next;
+      break;
+    }
     frontier = next;
   }
-  return dependents;
+
+  if (!truncated && frontier.length > 0 && depth >= maxDepth) {
+    const hasUnvisitedDependents = incomingDependencyFiles(database, frontier).some(
+      (filePath) => !visited.has(filePath),
+    );
+    if (hasUnvisitedDependents) {
+      truncated = true;
+      reason = "max_depth";
+    }
+  }
+
+  return {
+    files: dependents,
+    truncated,
+    reason,
+    visitedFiles: visited.size,
+    frontierFiles: frontier.length,
+  };
+}
+
+export interface DependencyNeighborhoodResult {
+  files: Set<string>;
+  truncated: boolean;
+  reason: "max_depth" | "max_files" | null;
+  visitedFiles: number;
+  frontierFiles: number;
 }

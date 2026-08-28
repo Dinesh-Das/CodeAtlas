@@ -1,10 +1,11 @@
 import type { GraphEdge } from "../graph/types.js";
 import { provenanceForSource } from "../graph/types.js";
 import type { AtlasDatabase } from "./database.js";
+import { cachedStatement } from "./statements.js";
 
 export function upsertEdge(database: AtlasDatabase, edge: GraphEdge, timestamp: string): void {
-  database
-    .prepare(
+  cachedStatement(
+    database,
       `INSERT INTO edges(
         id, source_node_id, target_node_id, edge_type, source_type, provenance_category,
         confidence, file_path, line, metadata_json, created_at, updated_at
@@ -23,8 +24,7 @@ export function upsertEdge(database: AtlasDatabase, edge: GraphEdge, timestamp: 
         line = excluded.line,
         metadata_json = excluded.metadata_json,
         updated_at = excluded.updated_at`,
-    )
-    .run({
+  ).run({
       ...edge,
       provenance: edge.provenance ?? provenanceForSource(edge.sourceType),
       metadataJson: JSON.stringify(edge.metadata),
@@ -33,5 +33,5 @@ export function upsertEdge(database: AtlasDatabase, edge: GraphEdge, timestamp: 
 }
 
 export function deleteEdgesForFile(database: AtlasDatabase, relativeFilePath: string): void {
-  database.prepare("DELETE FROM edges WHERE file_path = ?").run(relativeFilePath);
+  cachedStatement(database, "DELETE FROM edges WHERE file_path = ?").run(relativeFilePath);
 }

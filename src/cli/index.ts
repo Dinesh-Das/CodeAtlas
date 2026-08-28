@@ -5,6 +5,7 @@ import { CODEATLAS_VERSION } from "../version.js";
 import { cleanRepository } from "./clean.js";
 import { formatDoctor, runDoctor } from "./doctor.js";
 import { formatIndexResult, indexRepository } from "./index-command.js";
+import type { IndexProgress } from "../core/telemetry.js";
 import { formatInitResult, initializeRepository } from "./init.js";
 import { startMcpServer } from "./mcp.js";
 import { formatStatus, getStatus } from "./status.js";
@@ -29,8 +30,37 @@ export function createProgram(): Command {
     .description("Synchronize the local CodeAtlas index.")
     .argument("[path]", "A path inside the repository", process.cwd())
     .option("--full", "Rebuild the complete index", false)
-    .action(async (targetPath: string, options: { full: boolean }) => {
-      console.log(formatIndexResult(await indexRepository(targetPath, options.full)));
+    .option("--quiet", "Suppress progress and summary output", false)
+    .option("--json", "Print machine-readable JSON without terminal progress", false)
+    .action(async (
+      targetPath: string,
+      options: { full: boolean; quiet: boolean; json: boolean },
+    ) => {
+      const onProgress = options.quiet || options.json
+        ? undefined
+        : (progress: IndexProgress): void => {
+            if (progress.status === "completed" && progress.elapsedMs === 0) return;
+            const label = progress.phase.replaceAll("_", " ");
+            const count = progress.total === null || progress.total === 0
+              ? ""
+              : ` ${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()}`;
+            const elapsed = progress.status === "started"
+              ? ""
+              : ` ${(progress.elapsedMs / 1_000).toFixed(2)}s`;
+            if (process.stderr.isTTY && progress.status !== "completed") {
+              process.stderr.write(`\r${label}${count}${elapsed}`);
+            } else if (progress.status === "completed") {
+              if (process.stderr.isTTY) process.stderr.write("\r\x1b[2K");
+              process.stderr.write(`${label}${count}${elapsed}\n`);
+            }
+          };
+      const result = await indexRepository(
+        targetPath,
+        options.full,
+        onProgress === undefined ? {} : { onProgress },
+      );
+      if (options.quiet) return;
+      console.log(options.json ? JSON.stringify(result, null, 2) : formatIndexResult(result));
     });
 
   program

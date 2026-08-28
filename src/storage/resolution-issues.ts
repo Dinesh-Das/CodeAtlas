@@ -1,4 +1,5 @@
 import type { AtlasDatabase } from "./database.js";
+import { cachedStatement } from "./statements.js";
 
 export type ResolutionIssueReason =
   | "unresolved_reference"
@@ -26,8 +27,8 @@ export function upsertResolutionIssue(
   issue: ResolutionIssue,
   timestamp: string,
 ): void {
-  database
-    .prepare(
+  cachedStatement(
+    database,
       `INSERT INTO resolution_issues(
         id, source_node_id, reference_kind, reference_name, reference_hash,
         file_path, line, column_number, reason, candidate_node_ids_json,
@@ -49,8 +50,7 @@ export function upsertResolutionIssue(
         candidate_node_ids_json = excluded.candidate_node_ids_json,
         metadata_json = excluded.metadata_json,
         updated_at = excluded.updated_at`,
-    )
-    .run({
+  ).run({
       ...issue,
       candidateNodeIdsJson: JSON.stringify(issue.candidateNodeIds),
       metadataJson: JSON.stringify(issue.metadata),
@@ -104,5 +104,7 @@ export function deleteResolutionIssuesForFile(
   database: AtlasDatabase,
   relativeFilePath: string,
 ): void {
-  database.prepare("DELETE FROM resolution_issues WHERE file_path = ?").run(relativeFilePath);
+  cachedStatement(database, "DELETE FROM resolution_issues WHERE file_path = ?").run(
+    relativeFilePath,
+  );
 }

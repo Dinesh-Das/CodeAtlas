@@ -13,6 +13,13 @@ export interface FreshContext {
   checkedAt: string;
 }
 
+export type FreshnessRequirement =
+  | "structural"
+  | "semantic"
+  | "search"
+  | "architecture"
+  | "all";
+
 const activeRefreshes = new Map<string, Promise<void>>();
 
 async function refreshOnce(repositoryRoot: string): Promise<void> {
@@ -27,16 +34,34 @@ async function refreshOnce(repositoryRoot: string): Promise<void> {
   }
 }
 
-export async function ensureFreshIndex(repositoryPath: string): Promise<FreshContext> {
+function satisfies(status: StatusResult, requirement: FreshnessRequirement): boolean {
+  switch (requirement) {
+    case "structural":
+      return status.structuralSynchronized;
+    case "semantic":
+      return status.structuralSynchronized && status.semanticSynchronized;
+    case "search":
+      return status.structuralSynchronized && status.searchSynchronized;
+    case "architecture":
+      return status.structuralSynchronized && status.architectureSynchronized;
+    case "all":
+      return status.synchronized;
+  }
+}
+
+export async function ensureFreshIndex(
+  repositoryPath: string,
+  requirement: FreshnessRequirement = "all",
+): Promise<FreshContext> {
   let status = await getFastStatus(repositoryPath);
-  if (!status.synchronized) {
+  if (!satisfies(status, requirement)) {
     await refreshOnce(status.root);
     clearFastStatusCache(status.root);
     status = await getFastStatus(repositoryPath);
   }
-  if (!status.synchronized) {
+  if (!satisfies(status, requirement)) {
     throw new CodeAtlasError(
-      "CodeAtlas could not synchronize the graph with the current working tree.",
+      `CodeAtlas could not synchronize the ${requirement} index state with the current working tree.`,
     );
   }
   return {

@@ -80,6 +80,13 @@ export const answerPacketSchema = z
         head_commit: z.string(),
         working_tree_checked: z.literal(true),
         checked_at: z.string().datetime(),
+        structural_generation: z.number().int().nonnegative(),
+        semantic_generation: z.number().int().nonnegative(),
+        search_generation: z.number().int().nonnegative(),
+        architecture_generation: z.number().int().nonnegative(),
+        semantic_current: z.boolean(),
+        search_current: z.boolean(),
+        architecture_current: z.boolean(),
       })
       .strict(),
     security: z

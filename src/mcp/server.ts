@@ -62,13 +62,13 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
   server.registerTool(
     "codeatlas_status",
     { description: "Return CodeAtlas repository and synchronization status.", inputSchema: emptyInputSchema, outputSchema: answerPacketSchema },
-    async () => resultFromPacket(statusPacket(await ensureFreshIndex(repositoryPath))),
+    async () => resultFromPacket(statusPacket(await ensureFreshIndex(repositoryPath, "structural"))),
   );
   server.registerTool(
     "codeatlas_overview",
     { description: "Return a high-level repository architecture overview.", inputSchema: overviewInputSchema, outputSchema: answerPacketSchema },
     async (input: z.infer<typeof overviewInputSchema>) => {
-      const context = await ensureFreshIndex(repositoryPath);
+      const context = await ensureFreshIndex(repositoryPath, "architecture");
       validateConfiguredLimits(input, context);
       return resultFromPacket(architectureOverviewPacket(context, input));
     },
@@ -77,7 +77,7 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
     "codeatlas_search",
     { description: "Search graph nodes across symbols, files, APIs, features, and models.", inputSchema: searchInputSchema, outputSchema: answerPacketSchema },
     async (input: z.infer<typeof searchInputSchema>) => {
-      const context = await ensureFreshIndex(repositoryPath);
+      const context = await ensureFreshIndex(repositoryPath, "search");
       validateConfiguredLimits(input, context);
       return resultFromPacket(searchPacket(context, input));
     },
@@ -86,7 +86,7 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
     "codeatlas_get_node",
     { description: "Return one graph node with relationships and evidence.", inputSchema: getNodeInputSchema, outputSchema: answerPacketSchema },
     async (input: z.infer<typeof getNodeInputSchema>) => {
-      const context = await ensureFreshIndex(repositoryPath);
+      const context = await ensureFreshIndex(repositoryPath, "semantic");
       return resultFromPacket(getNodePacket(context, input));
     },
   );
@@ -94,7 +94,7 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
     "codeatlas_explain_feature",
     { description: "Return grounded context for a host model to explain a feature.", inputSchema: explainFeatureInputSchema, outputSchema: answerPacketSchema },
     async (input: z.infer<typeof explainFeatureInputSchema>) => {
-      const context = await ensureFreshIndex(repositoryPath);
+      const context = await ensureFreshIndex(repositoryPath, "architecture");
       validateConfiguredLimits(input, context);
       return resultFromPacket(explainFeaturePacket(context, input));
     },
@@ -103,7 +103,7 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
     "codeatlas_trace",
     { description: "Trace an evidence-bearing execution or dependency path.", inputSchema: traceInputSchema, outputSchema: answerPacketSchema },
     async (input: z.infer<typeof traceInputSchema>) => {
-      const context = await ensureFreshIndex(repositoryPath);
+      const context = await ensureFreshIndex(repositoryPath, "semantic");
       validateConfiguredLimits(input, context);
       return resultFromPacket(tracePacket(context, input));
     },
@@ -112,7 +112,7 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
     "codeatlas_impact",
     { description: "Return definite and potential dependents of a target.", inputSchema: impactInputSchema, outputSchema: answerPacketSchema },
     async (input: z.infer<typeof impactInputSchema>) => {
-      const context = await ensureFreshIndex(repositoryPath);
+      const context = await ensureFreshIndex(repositoryPath, "architecture");
       validateConfiguredLimits(input, context);
       return resultFromPacket(impactPacket(context, input));
     },
@@ -121,7 +121,7 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
     "codeatlas_dependencies",
     { description: "Return a target's dependency neighborhood.", inputSchema: dependenciesInputSchema, outputSchema: answerPacketSchema },
     async (input: z.infer<typeof dependenciesInputSchema>) => {
-      const context = await ensureFreshIndex(repositoryPath);
+      const context = await ensureFreshIndex(repositoryPath, "semantic");
       validateConfiguredLimits(input, context);
       return resultFromPacket(dependenciesPacket(context, input));
     },
@@ -130,7 +130,7 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
     "codeatlas_source",
     { description: "Return the configured minimal source range for a graph node.", inputSchema: sourceInputSchema, outputSchema: answerPacketSchema },
     async (input: z.infer<typeof sourceInputSchema>) => {
-      const context = await ensureFreshIndex(repositoryPath);
+      const context = await ensureFreshIndex(repositoryPath, "structural");
       return resultFromPacket(await sourcePacket(context, input));
     },
   );
@@ -138,7 +138,7 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
     "codeatlas_health",
     { description: "Return architecture and technical-debt signals.", inputSchema: healthInputSchema, outputSchema: answerPacketSchema },
     async (input: z.infer<typeof healthInputSchema>) => {
-      const context = await ensureFreshIndex(repositoryPath);
+      const context = await ensureFreshIndex(repositoryPath, "architecture");
       validateConfiguredLimits(input, context);
       return resultFromPacket(architectureHealthPacket(context, input));
     },

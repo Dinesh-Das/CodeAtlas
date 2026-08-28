@@ -17,12 +17,18 @@ import {
 import { hashFile, sha256 } from "../core/hashing.js";
 import { loadIgnoreRules } from "../core/ignore.js";
 import {
+  IndexTelemetry,
+  type IndexPhaseMetric,
+  type IndexProgress,
+} from "../core/telemetry.js";
+import {
   detectLanguage,
   isLanguageEnabled,
   isSourceLanguage,
   type DetectedLanguage,
 } from "../core/languages.js";
 import { acquireIndexLock, workspacePaths, writeJsonAtomic } from "../core/workspace.js";
+import { workspaceManifestPaths } from "../core/workspace-packages.js";
 import {
   availableFrameworkAdapters,
   extractFrameworkGraph,
@@ -35,7 +41,7 @@ import {
   planGraphRename,
   type RenamePlan,
 } from "../graph/renames.js";
-import { resolveReferences } from "../graph/resolver.js";
+import { resolveReferences, type ResolutionResult } from "../graph/resolver.js";
 import type { GraphEdge, GraphNode } from "../graph/types.js";
 import type { RepositoryInfo } from "../git/repository.js";
 import { detectRepository } from "../git/repository.js";
@@ -50,9 +56,17 @@ import {
 import { openDatabase, removeDatabaseFiles, type AtlasDatabase } from "../storage/database.js";
 import { deleteEdgesForFile, upsertEdge } from "../storage/edges.js";
 import { deleteFile, listFiles, upsertFile, type FileRecord } from "../storage/files.js";
+import { rebuildNodeSearch, suspendNodeSearchSync } from "../storage/fts.js";
 import { deleteNodesById, deleteNodesForFile, upsertNode } from "../storage/nodes.js";
 import { deleteResolutionIssuesForFile } from "../storage/resolution-issues.js";
-import { getRepositoryState, setRepositoryStates } from "../storage/state.js";
+import {
+  generationsFromState,
+  getRepositoryState,
+  getRepositoryStates,
+  nextStructuralGeneration,
+  setRepositoryStates,
+  type RepositoryGenerations,
+} from "../storage/state.js";
 import { CODEATLAS_VERSION, INDEXER_VERSION, SCHEMA_VERSION } from "../version.js";
 import { classifyRepositoryChanges } from "./changes.js";
 import {
@@ -63,6 +77,9 @@ import {
 export interface IndexOptions {
   startPath?: string;
   full?: boolean;
+  /** Integration hook for verifying crash recovery after the structural commit boundary. */
+  afterStructuralCommit?: () => void;
+  onProgress?: (progress: IndexProgress) => void;
 }
 
 export interface IndexResult {
@@ -75,6 +92,8 @@ export interface IndexResult {
   deletedFiles: number;
   renamedFiles: number;
   invalidatedFiles: number;
+  invalidationTruncated: boolean;
+  invalidationTruncationReason: "max_depth" | "max_files" | null;
   fullRebuild: boolean;
   dirtyWorkingTree: boolean;
   nodes: number;
@@ -92,6 +111,9 @@ export interface IndexResult {
   languages: Record<string, number>;
   frameworks: string[];
   indexedAt: string;
+  generations: RepositoryGenerations;
+  phaseMetrics: IndexPhaseMetric[];
+  peakRssBytes: number;
   timingsMs: {
     discovery: number;
     fingerprint: number;
@@ -128,9 +150,12 @@ interface WorkspacePackage {
 
 async function loadWorkspacePackages(
   candidates: readonly IndexedCandidate[],
+  repositoryRoot: string,
 ): Promise<WorkspacePackage[]> {
+  const indexedPaths = new Set(candidates.map((candidate) => candidate.relativePath));
+  const manifestsInWorkspace = workspaceManifestPaths(repositoryRoot, indexedPaths);
   const manifests = candidates.filter((candidate) =>
-    path.posix.basename(candidate.relativePath) === "package.json",
+    manifestsInWorkspace.has(candidate.relativePath),
   );
   const packages = await mapWithConcurrency(manifests, 16, async (candidate) => {
     try {
@@ -283,16 +308,21 @@ async function readCreatedAt(manifestPath: string, fallback: string): Promise<st
 
 export async function runIndex(options: IndexOptions = {}): Promise<IndexResult> {
   const indexStartedAt = performance.now();
+  const telemetry = new IndexTelemetry(options.onProgress);
   const repository = await detectRepository(options.startPath);
   const paths = workspacePaths(repository.root);
+  telemetry.start("ignore_config_loading");
   const config = await loadConfig(repository.root);
   const releaseLock = await acquireIndexLock(repository.root);
 
   try {
-    const discoveryStartedAt = performance.now();
     const ignoreRules = await loadIgnoreRules(repository.root);
+    telemetry.end("ignore_config_loading", { itemsProcessed: 1 });
+    const discoveryStartedAt = performance.now();
+    telemetry.start("repository_discovery");
     const discovered = await discoverFiles(repository.root, ignoreRules);
     const discoveryMs = performance.now() - discoveryStartedAt;
+    telemetry.end("repository_discovery", { itemsProcessed: discovered.length });
     let database: AtlasDatabase;
     try {
       database = openDatabase(paths.database);
@@ -309,9 +339,17 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
 
     try {
       const fingerprintStartedAt = performance.now();
+      telemetry.start("fingerprinting", discovered.length);
+      const storedState = getRepositoryStates(database);
       const existing = new Map(listFiles(database).map((file) => [file.path, file]));
-      const storedCommit = getRepositoryState(database, "last_indexed_commit");
+      const storedCommit = storedState.last_indexed_commit ?? null;
+      let gitFreshnessWorkMs = 0;
+      let gitStartedAt = performance.now();
       const gitState = await detectGitState(repository.root, storedCommit, repository.headCommit);
+      gitFreshnessWorkMs += performance.now() - gitStartedAt;
+      let fingerprintReadWorkMs = 0;
+      let fingerprintCacheHits = 0;
+      let fingerprintCacheMisses = 0;
       const candidates: IndexedCandidate[] = await mapWithConcurrency(
         discovered,
         32,
@@ -329,12 +367,20 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             previous.sizeBytes === file.sizeBytes &&
             previous.mtimeMs === file.mtimeMs &&
             previous.ctimeMs === file.ctimeMs;
+          let contentHash: string;
+          if (unchangedStat) {
+            fingerprintCacheHits += 1;
+            contentHash = previous.contentHash;
+          } else {
+            fingerprintCacheMisses += 1;
+            const readStartedAt = performance.now();
+            contentHash = await hashFile(file.absolutePath);
+            fingerprintReadWorkMs += performance.now() - readStartedAt;
+          }
           return {
             ...file,
             language,
-            contentHash: unchangedStat
-              ? previous.contentHash
-              : await hashFile(file.absolutePath),
+            contentHash,
             parseStatus: initialParseStatus(
               language,
               config.languages,
@@ -349,11 +395,22 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         },
       );
       candidates.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-      const workspacePackages = await loadWorkspacePackages(candidates);
+      const workspacePackages = await loadWorkspacePackages(candidates, repository.root);
 
+      gitStartedAt = performance.now();
       const fingerprint = await computeRepositoryFingerprint(repository, candidates, ignoreRules);
       const worktree = await computeWorktreeSignature(repository, ignoreRules);
+      gitFreshnessWorkMs += performance.now() - gitStartedAt;
       const fingerprintMs = performance.now() - fingerprintStartedAt;
+      telemetry.end("fingerprinting", {
+        itemsProcessed: candidates.length,
+        cacheHits: fingerprintCacheHits,
+        cacheMisses: fingerprintCacheMisses,
+        workMs: fingerprintReadWorkMs,
+      });
+      telemetry.record("git_status_freshness", gitFreshnessWorkMs, {
+        itemsProcessed: gitState.changes.length,
+      });
       const currentByPath = new Map(
         candidates.map((candidate) => [candidate.relativePath, candidate]),
       );
@@ -374,7 +431,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       });
       const storedConfigHash = getRepositoryState(database, "config_hash");
       const configChanged = storedConfigHash !== null && storedConfigHash !== configHash;
-      const fullRebuild =
+      let fullRebuild =
         options.full === true ||
         schemaChanged ||
         parserChanged ||
@@ -419,15 +476,22 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         ...unresolvedImporters,
       ];
       const dependencyNeighborhood = fullRebuild
-        ? new Set<string>()
+        ? {
+            files: new Set<string>(),
+            truncated: false,
+            reason: null,
+            visitedFiles: 0,
+            frontierFiles: 0,
+          } as const
         : findDependencyNeighborhood(
             database,
             dependencySeeds,
             config.limits.maxTraversalDepth,
             config.limits.maxInvalidationFiles,
           );
+      if (dependencyNeighborhood.truncated) fullRebuild = true;
       const invalidatedPaths = new Set(
-        [...unresolvedImporters, ...dependencyNeighborhood].filter(
+        [...unresolvedImporters, ...dependencyNeighborhood.files].filter(
           (filePath) =>
             currentByPath.has(filePath) && !directlyChangedPaths.has(filePath),
         ),
@@ -440,15 +504,31 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
               invalidatedPaths.has(candidate.relativePath),
           );
       const parsingStartedAt = performance.now();
+      telemetry.start("tree_sitter_parsing", changed.length);
+      let parsedItems = 0;
+      let parsedSymbolCount = 0;
+      let parsedReferenceCount = 0;
+      let parsingReadWorkMs = 0;
+      let parsingReadCount = 0;
+      let parserWorkMs = 0;
       await mapWithConcurrency(changed, 4, async (candidate) => {
         let content: string | null = null;
+        const loadContent = async (): Promise<string> => {
+          if (content !== null) return content;
+          const readStartedAt = performance.now();
+          content = await readFile(candidate.absolutePath, "utf8");
+          parsingReadWorkMs += performance.now() - readStartedAt;
+          parsingReadCount += 1;
+          return content;
+        };
         if (candidate.parseStatus === "pending_parse") {
           const adapter = getLanguageAdapter(candidate.language);
           if (adapter === null) {
             candidate.parseStatus = "unsupported_parser";
           } else {
             try {
-              content = await readFile(candidate.absolutePath, "utf8");
+              content = await loadContent();
+              const parserStartedAt = performance.now();
               candidate.parsedFile = adapter.parseFile({
                 repositoryId: repository.id,
                 repositoryRoot: repository.root,
@@ -457,6 +537,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
                 content,
                 contentHash: candidate.contentHash,
               });
+              parserWorkMs += performance.now() - parserStartedAt;
               candidate.parseStatus = candidate.parsedFile.errors.some(
                 (diagnostic) => diagnostic.severity === "error",
               )
@@ -475,7 +556,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           (candidate.language === null ||
             isLanguageEnabled(candidate.language, config.languages));
         if (frameworkSupported) {
-          content ??= await readFile(candidate.absolutePath, "utf8");
+          content = await loadContent();
           const extraction = extractFrameworkGraph({
             repositoryId: repository.id,
             repositoryRoot: repository.root,
@@ -498,7 +579,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           (candidate.language === null ||
             isLanguageEnabled(candidate.language, config.languages));
         if (intentSupported) {
-          content ??= await readFile(candidate.absolutePath, "utf8");
+          content = await loadContent();
           candidate.parsedFile = mergeArchitecturalIntent({
             repositoryId: repository.id,
             relativeFilePath: candidate.relativePath,
@@ -511,8 +592,33 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             candidate.parseStatus = candidate.parsedFile === null ? "metadata_only" : "parsed_intent";
           }
         }
+        parsedItems += 1;
+        parsedSymbolCount += candidate.parsedFile?.nodes.length ?? 0;
+        parsedReferenceCount += candidate.parsedFile?.unresolvedReferences.length ?? 0;
+        telemetry.progress("tree_sitter_parsing", parsedItems, changed.length);
       });
       const parsingMs = performance.now() - parsingStartedAt;
+      telemetry.end("tree_sitter_parsing", {
+        itemsProcessed: changed.length,
+        itemsSkipped: candidates.length - changed.length,
+        workMs: parserWorkMs,
+      });
+      telemetry.record("file_reading", fingerprintMs + (performance.now() - parsingStartedAt), {
+        workMs: fingerprintReadWorkMs + parsingReadWorkMs,
+        itemsProcessed: fingerprintCacheMisses + parsingReadCount,
+        itemsSkipped: fingerprintCacheHits,
+        cacheHits: fingerprintCacheHits,
+        cacheMisses: fingerprintCacheMisses + parsingReadCount,
+        inclusive: true,
+      });
+      telemetry.record("symbol_extraction", parserWorkMs, {
+        itemsProcessed: parsedSymbolCount,
+        inclusive: true,
+      });
+      telemetry.record("reference_extraction", parserWorkMs, {
+        itemsProcessed: parsedReferenceCount,
+        inclusive: true,
+      });
       const renamePlans = new Map<string, RenamePlan>();
       if (!fullRebuild) {
         for (const rename of changes.renamed) {
@@ -536,11 +642,18 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       }
       const indexedAt = new Date().toISOString();
       const changedPaths = new Set(changed.map((candidate) => candidate.relativePath));
-      const analysisRequired =
+      const structuralChanged =
         fullRebuild ||
         changed.length > 0 ||
         changes.deleted.length > 0 ||
         changes.renamed.length > 0;
+      const previousGenerations = generationsFromState(storedState);
+      const structuralGeneration = structuralChanged
+        ? nextStructuralGeneration(storedState)
+        : previousGenerations.structural;
+      const analysisRequired =
+        structuralChanged || previousGenerations.architecture !== structuralGeneration;
+      telemetry.start("git_history_analysis");
       const history =
         analysisRequired && config.analysis.gitHistory
           ? await collectRecentFileHistory(
@@ -548,6 +661,10 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
               new Set(candidates.map((candidate) => candidate.relativePath)),
             )
           : new Map();
+      telemetry.end("git_history_analysis", {
+        itemsProcessed: history.size,
+        itemsSkipped: analysisRequired && !config.analysis.gitHistory ? candidates.length : 0,
+      });
       const directoryPaths = getDirectoryPaths(candidates);
       const currentDirectoryPaths = new Set(directoryPaths);
       const existingDirectoryPaths = new Set(
@@ -571,8 +688,11 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             );
 
       let analysisResult: ArchitectureAnalysisResult | null = null;
+      const resolutionResult: { value: ResolutionResult | null } = { value: null };
+      let ftsIndexingMs = 0;
       const writeIndex = database.transaction(() => {
         if (fullRebuild) {
+          suspendNodeSearchSync(database);
           database.exec("DELETE FROM edges; DELETE FROM nodes; DELETE FROM files;");
         } else {
           for (const filePath of changes.deleted) {
@@ -850,7 +970,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           for (const edge of plan.renameEdges) upsertEdge(database, edge, indexedAt);
         }
 
-        resolveReferences(
+        resolutionResult.value = resolveReferences(
           database,
           repository.id,
           repository.root,
@@ -861,6 +981,12 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           ),
           indexedAt,
         );
+
+        if (fullRebuild) {
+          const ftsStartedAt = performance.now();
+          rebuildNodeSearch(database);
+          ftsIndexingMs = performance.now() - ftsStartedAt;
+        }
 
         const repositoryStates: Record<string, string> = {
           schema_version: String(SCHEMA_VERSION),
@@ -874,6 +1000,10 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           worktree_signature: worktree.signature,
           config_hash: configHash,
           working_tree_dirty: String(worktree.dirty),
+          structural_generation: String(structuralGeneration),
+          semantic_generation: String(structuralGeneration),
+          search_generation: String(structuralGeneration),
+          architecture_status: analysisRequired ? "pending" : "current",
           last_change_summary: JSON.stringify({
             added: changes.added.map((candidate) => candidate.relativePath),
             modified: changes.modified.map((candidate) => candidate.relativePath),
@@ -884,16 +1014,58 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
               similarity: rename.similarity,
             })),
             invalidated: [...invalidatedPaths].sort((left, right) => left.localeCompare(right)),
+            invalidationTruncated: dependencyNeighborhood.truncated,
+            invalidationTruncationReason: dependencyNeighborhood.reason,
             fullRebuild,
           }),
         };
         setRepositoryStates(database, repositoryStates);
       });
       const persistenceStartedAt = performance.now();
+      telemetry.start("database_writes");
       writeIndex();
       const persistenceMs = performance.now() - persistenceStartedAt;
+      telemetry.end("database_writes", {
+        itemsProcessed: changed.length,
+      });
+      telemetry.record("fts_search_indexing", fullRebuild ? ftsIndexingMs : persistenceMs, {
+        itemsProcessed: changed.flatMap((candidate) => candidate.parsedFile?.nodes ?? []).length,
+        inclusive: !fullRebuild,
+      });
+      const resolution = resolutionResult.value;
+      if (resolution !== null) {
+        telemetry.record("typescript_project_discovery", resolution.typescript.projectDiscoveryMs, {
+          itemsProcessed: resolution.typescript.projectsDiscovered,
+          cacheHits: resolution.typescript.projectCacheHits,
+        });
+        telemetry.record("typescript_program_creation", resolution.typescript.programCreationMs, {
+          itemsProcessed: resolution.typescript.programsCreated,
+        });
+        telemetry.record(
+          "typescript_semantic_resolution",
+          resolution.typescript.semanticResolutionMs,
+          {
+            itemsProcessed: resolution.typescript.semanticSourcesIndexed,
+            cacheHits: resolution.typescript.semanticCacheHits,
+            cacheMisses: resolution.typescript.semanticCacheMisses,
+          },
+        );
+        telemetry.record("module_import_resolution", resolution.typescript.moduleResolutionMs, {
+          itemsProcessed: resolution.typescript.moduleCacheMisses,
+          cacheHits: resolution.typescript.moduleCacheHits,
+          cacheMisses: resolution.typescript.moduleCacheMisses,
+        });
+        telemetry.record("candidate_generation", resolution.candidateGenerationMs, {
+          itemsProcessed: resolution.edges + resolution.unresolved + resolution.ambiguous,
+        });
+        telemetry.record("graph_resolution", resolution.graphResolutionMs, {
+          itemsProcessed: resolution.edges,
+        });
+      }
+      options.afterStructuralCommit?.();
 
       const architectureStartedAt = performance.now();
+      telemetry.start("architecture_domain_feature_analysis");
       if (analysisRequired) {
         analysisResult = runArchitectureAnalysis(
           database,
@@ -901,13 +1073,32 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           config,
           history,
           indexedAt,
+          structuralGeneration,
         );
-        setRepositoryStates(database, {
-          architecture_summary: JSON.stringify(analysisResult),
-        });
       }
       const architectureMs = performance.now() - architectureStartedAt;
+      if (analysisResult === null) {
+        telemetry.end("architecture_domain_feature_analysis", {
+          itemsSkipped: candidates.length,
+        });
+      } else {
+        telemetry.record(
+          "architecture_domain_feature_analysis",
+          analysisResult.timingsMs.graphLoading + analysisResult.timingsMs.domainFeatureAnalysis,
+          { itemsProcessed: candidates.length },
+        );
+        telemetry.record("community_detection", analysisResult.timingsMs.communityDetection, {
+          itemsProcessed: analysisResult.communities,
+        });
+        telemetry.record("cycle_detection", analysisResult.timingsMs.cycleDetection, {
+          itemsProcessed: analysisResult.cycles,
+        });
+        telemetry.record("hotspot_analysis", analysisResult.timingsMs.hotspotAnalysis, {
+          itemsProcessed: analysisResult.hotspots,
+        });
+      }
 
+      telemetry.start("finalization");
       const counts = database
         .prepare(
           `SELECT
@@ -982,6 +1173,9 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         updatedAt: indexedAt,
         languages,
       });
+      telemetry.end("finalization", { itemsProcessed: candidates.length });
+      const phaseMetrics = telemetry.finish();
+      const peakRssBytes = Math.max(...phaseMetrics.map((metric) => metric.peakRssBytes));
       await writeJsonAtomic(paths.state, {
         version: 1,
         fingerprint: fingerprint.fingerprint,
@@ -1001,6 +1195,16 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         cycles: counts.cycles,
         hotspots: counts.hotspots,
         findings: counts.findings,
+        generations: {
+          structural: structuralGeneration,
+          semantic: structuralGeneration,
+          search: structuralGeneration,
+          architecture: analysisRequired
+            ? structuralGeneration
+            : previousGenerations.architecture,
+        },
+        phaseMetrics,
+        peakRssBytes,
         changes: {
           updated: changed.length,
           added: changes.added.length,
@@ -1008,6 +1212,8 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           deleted: changes.deleted.length,
           renamed: changes.renamed.length,
           invalidated: invalidatedPaths.size,
+          invalidationTruncated: dependencyNeighborhood.truncated,
+          invalidationTruncationReason: dependencyNeighborhood.reason,
           fullRebuild,
           dirtyWorkingTree: gitState.dirty,
         },
@@ -1039,6 +1245,8 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         deletedFiles: changes.deleted.length,
         renamedFiles: changes.renamed.length,
         invalidatedFiles: invalidatedPaths.size,
+        invalidationTruncated: dependencyNeighborhood.truncated,
+        invalidationTruncationReason: dependencyNeighborhood.reason,
         fullRebuild,
         dirtyWorkingTree: gitState.dirty,
         nodes: counts.nodes,
@@ -1056,12 +1264,23 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         languages,
         frameworks,
         indexedAt,
+        generations: {
+          structural: structuralGeneration,
+          semantic: structuralGeneration,
+          search: structuralGeneration,
+          architecture: analysisRequired
+            ? structuralGeneration
+            : previousGenerations.architecture,
+        },
+        phaseMetrics,
+        peakRssBytes,
         timingsMs,
       };
     } finally {
       database.close();
     }
   } finally {
+    telemetry.finish();
     await releaseLock();
   }
 }

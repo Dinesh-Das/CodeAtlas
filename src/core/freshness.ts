@@ -41,6 +41,17 @@ function splitNullDelimited(output: string): string[] {
     .filter((entry) => entry.length > 0);
 }
 
+function assumeUnchangedPaths(output: string): string[] {
+  return output
+    .split("\0")
+    .flatMap((entry) => {
+      if (entry.length < 3 || entry[1] !== " ") return [];
+      return entry[0] === entry[0]?.toLowerCase()
+        ? [toPosixPath(entry.slice(2))]
+        : [];
+    });
+}
+
 async function cachedFileHash(absolutePath: string): Promise<string> {
   const metadata = await stat(absolutePath);
   const cached = worktreeHashCache.get(absolutePath);
@@ -79,10 +90,15 @@ export async function computeWorktreeSignature(
     runGit(repository.root, ["ls-files", "--others", "--exclude-standard", "-z"]),
     runGit(repository.root, ["status", "--porcelain=v1", "--untracked-files=all"]),
   ]);
+  // Keep the two complete-index reads sequential on Windows; concurrent Git readers can
+  // transiently fail while a checkout replaces the index file.
+  const indexOutput = await runGit(repository.root, ["ls-files", "--stage", "-z"]);
+  const verboseFiles = await runGit(repository.root, ["ls-files", "-v", "-z"]);
   const changedPaths = [...new Set([
     ...splitNullDelimited(trackedOutput),
     ...splitNullDelimited(stagedOutput),
     ...splitNullDelimited(untrackedOutput),
+    ...assumeUnchangedPaths(verboseFiles),
   ])]
     .filter((filePath) => !ignoreRules.ignores(filePath))
     .sort((left, right) => left.localeCompare(right));
@@ -95,7 +111,9 @@ export async function computeWorktreeSignature(
     }
   }));
   return {
-    signature: sha256(`${repository.headCommit}|${hashSortedEntries(entries)}`),
+    signature: sha256(
+      `${repository.headCommit}|${sha256(indexOutput)}|${hashSortedEntries(entries)}`,
+    ),
     dirty: statusOutput.length > 0,
     changedFiles: changedPaths.length,
   };

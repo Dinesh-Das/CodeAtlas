@@ -30,7 +30,9 @@ export function statusPacket(context: FreshContext): AnswerPacket {
       answer_context: { topic: "repository status", tool: "codeatlas_status" },
       facts: [
         {
-          statement: `Repository ${status.repository} is indexed and synchronized with the current working tree.`,
+          statement: status.synchronized
+            ? `Repository ${status.repository} is indexed and fully synchronized with the current working tree.`
+            : `Repository ${status.repository} has a current structural graph; one or more derived generations are stale.`,
           confidence: 1,
           source_type: "config",
           provenance: "verified",
@@ -64,10 +66,25 @@ export function statusPacket(context: FreshContext): AnswerPacket {
           provenance: "verified",
           evidence: statusEvidence,
         },
+        {
+          statement: `Generations are structural=${status.generations.structural}, semantic=${status.generations.semantic}, search=${status.generations.search}, architecture=${status.generations.architecture}.`,
+          confidence: 1,
+          source_type: "config",
+          provenance: "verified",
+          evidence: statusEvidence,
+        },
       ],
       relationships: [],
       source_snippets: [],
-      uncertainties: [],
+      uncertainties: status.synchronized
+        ? []
+        : [
+            {
+              description: "One or more derived index generations do not match the current structural generation.",
+              reason: "insufficient_evidence",
+              candidates: [],
+            },
+          ],
       pagination: { cursor: null, has_more: false },
     },
     context,

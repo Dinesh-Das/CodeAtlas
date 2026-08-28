@@ -53,6 +53,7 @@ interface ResolutionIssueRow {
   candidate_node_ids_json: string;
   file_path: string;
   line: number;
+  metadata_json: string;
 }
 
 const NODE_COLUMNS = `
@@ -138,6 +139,13 @@ export function freshnessFor(context: FreshContext): AnswerPacket["freshness"] {
     head_commit: context.status.headCommit,
     working_tree_checked: true,
     checked_at: context.checkedAt,
+    structural_generation: context.status.generations.structural,
+    semantic_generation: context.status.generations.semantic,
+    search_generation: context.status.generations.search,
+    architecture_generation: context.status.generations.architecture,
+    semantic_current: context.status.semanticSynchronized,
+    search_current: context.status.searchSynchronized,
+    architecture_current: context.status.architectureSynchronized,
   };
 }
 
@@ -305,7 +313,8 @@ export function uncertaintiesForNodes(
   const placeholders = uniqueIds.map(() => "?").join(", ");
   const rows = database
     .prepare(
-      `SELECT reason, reference_name, candidate_node_ids_json, file_path, line
+      `SELECT reason, reference_name, candidate_node_ids_json, file_path, line,
+              metadata_json
        FROM resolution_issues
        WHERE source_node_id IN (${placeholders})
        ORDER BY file_path, line, reason
@@ -323,6 +332,10 @@ export function uncertaintiesForNodes(
       candidates = [];
     }
     const reference = row.reference_name === null ? "a redacted reference" : row.reference_name;
+    const issueMetadata = parseMetadata(row.metadata_json);
+    const importClassification = typeof issueMetadata.import_classification === "string"
+      ? ` (${issueMetadata.import_classification})`
+      : "";
     return {
       description: `${reference} at ${row.file_path}:${row.line} was ${
         row.reason === "multi_candidate"
@@ -334,7 +347,7 @@ export function uncertaintiesForNodes(
               : row.reason === "unsupported_framework"
                 ? "handled only by generic AST analysis"
                 : "not resolved"
-      }.`,
+      }${importClassification}.`,
       reason: row.reason,
       candidates,
     };

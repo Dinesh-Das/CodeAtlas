@@ -231,6 +231,78 @@ const migrations: readonly Migration[] = [
         ON resolution_issues(source_node_id, reason);
     `,
   },
+  {
+    version: 6,
+    sql: `
+      DROP TRIGGER nodes_fts_insert;
+      DROP TRIGGER nodes_fts_delete;
+      DROP TRIGGER nodes_fts_update;
+      DROP TABLE nodes_fts;
+
+      CREATE VIRTUAL TABLE nodes_fts USING fts5(
+        name,
+        qualified_name,
+        file_path,
+        signature,
+        metadata_json,
+        content = 'nodes',
+        content_rowid = 'rowid'
+      );
+
+      CREATE TRIGGER nodes_fts_insert AFTER INSERT ON nodes BEGIN
+        INSERT INTO nodes_fts(
+          rowid, name, qualified_name, file_path, signature, metadata_json
+        ) VALUES (
+          new.rowid,
+          new.name,
+          coalesce(new.qualified_name, ''),
+          coalesce(new.file_path, ''),
+          coalesce(new.signature, ''),
+          coalesce(new.metadata_json, '')
+        );
+      END;
+
+      CREATE TRIGGER nodes_fts_delete AFTER DELETE ON nodes BEGIN
+        INSERT INTO nodes_fts(
+          nodes_fts, rowid, name, qualified_name, file_path, signature, metadata_json
+        ) VALUES (
+          'delete',
+          old.rowid,
+          old.name,
+          coalesce(old.qualified_name, ''),
+          coalesce(old.file_path, ''),
+          coalesce(old.signature, ''),
+          coalesce(old.metadata_json, '')
+        );
+      END;
+
+      CREATE TRIGGER nodes_fts_update AFTER UPDATE ON nodes BEGIN
+        INSERT INTO nodes_fts(
+          nodes_fts, rowid, name, qualified_name, file_path, signature, metadata_json
+        ) VALUES (
+          'delete',
+          old.rowid,
+          old.name,
+          coalesce(old.qualified_name, ''),
+          coalesce(old.file_path, ''),
+          coalesce(old.signature, ''),
+          coalesce(old.metadata_json, '')
+        );
+        INSERT INTO nodes_fts(
+          rowid, name, qualified_name, file_path, signature, metadata_json
+        ) VALUES (
+          new.rowid,
+          new.name,
+          coalesce(new.qualified_name, ''),
+          coalesce(new.file_path, ''),
+          coalesce(new.signature, ''),
+          coalesce(new.metadata_json, '')
+        );
+      END;
+
+      INSERT INTO nodes_fts(nodes_fts) VALUES ('rebuild');
+    `,
+  },
 ];
 
 export function runMigrations(database: Database.Database): void {

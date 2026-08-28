@@ -82,14 +82,29 @@ export function findDependencyCycles(
   repositoryId: string,
   graph: FileGraph,
 ): ArchitectureFinding[] {
-  return stronglyConnectedComponents(graph).map((files) => {
-    const members = new Set(files);
-    const internalLinks = graph.links.filter(
-      (link) => members.has(link.sourceFile) && members.has(link.targetFile),
-    );
+  const components = stronglyConnectedComponents(graph);
+  const componentByFile = new Map<string, number>();
+  const linksByComponent = components.map(() => [] as FileGraph["links"]);
+  for (const [componentId, files] of components.entries()) {
+    for (const filePath of files) componentByFile.set(filePath, componentId);
+  }
+  for (const link of graph.links) {
+    const sourceComponent = componentByFile.get(link.sourceFile);
+    if (
+      sourceComponent !== undefined &&
+      sourceComponent === componentByFile.get(link.targetFile)
+    ) {
+      linksByComponent[sourceComponent]!.push(link);
+    }
+  }
+
+  return components.map((files, componentId) => {
+    const internalLinks = linksByComponent[componentId]!;
     const evidenceLink = internalLinks[0];
     const filePath = evidenceLink?.filePath ?? files[0]!;
     const line = evidenceLink?.line ?? 1;
+    let confidence = 0.95;
+    for (const link of internalLinks) confidence = Math.min(confidence, link.confidence);
     return {
       id: sha256(`${repositoryId}:finding:cycle:${files.join("\n")}`),
       findingType: "circular_dependency",
@@ -98,7 +113,7 @@ export function findDependencyCycles(
       filePath,
       line,
       sourceType: "heuristic",
-      confidence: Math.min(...internalLinks.map((link) => link.confidence), 0.95),
+      confidence,
       evidenceNodeIds: files
         .map((member) => graph.fileNodes.get(member)?.id)
         .filter((id): id is string => id !== undefined),

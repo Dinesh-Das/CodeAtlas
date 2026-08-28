@@ -31,11 +31,7 @@ function buildWeightedGraph(graph: FileGraph): WeightedGraph {
   return { adjacency, degree, totalEdgeWeight: totalDegree / 2 };
 }
 
-/**
- * Deterministic first-phase Louvain optimization. Unlike connected components, this
- * finds dense groups inside a connected application graph. Keeping the first phase
- * avoids an aggregation graph and gives file-level communities stable identities.
- */
+/** Deterministic Louvain local-moving phase. */
 function optimizeModularity(weighted: WeightedGraph): ReadonlyMap<string, string> {
   const nodes = [...weighted.adjacency.keys()].sort((left, right) => left.localeCompare(right));
   const communityByNode = new Map(nodes.map((node) => [node, node]));
@@ -80,11 +76,58 @@ function optimizeModularity(weighted: WeightedGraph): ReadonlyMap<string, string
   return communityByNode;
 }
 
+function aggregateGraph(
+  weighted: WeightedGraph,
+  communityByNode: ReadonlyMap<string, string>,
+): WeightedGraph {
+  const communities = [...new Set(communityByNode.values())].sort((left, right) =>
+    left.localeCompare(right),
+  );
+  const adjacency = new Map<string, Map<string, number>>(
+    communities.map((community) => [community, new Map()]),
+  );
+  // The source graph stores both directions. Retaining both directions here also retains
+  // internal community weight as a self-loop, which is required at the next Louvain level.
+  for (const [source, neighbors] of weighted.adjacency) {
+    const sourceCommunity = communityByNode.get(source)!;
+    const aggregated = adjacency.get(sourceCommunity)!;
+    for (const [target, weight] of neighbors) {
+      const targetCommunity = communityByNode.get(target)!;
+      aggregated.set(targetCommunity, (aggregated.get(targetCommunity) ?? 0) + weight);
+    }
+  }
+  const degree = new Map<string, number>();
+  let totalDegree = 0;
+  for (const [community, neighbors] of adjacency) {
+    const value = [...neighbors.values()].reduce((sum, weight) => sum + weight, 0);
+    degree.set(community, value);
+    totalDegree += value;
+  }
+  return { adjacency, degree, totalEdgeWeight: totalDegree / 2 };
+}
+
+/** Full deterministic multilevel Louvain: local move, aggregate, and repeat. */
+function multilevelCommunities(weighted: WeightedGraph): ReadonlyMap<string, string> {
+  const originals = [...weighted.adjacency.keys()].sort((left, right) => left.localeCompare(right));
+  const currentByOriginal = new Map(originals.map((node) => [node, node]));
+  let current = weighted;
+  for (let level = 0; level < 20; level += 1) {
+    const optimized = optimizeModularity(current);
+    for (const original of originals) {
+      currentByOriginal.set(original, optimized.get(currentByOriginal.get(original)!)!);
+    }
+    const communityCount = new Set(optimized.values()).size;
+    if (communityCount === current.adjacency.size || communityCount <= 1) break;
+    current = aggregateGraph(current, optimized);
+  }
+  return currentByOriginal;
+}
+
 export function findDependencyCommunities(
   repositoryId: string,
   graph: FileGraph,
 ): CommunityMembership[] {
-  const communities = optimizeModularity(buildWeightedGraph(graph));
+  const communities = multilevelCommunities(buildWeightedGraph(graph));
   const membersByCommunity = new Map<string, string[]>();
   for (const [filePath, community] of communities) {
     const members = membersByCommunity.get(community) ?? [];

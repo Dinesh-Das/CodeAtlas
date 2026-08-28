@@ -1,10 +1,11 @@
 import type { GraphNode } from "../graph/types.js";
 import { provenanceForSource } from "../graph/types.js";
 import type { AtlasDatabase } from "./database.js";
+import { cachedStatement } from "./statements.js";
 
 export function upsertNode(database: AtlasDatabase, node: GraphNode, timestamp: string): void {
-  database
-    .prepare(
+  cachedStatement(
+    database,
       `INSERT INTO nodes(
         id, kind, name, qualified_name, file_path, language,
         start_line, start_column, end_line, end_column,
@@ -34,8 +35,7 @@ export function upsertNode(database: AtlasDatabase, node: GraphNode, timestamp: 
         confidence = excluded.confidence,
         metadata_json = excluded.metadata_json,
         updated_at = excluded.updated_at`,
-    )
-    .run({
+  ).run({
       ...node,
       provenance: node.provenance ?? provenanceForSource(node.sourceType),
       metadataJson: JSON.stringify(node.metadata),
@@ -44,15 +44,14 @@ export function upsertNode(database: AtlasDatabase, node: GraphNode, timestamp: 
 }
 
 export function deleteNodesForFile(database: AtlasDatabase, relativeFilePath: string): void {
-  database
-    .prepare(
+  cachedStatement(
+    database,
       `DELETE FROM nodes
        WHERE file_path = ? AND kind NOT IN ('directory', 'feature', 'domain')`,
-    )
-    .run(relativeFilePath);
+  ).run(relativeFilePath);
 }
 
 export function deleteNodesById(database: AtlasDatabase, nodeIds: readonly string[]): void {
-  const statement = database.prepare("DELETE FROM nodes WHERE id = ?");
+  const statement = cachedStatement(database, "DELETE FROM nodes WHERE id = ?");
   for (const nodeId of nodeIds) statement.run(nodeId);
 }

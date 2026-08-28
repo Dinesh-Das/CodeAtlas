@@ -136,18 +136,35 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
         severity: unsupported.length === 0 ? "info" : "warning",
       });
 
-      const unresolvedImports = database
+      const unresolvedImportCategories = database
         .prepare(
-          `SELECT count(*) FROM resolution_issues
-           WHERE reference_kind = 'import' AND reason = 'unresolved_reference'`,
+          `SELECT coalesce(
+                    json_extract(metadata_json, '$.import_classification'),
+                    'uncategorized'
+                  ) AS category,
+                  count(*) AS count
+           FROM resolution_issues
+           WHERE reference_kind = 'import'
+             AND reason IN ('unresolved_reference', 'multi_candidate')
+           GROUP BY category ORDER BY category`,
         )
-        .pluck()
-        .get() as number;
+        .all() as Array<{ category: string; count: number }>;
+      const unresolvedImports = unresolvedImportCategories.reduce(
+        (sum, category) => sum + category.count,
+        0,
+      );
+      const actionableImports = unresolvedImportCategories
+        .filter((entry) => entry.category !== "external_dependency")
+        .reduce((sum, category) => sum + category.count, 0);
       checks.push({
         name: "Unresolved imports",
-        ok: unresolvedImports === 0,
-        detail: unresolvedImports === 0 ? "none" : `${unresolvedImports} unresolved import references`,
-        severity: unresolvedImports === 0 ? "info" : "warning",
+        ok: actionableImports === 0,
+        detail: unresolvedImports === 0
+          ? "none"
+          : `${unresolvedImports} categorized references (${unresolvedImportCategories
+              .map((entry) => `${entry.category}=${entry.count}`)
+              .join(", ")}); actionable_internal=${actionableImports}`,
+        severity: actionableImports === 0 ? "info" : "warning",
       });
 
       const dynamicRelationships = database
@@ -169,19 +186,81 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
         severity: dynamicRelationships === 0 ? "info" : "warning",
       });
 
-      const indexingFailures = database
+      const relationshipQuality = database
         .prepare(
-          `SELECT count(*) FROM files
-           WHERE parse_status IN ('parsed_with_errors', 'parse_error')`,
+          `SELECT
+             count(*) AS total,
+             coalesce(sum(CASE WHEN provenance_category = 'verified' THEN 1 ELSE 0 END), 0) AS verified,
+             coalesce(sum(CASE WHEN provenance_category = 'inferred' THEN 1 ELSE 0 END), 0) AS inferred,
+             coalesce(sum(CASE WHEN provenance_category = 'dynamic' THEN 1 ELSE 0 END), 0) AS dynamic
+           FROM edges`,
         )
+        .get() as { total: number; verified: number; inferred: number; dynamic: number };
+      const unresolvedRelationships = database
+        .prepare("SELECT count(*) FROM resolution_issues")
         .pluck()
         .get() as number;
+      const denominator = relationshipQuality.total + unresolvedRelationships;
+      const percentage = (value: number): string =>
+        denominator === 0 ? "0.0" : ((value / denominator) * 100).toFixed(1);
+      checks.push({
+        name: "Relationship quality",
+        ok: true,
+        detail:
+          `verified=${relationshipQuality.verified} (${percentage(relationshipQuality.verified)}%), ` +
+          `inferred=${relationshipQuality.inferred} (${percentage(relationshipQuality.inferred)}%), ` +
+          `dynamic=${relationshipQuality.dynamic} (${percentage(relationshipQuality.dynamic)}%), ` +
+          `unresolved=${unresolvedRelationships} (${percentage(unresolvedRelationships)}%)`,
+        severity: "info",
+      });
+
+      const parserFailureRows = database
+        .prepare(
+          `SELECT path, parse_status AS parseStatus FROM files
+           WHERE parse_status IN ('parsed_with_errors', 'parse_error')
+           ORDER BY path`,
+        )
+        .all() as Array<{ path: string; parseStatus: string }>;
+      const indexingFailures = parserFailureRows.length;
+      const generatedFailures = parserFailureRows.filter((row) =>
+        /(?:^|\/)(?:generated|__generated__|gen)(?:\/|$)/iu.test(row.path),
+      ).length;
+      const importantFailures = indexingFailures - generatedFailures;
       checks.push({
         name: "Indexing failures",
         ok: indexingFailures === 0,
-        detail: indexingFailures === 0 ? "none" : `${indexingFailures} files have parser failures`,
+        detail: indexingFailures === 0
+          ? "none"
+          : `${indexingFailures} files have parser failures (important_source=${importantFailures}, generated=${generatedFailures}): ${parserFailureRows
+              .slice(0, 20)
+              .map((row) => `${row.path}[${row.parseStatus}]`)
+              .join(", ")}${indexingFailures > 20 ? ", …" : ""}`,
         severity: indexingFailures === 0 ? "info" : "warning",
       });
+
+      try {
+        const storage = database
+          .prepare(
+            `SELECT name, sum(pgsize) AS bytes
+             FROM dbstat GROUP BY name ORDER BY bytes DESC LIMIT 8`,
+          )
+          .all() as Array<{ name: string; bytes: number }>;
+        checks.push({
+          name: "Database storage",
+          ok: true,
+          detail: storage
+            .map((entry) => `${entry.name}=${(entry.bytes / 1024 / 1024).toFixed(1)}MB`)
+            .join(", "),
+          severity: "info",
+        });
+      } catch {
+        checks.push({
+          name: "Database storage",
+          ok: true,
+          detail: "SQLite dbstat is unavailable on this runtime",
+          severity: "info",
+        });
+      }
 
       const foreignKeyFailures = (database.pragma("foreign_key_check") as unknown[]).length;
       const invalidProvenance = database

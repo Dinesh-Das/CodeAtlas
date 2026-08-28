@@ -174,7 +174,7 @@ function searchNodes(
            nodes.provenance_category AS provenance, nodes.confidence,
            nodes.metadata_json AS metadataJson
          FROM nodes_fts
-         JOIN nodes ON nodes.id = nodes_fts.id
+         JOIN nodes ON nodes.rowid = nodes_fts.rowid
          WHERE nodes_fts MATCH ? AND nodes.kind IN (${kinds})
          ORDER BY
            CASE
@@ -428,22 +428,28 @@ function traverse(
   maxNodes: number,
 ): TraversalResult {
   const edgePlaceholders = edgeTypes.map(() => "?").join(", ");
-  const queue: Array<{
+  type TraversalState = {
     nodeId: string;
     depth: number;
     confidence: number;
     deterministic: boolean;
-  }> = [{ nodeId: startNodeId, depth: 0, confidence: 1, deterministic: true }];
+  };
+  let frontier: TraversalState[] = [
+    { nodeId: startNodeId, depth: 0, confidence: 1, deterministic: true },
+  ];
   const visitedDepth = new Map<string, number>([[startNodeId, 0]]);
   const seenEdges = new Set<string>();
   const items: TraversalItem[] = [];
   let truncated = false;
 
-  while (queue.length > 0 && items.length < maxNodes) {
-    const current = queue.shift()!;
-    if (current.depth >= maxDepth) continue;
-    const predicate = direction === "outgoing" ? "source_node_id = ?" : "target_node_id = ?";
-    const edges = database
+  while (frontier.length > 0 && items.length < maxNodes) {
+    const active = frontier.filter((state) => state.depth < maxDepth);
+    if (active.length === 0) break;
+    const stateByNodeId = new Map(active.map((state) => [state.nodeId, state]));
+    const nodePlaceholders = active.map(() => "?").join(", ");
+    const column = direction === "outgoing" ? "source_node_id" : "target_node_id";
+    const remaining = maxNodes - items.length;
+    const edgeRows = database
       .prepare(
         `SELECT
            id, source_node_id AS sourceNodeId, target_node_id AS targetNodeId,
@@ -451,18 +457,20 @@ function traverse(
            provenance_category AS provenance, confidence,
            file_path AS filePath, line, metadata_json AS metadataJson
          FROM edges
-         WHERE ${predicate} AND edge_type IN (${edgePlaceholders})
+         WHERE ${column} IN (${nodePlaceholders})
+           AND edge_type IN (${edgePlaceholders})
          ORDER BY edge_type, source_node_id, target_node_id, id
          LIMIT ?`,
       )
-      .all(current.nodeId, ...edgeTypes, Math.max(1, maxNodes - items.length)) as StoredEdge[];
+      .all(...active.map((state) => state.nodeId), ...edgeTypes, remaining + 1) as StoredEdge[];
+    if (edgeRows.length > remaining) truncated = true;
+    const nextFrontier = new Map<string, TraversalState>();
 
-    for (const edge of edges) {
+    for (const edge of edgeRows.slice(0, remaining)) {
       if (seenEdges.has(edge.id)) continue;
-      if (items.length >= maxNodes) {
-        truncated = true;
-        break;
-      }
+      const currentNodeId = direction === "outgoing" ? edge.sourceNodeId : edge.targetNodeId;
+      const current = stateByNodeId.get(currentNodeId);
+      if (current === undefined) continue;
       seenEdges.add(edge.id);
       const nextNodeId = direction === "outgoing" ? edge.targetNodeId : edge.sourceNodeId;
       const depth = current.depth + 1;
@@ -477,11 +485,12 @@ function traverse(
       const previousDepth = visitedDepth.get(nextNodeId);
       if (previousDepth === undefined || depth < previousDepth) {
         visitedDepth.set(nextNodeId, depth);
-        queue.push({ nodeId: nextNodeId, depth, confidence, deterministic });
+        nextFrontier.set(nextNodeId, { nodeId: nextNodeId, depth, confidence, deterministic });
       }
     }
+    frontier = [...nextFrontier.values()];
   }
-  if (queue.length > 0) truncated = true;
+  if (items.length >= maxNodes && frontier.length > 0) truncated = true;
   return { items, nodeIds: [...visitedDepth.keys()], truncated };
 }
 
@@ -510,6 +519,7 @@ function traceTraverse(
   }];
   const items = new Map<string, TraversalItem>();
   const visitedNodes = new Set<string>([startNodeId]);
+  const adjacency = new Map<string, StoredEdge[]>();
   let completedPaths = 0;
   let truncated = false;
 
@@ -519,23 +529,38 @@ function traceTraverse(
       completedPaths += 1;
       continue;
     }
-    const outgoing = database
-      .prepare(
-        `SELECT
-           id, source_node_id AS sourceNodeId, target_node_id AS targetNodeId,
-           edge_type AS edgeType, source_type AS sourceType,
-           provenance_category AS provenance, confidence,
-           file_path AS filePath, line, metadata_json AS metadataJson
-         FROM edges
-         WHERE source_node_id = ? AND edge_type IN (${edgePlaceholders})
-         ORDER BY edge_type, target_node_id, id
-         LIMIT ?`,
-      )
-      .all(
-        current.nodeId,
-        ...TRACE_EDGE_TYPES,
-        Math.max(1, maxNodes - visitedNodes.size + 1),
-      ) as StoredEdge[];
+    if (!adjacency.has(current.nodeId)) {
+      const pendingNodeIds = [...new Set([current, ...queue]
+        .map((state) => state.nodeId)
+        .filter((nodeId) => !adjacency.has(nodeId)))];
+      const nodePlaceholders = pendingNodeIds.map(() => "?").join(", ");
+      const outgoingRows = database
+        .prepare(
+          `WITH ranked_edges AS (
+             SELECT
+               id, source_node_id AS sourceNodeId, target_node_id AS targetNodeId,
+               edge_type AS edgeType, source_type AS sourceType,
+               provenance_category AS provenance, confidence,
+               file_path AS filePath, line, metadata_json AS metadataJson,
+               row_number() OVER (
+                 PARTITION BY source_node_id
+                 ORDER BY edge_type, target_node_id, id
+               ) AS edgeRank
+             FROM edges
+             WHERE source_node_id IN (${nodePlaceholders})
+               AND edge_type IN (${edgePlaceholders})
+           )
+           SELECT id, sourceNodeId, targetNodeId, edgeType, sourceType, provenance,
+                  confidence, filePath, line, metadataJson
+           FROM ranked_edges
+           WHERE edgeRank <= ?
+           ORDER BY sourceNodeId, edgeType, targetNodeId, id`,
+        )
+        .all(...pendingNodeIds, ...TRACE_EDGE_TYPES, maxNodes) as StoredEdge[];
+      for (const nodeId of pendingNodeIds) adjacency.set(nodeId, []);
+      for (const edge of outgoingRows) adjacency.get(edge.sourceNodeId)!.push(edge);
+    }
+    const outgoing = adjacency.get(current.nodeId) ?? [];
     const nextEdges = outgoing.filter((edge) => !current.visited.has(edge.targetNodeId));
     if (nextEdges.length === 0) {
       completedPaths += 1;
@@ -574,8 +599,9 @@ function traversalUncertainties(
   database: AtlasDatabase,
   result: TraversalResult,
   maxResults: number,
+  relevantNodeIds: readonly string[] = result.nodeIds,
 ): AnswerPacket["uncertainties"] {
-  const uncertainties = uncertaintiesForNodes(database, result.nodeIds, maxResults);
+  const uncertainties = uncertaintiesForNodes(database, relevantNodeIds, maxResults);
   const heuristicEdges = result.items
     .filter((item) => item.edge.sourceType === "heuristic" || item.edge.confidence < 1)
     .flatMap((item) => [item.edge.sourceNodeId, item.edge.targetNodeId]);
@@ -651,6 +677,7 @@ export function tracePacket(context: FreshContext, input: TraceInput): AnswerPac
       database,
       result,
       context.config.limits.maxMcpResultNodes,
+      [resolution.node.id, ...reachedIds],
     );
     if (result.items.length === 0) {
       uncertainties.push({
@@ -759,6 +786,7 @@ export function impactPacket(context: FreshContext, input: ImpactInput): AnswerP
       database,
       result,
       context.config.limits.maxMcpResultNodes,
+      [resolution.node.id, ...affectedIds],
     );
     if (combined.length === 0) {
       uncertainties.push({

@@ -18,7 +18,7 @@ export function searchNodes(database: AtlasDatabase, query: string, limit = 50):
         nodes.file_path AS filePath,
         bm25(nodes_fts) AS rank
       FROM nodes_fts
-      JOIN nodes ON nodes.id = nodes_fts.id
+      JOIN nodes ON nodes.rowid = nodes_fts.rowid
       WHERE nodes_fts MATCH ?
       ORDER BY rank
       LIMIT ?`,

@@ -182,11 +182,20 @@ export function architectureOverviewPacket(
                   ) AS metadata_json
            FROM dependency_communities
            GROUP BY community_id
+         ), ranked_items AS (
+           SELECT overview_items.*,
+                  row_number() OVER (PARTITION BY kind ORDER BY name, id) AS kind_rank
+           FROM overview_items
          )
          SELECT id, kind, name, file_path, start_line, source_type, provenance,
                 confidence, metadata_json
-         FROM overview_items
-         ORDER BY CASE kind
+         FROM ranked_items
+         WHERE kind_rank <= CASE kind
+           WHEN 'domain' THEN 8 WHEN 'feature' THEN 10
+           WHEN 'package' THEN 10 WHEN 'entrypoint' THEN 8
+           WHEN 'dependency_community' THEN 5
+           WHEN 'api_route' THEN 10 ELSE 10 END
+         ORDER BY kind_rank, CASE kind
            WHEN 'domain' THEN 1 WHEN 'feature' THEN 2
            WHEN 'package' THEN 3 WHEN 'entrypoint' THEN 4
            WHEN 'dependency_community' THEN 5

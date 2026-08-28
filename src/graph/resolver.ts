@@ -1,4 +1,5 @@
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { sha256 } from "../core/hashing.js";
 import type { ParsedFile, UnresolvedReference } from "../parser/parser.js";
 import type { AtlasDatabase } from "../storage/database.js";
@@ -6,7 +7,10 @@ import { upsertEdge } from "../storage/edges.js";
 import { upsertResolutionIssue } from "../storage/resolution-issues.js";
 import { createEdgeId } from "./ids.js";
 import type { EdgeType, GraphEdge, NodeKind, SourceType } from "./types.js";
-import { TypeScriptProjectResolver } from "./typescript-resolution.js";
+import {
+  TypeScriptProjectResolver,
+  type TypeScriptResolutionMetrics,
+} from "./typescript-resolution.js";
 
 interface StoredNode {
   id: string;
@@ -14,6 +18,10 @@ interface StoredNode {
   name: string;
   qualifiedName: string | null;
   filePath: string | null;
+  startLine: number | null;
+  startColumn: number | null;
+  endLine: number | null;
+  endColumn: number | null;
 }
 
 interface NodeRow {
@@ -22,6 +30,10 @@ interface NodeRow {
   name: string;
   qualified_name: string | null;
   file_path: string | null;
+  start_line: number | null;
+  start_column: number | null;
+  end_line: number | null;
+  end_column: number | null;
 }
 
 interface ParsedInput {
@@ -46,6 +58,8 @@ interface SymbolIndexes {
   byFile: ReadonlyMap<string, readonly StoredNode[]>;
   byFileAndName: ReadonlyMap<string, readonly StoredNode[]>;
   byFileAndQualifiedName: ReadonlyMap<string, readonly StoredNode[]>;
+  byFileAndStart: ReadonlyMap<string, readonly StoredNode[]>;
+  byFileLineAndName: ReadonlyMap<string, readonly StoredNode[]>;
 }
 
 type PythonModuleIndex = ReadonlyMap<string, readonly string[]>;
@@ -66,6 +80,9 @@ export interface ResolutionResult {
   edges: number;
   unresolved: number;
   ambiguous: number;
+  candidateGenerationMs: number;
+  graphResolutionMs: number;
+  typescript: TypeScriptResolutionMetrics;
 }
 
 const SYMBOL_KINDS = new Set<NodeKind>([
@@ -87,17 +104,61 @@ const JAVASCRIPT_EXTENSIONS = [
   ".cjs",
 ] as const;
 
-function loadNodes(database: AtlasDatabase): StoredNode[] {
-  const rows = database
-    .prepare("SELECT id, kind, name, qualified_name, file_path FROM nodes ORDER BY id")
-    .all() as NodeRow[];
+const STORED_NODE_COLUMNS = `
+  id, kind, name, qualified_name, file_path,
+  start_line, start_column, end_line, end_column
+`;
+
+function storedNodes(rows: readonly NodeRow[]): StoredNode[] {
   return rows.map((row) => ({
     id: row.id,
     kind: row.kind,
     name: row.name,
     qualifiedName: row.qualified_name,
     filePath: row.file_path,
+    startLine: row.start_line,
+    startColumn: row.start_column,
+    endLine: row.end_line,
+    endColumn: row.end_column,
   }));
+}
+
+function loadModuleNodes(database: AtlasDatabase): StoredNode[] {
+  return storedNodes(
+    database
+      .prepare(
+        `SELECT ${STORED_NODE_COLUMNS}
+         FROM nodes WHERE kind IN ('file', 'module') ORDER BY id`,
+      )
+      .all() as NodeRow[],
+  );
+}
+
+function loadRelevantNodes(
+  database: AtlasDatabase,
+  names: ReadonlySet<string>,
+  filePaths: ReadonlySet<string>,
+  nodeIds: ReadonlySet<string>,
+): StoredNode[] {
+  const rows = new Map<string, NodeRow>();
+  const collect = (column: "name" | "file_path" | "id", values: readonly string[]): void => {
+    for (let offset = 0; offset < values.length; offset += 300) {
+      const chunk = values.slice(offset, offset + 300);
+      if (chunk.length === 0) continue;
+      const placeholders = chunk.map(() => "?").join(", ");
+      const selected = database
+        .prepare(
+          `SELECT ${STORED_NODE_COLUMNS}
+           FROM nodes WHERE ${column} IN (${placeholders}) ORDER BY id`,
+        )
+        .all(...chunk) as NodeRow[];
+      for (const row of selected) rows.set(row.id, row);
+    }
+  };
+  collect("name", [...names]);
+  collect("file_path", [...filePaths]);
+  collect("id", [...nodeIds]);
+  return storedNodes([...rows.values()]);
 }
 
 function uniqueNodes(nodes: readonly StoredNode[]): StoredNode[] {
@@ -121,6 +182,8 @@ function buildSymbolIndexes(nodes: readonly StoredNode[]): SymbolIndexes {
   const byFile = new Map<string, StoredNode[]>();
   const byFileAndName = new Map<string, StoredNode[]>();
   const byFileAndQualifiedName = new Map<string, StoredNode[]>();
+  const byFileAndStart = new Map<string, StoredNode[]>();
+  const byFileLineAndName = new Map<string, StoredNode[]>();
   for (const node of nodes) {
     addToIndex(byName, node.name, node);
     if (node.filePath === null) continue;
@@ -129,8 +192,19 @@ function buildSymbolIndexes(nodes: readonly StoredNode[]): SymbolIndexes {
     if (node.qualifiedName !== null) {
       addToIndex(byFileAndQualifiedName, `${node.filePath}\0${node.qualifiedName}`, node);
     }
+    if (node.startLine !== null && node.startColumn !== null) {
+      addToIndex(byFileAndStart, `${node.filePath}\0${node.startLine}\0${node.startColumn}`, node);
+      addToIndex(byFileLineAndName, `${node.filePath}\0${node.startLine}\0${node.name}`, node);
+    }
   }
-  return { byName, byFile, byFileAndName, byFileAndQualifiedName };
+  return {
+    byName,
+    byFile,
+    byFileAndName,
+    byFileAndQualifiedName,
+    byFileAndStart,
+    byFileLineAndName,
+  };
 }
 
 function buildPythonModuleIndex(modulePaths: Iterable<string>): PythonModuleIndex {
@@ -357,6 +431,46 @@ function importedCandidates(
   );
 }
 
+function semanticCandidates(
+  indexes: SymbolIndexes,
+  semantic: ReturnType<TypeScriptProjectResolver["resolveCall"]> & {},
+  kinds: ReadonlySet<NodeKind>,
+): StoredNode[] {
+  const exactPosition = (
+    indexes.byFileAndStart.get(
+      `${semantic.filePath}\0${semantic.startLine}\0${semantic.startColumn}`,
+    ) ?? []
+  ).filter((node) => kinds.has(node.kind));
+  if (exactPosition.length === 1) return exactPosition;
+
+  if (semantic.qualifiedName !== null) {
+    const qualified = (
+      indexes.byFileAndQualifiedName.get(
+        `${semantic.filePath}\0${semantic.qualifiedName}`,
+      ) ?? []
+    ).filter((node) => kinds.has(node.kind));
+    if (qualified.length === 1) return qualified;
+  }
+
+  const sameLine = (
+    indexes.byFileLineAndName.get(
+      `${semantic.filePath}\0${semantic.startLine}\0${semantic.name}`,
+    ) ?? []
+  ).filter(
+    (node) =>
+      kinds.has(node.kind) &&
+      node.startColumn !== null &&
+      node.endLine !== null &&
+      node.endColumn !== null &&
+      node.startColumn <= semantic.startColumn &&
+      (
+        node.endLine > semantic.endLine ||
+        (node.endLine === semantic.endLine && node.endColumn >= semantic.endColumn)
+      ),
+  );
+  return sameLine.length === 1 ? sameLine : [];
+}
+
 function symbolCandidates(
   reference: UnresolvedReference,
   source: StoredNode,
@@ -421,7 +535,7 @@ function symbolCandidates(
     ) {
       const semantic = projectResolver.resolveCall(reference);
       if (semantic !== null) {
-        const compiler = byNameInFile(indexes, semantic.filePath, semantic.name, kinds);
+        const compiler = semanticCandidates(indexes, semantic, kinds);
         if (compiler.length > 0) return { nodes: compiler, exact: true, sourceType: "compiler" };
       }
       const polymorphicCandidates = (indexes.byName.get(last) ?? [])
@@ -430,14 +544,22 @@ function symbolCandidates(
             return false;
           }
           return modulesByFile.get(node.filePath) !== undefined;
-        })
-        .slice(0, MAX_DYNAMIC_CANDIDATES);
-      const polymorphic = distances.reachableCandidates(
+        });
+      const polymorphic = distances.rankCandidates(
         reference.evidence.file,
         polymorphicCandidates,
         modulesByFile,
-      );
-      if (polymorphic.length > 0) return { nodes: polymorphic, exact: false };
+        true,
+      ).slice(0, MAX_DYNAMIC_CANDIDATES);
+      const proximityFallback = polymorphic.length > 0
+        ? polymorphic
+        : distances.rankCandidates(
+            reference.evidence.file,
+            polymorphicCandidates,
+            modulesByFile,
+            false,
+          ).slice(0, MAX_DYNAMIC_CANDIDATES);
+      if (proximityFallback.length > 0) return { nodes: proximityFallback, exact: false };
     }
     return { nodes: [], exact: false };
   }
@@ -456,7 +578,9 @@ function symbolCandidates(
     (node) => kinds.has(node.kind) && node.filePath !== null,
   );
   return {
-    nodes: distances.reachableCandidates(reference.evidence.file, named, modulesByFile),
+    nodes: distances
+      .rankCandidates(reference.evidence.file, named, modulesByFile, true)
+      .slice(0, MAX_DYNAMIC_CANDIDATES),
     exact: false,
   };
 }
@@ -522,19 +646,45 @@ class ImportDistanceIndex {
     return this.#from(source.id).get(target.id) ?? 20;
   }
 
-  reachableCandidates(
+  rankCandidates(
     sourceFile: string,
     candidates: readonly StoredNode[],
     modulesByFile: ReadonlyMap<string, StoredNode>,
+    reachableOnly: boolean,
   ): StoredNode[] {
     const source = modulesByFile.get(sourceFile);
     if (source === undefined) return [];
     const reachable = this.#from(source.id);
-    return candidates.filter((candidate) => {
-      if (candidate.filePath === null) return false;
-      const target = modulesByFile.get(candidate.filePath);
-      return target !== undefined && reachable.has(target.id);
-    });
+    const sourceParts = path.posix.dirname(sourceFile).split("/");
+    return candidates
+      .flatMap((candidate) => {
+        if (candidate.filePath === null) return [];
+        const target = modulesByFile.get(candidate.filePath);
+        if (target === undefined) return [];
+        const distance = reachable.get(target.id);
+        if (reachableOnly && distance === undefined) return [];
+        const targetParts = path.posix.dirname(candidate.filePath).split("/");
+        let commonPathSegments = 0;
+        while (
+          commonPathSegments < sourceParts.length &&
+          commonPathSegments < targetParts.length &&
+          sourceParts[commonPathSegments] === targetParts[commonPathSegments]
+        ) {
+          commonPathSegments += 1;
+        }
+        return [{ candidate, distance: distance ?? 20, commonPathSegments }];
+      })
+      .sort(
+        (left, right) =>
+          left.distance - right.distance ||
+          right.commonPathSegments - left.commonPathSegments ||
+          (left.candidate.filePath ?? "").localeCompare(right.candidate.filePath ?? "") ||
+          (left.candidate.qualifiedName ?? "").localeCompare(
+            right.candidate.qualifiedName ?? "",
+          ) ||
+          left.candidate.id.localeCompare(right.candidate.id),
+      )
+      .map((entry) => entry.candidate);
   }
 }
 
@@ -564,6 +714,7 @@ function persistIssue(
     | "generated_code",
   candidates: readonly StoredNode[],
   timestamp: string,
+  extraMetadata: Readonly<Record<string, unknown>> = {},
 ): void {
   const referenceHash = sha256(`${reference.kind}:${reference.name}`);
   const safeName =
@@ -597,6 +748,7 @@ function persistIssue(
         relationship_kind: reference.kind,
         confidence: reference.confidence,
         ...reference.metadata,
+        ...extraMetadata,
       },
     },
     timestamp,
@@ -674,29 +826,8 @@ export function resolveReferences(
   parsedInputs: readonly ParsedInput[],
   timestamp: string,
 ): ResolutionResult {
-  const nodes = loadNodes(database);
-  const indexes = buildSymbolIndexes(nodes);
-  const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  const modulesByFile = new Map<string, StoredNode>();
-  for (const node of nodes) {
-    if (node.kind === "file" && node.filePath !== null) modulesByFile.set(node.filePath, node);
-  }
-  const projectResolver = new TypeScriptProjectResolver(
-    repositoryRoot,
-    new Set(modulesByFile.keys()),
-  );
-  for (const node of nodes) {
-    if (node.kind === "module" && node.filePath !== null) modulesByFile.set(node.filePath, node);
-  }
-  const pythonModules = buildPythonModuleIndex(modulesByFile.keys());
-  const exportedNodeIds = new Set(
-    (
-      database.prepare("SELECT target_node_id FROM edges WHERE edge_type = 'EXPORTS'").all() as Array<{
-        target_node_id: string;
-      }>
-    ).map((row) => row.target_node_id),
-  );
-  const bindingsByFile = new Map<string, ImportBinding[]>();
+  const resolutionStartedAt = performance.now();
+  let candidateGenerationMs = 0;
   const importReferences: UnresolvedReference[] = [];
   const otherReferences: UnresolvedReference[] = [];
   for (const input of parsedInputs) {
@@ -709,24 +840,48 @@ export function resolveReferences(
     }
   }
 
+  const moduleNodes = loadModuleNodes(database);
+  const modulesByFile = new Map<string, StoredNode>();
+  for (const node of moduleNodes) {
+    if (node.kind === "file" && node.filePath !== null) modulesByFile.set(node.filePath, node);
+  }
+  const projectResolver = new TypeScriptProjectResolver(
+    repositoryRoot,
+    new Set(modulesByFile.keys()),
+  );
+  for (const node of moduleNodes) {
+    if (node.kind === "module" && node.filePath !== null) modulesByFile.set(node.filePath, node);
+  }
+  const pythonModules = buildPythonModuleIndex(modulesByFile.keys());
+  const bindingsByFile = new Map<string, ImportBinding[]>();
+
   let unresolved = 0;
   let ambiguous = 0;
   const edgeIds = new Set<string>();
 
   for (const reference of importReferences) {
+    const candidateStartedAt = performance.now();
     const candidates = moduleCandidates(
       reference,
       modulesByFile,
       projectResolver,
       pythonModules,
     );
+    candidateGenerationMs += performance.now() - candidateStartedAt;
     if (candidates.length === 0) {
-      persistIssue(database, reference, "unresolved_reference", [], timestamp);
+      persistIssue(database, reference, "unresolved_reference", [], timestamp, {
+        import_classification: projectResolver.classifyUnresolvedModule(
+          reference.name,
+          reference.evidence.file,
+        ),
+      });
       unresolved += 1;
       continue;
     }
     if (candidates.length > 1) {
-      persistIssue(database, reference, "multi_candidate", candidates, timestamp);
+      persistIssue(database, reference, "multi_candidate", candidates, timestamp, {
+        import_classification: "ambiguous",
+      });
       ambiguous += 1;
     }
     const importReference = reference.kind === "export" ? { ...reference, kind: "import" as const } : reference;
@@ -755,10 +910,41 @@ export function resolveReferences(
     }
   }
 
+  const relevantNames = new Set<string>();
+  const relevantFiles = new Set(parsedInputs.map((input) => input.relativePath));
+  const sourceNodeIds = new Set<string>();
+  for (const reference of otherReferences) {
+    const parts = reference.name.split(".");
+    relevantNames.add(reference.name);
+    relevantNames.add(parts[0] ?? reference.name);
+    relevantNames.add(parts.at(-1) ?? reference.name);
+    sourceNodeIds.add(reference.sourceNodeId);
+  }
+  for (const bindings of bindingsByFile.values()) {
+    for (const binding of bindings) {
+      relevantFiles.add(binding.targetFilePath);
+      if (binding.importedName !== "*") relevantNames.add(binding.importedName);
+    }
+  }
+  const nodes = uniqueNodes([
+    ...moduleNodes,
+    ...loadRelevantNodes(database, relevantNames, relevantFiles, sourceNodeIds),
+  ]);
+  const indexes = buildSymbolIndexes(nodes);
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  const exportedNodeIds = new Set(
+    (
+      database.prepare("SELECT target_node_id FROM edges WHERE edge_type = 'EXPORTS'").all() as Array<{
+        target_node_id: string;
+      }>
+    ).map((row) => row.target_node_id),
+  );
+
   const distances = new ImportDistanceIndex(database, modulesByFile, nodeById);
   for (const reference of otherReferences) {
     const source = nodeById.get(reference.sourceNodeId);
     if (source === undefined) continue;
+    const candidateStartedAt = performance.now();
     const candidates = symbolCandidates(
       reference,
       source,
@@ -769,6 +955,7 @@ export function resolveReferences(
       distances,
       projectResolver,
     );
+    candidateGenerationMs += performance.now() - candidateStartedAt;
     if (candidates.nodes.length === 0) {
       persistIssue(
         database,
@@ -810,5 +997,12 @@ export function resolveReferences(
     );
   }
 
-  return { edges: edgeIds.size, unresolved, ambiguous };
+  return {
+    edges: edgeIds.size,
+    unresolved,
+    ambiguous,
+    candidateGenerationMs,
+    graphResolutionMs: performance.now() - resolutionStartedAt,
+    typescript: projectResolver.metrics(),
+  };
 }
