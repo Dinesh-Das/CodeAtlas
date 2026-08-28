@@ -53,6 +53,10 @@ export interface StatusResult {
   lastIndexedAt: string | null;
   currentFingerprint: string;
   indexedFingerprint: string | null;
+  freshnessMode: "authoritative" | "watch_cache";
+  authoritativeCheckedAt: string;
+  reconciliationMaxAgeMs: number;
+  cacheInvalidated: boolean;
 }
 
 const fastIgnoreRules = new Map<string, IgnoreRules>();
@@ -258,6 +262,10 @@ function readStoredStatus(
     lastIndexedAt: state.last_indexed_at ?? null,
     currentFingerprint,
     indexedFingerprint,
+    freshnessMode: "authoritative",
+    authoritativeCheckedAt: new Date().toISOString(),
+    reconciliationMaxAgeMs: FAST_RECONCILIATION_INTERVAL_MS,
+    cacheInvalidated: false,
   };
 }
 
@@ -279,8 +287,13 @@ export async function getFastStatus(startPath = process.cwd()): Promise<StatusRe
     !cached.dirty &&
     Date.now() - cached.checkedAt < FAST_RECONCILIATION_INTERVAL_MS
   ) {
-    return cached.status;
+    return {
+      ...cached.status,
+      freshnessMode: "watch_cache",
+      cacheInvalidated: false,
+    };
   }
+  const cacheWasInvalidated = cached?.dirty === true;
   const repository = await initializedRepository(startPath);
   const config = await loadConfig(repository.root);
   let ignoreRules = fastIgnoreRules.get(repository.root);
@@ -302,6 +315,7 @@ export async function getFastStatus(startPath = process.cwd()): Promise<StatusRe
       worktree.dirty,
       matches,
     );
+    status.cacheInvalidated = cacheWasInvalidated;
     cacheFastStatus(startPath, status, worktree);
     return status;
   } finally {

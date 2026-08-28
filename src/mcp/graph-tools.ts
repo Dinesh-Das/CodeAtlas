@@ -1,4 +1,5 @@
 import { workspacePaths } from "../core/workspace.js";
+import { sha256 } from "../core/hashing.js";
 import type { EdgeType, NodeKind } from "../graph/types.js";
 import { openDatabase, type AtlasDatabase } from "../storage/database.js";
 import type { FreshContext } from "./freshness.js";
@@ -11,10 +12,12 @@ import {
   getNodesByIds,
   listEdgesForNode,
   nodeFact,
+  nodeFactWithTransientRoute,
   parseMetadata,
   queryEdges,
-  relationshipFromEdge,
+  relationshipsFromEdges,
   resolveTarget,
+  sourceSnippetsForNodes,
   uncertaintiesForNodes,
   type StoredEdge,
   type StoredNode,
@@ -82,6 +85,15 @@ const DEPENDENCY_EDGE_TYPES: readonly EdgeType[] = [
   "TESTS",
   "CONFIGURES",
   "USES_EXTERNAL_SERVICE",
+  "MOUNTS",
+  "APPLIES_HOOK",
+  "DECORATES",
+  "IMPLEMENTED_BY",
+  "PROTECTED_BY",
+  "CONTINUES_TO",
+  "ROUTE_PREFIX",
+  "QUERIES",
+  "UPDATES",
 ];
 
 const TRACE_EDGE_TYPES: readonly EdgeType[] = [
@@ -96,6 +108,15 @@ const TRACE_EDGE_TYPES: readonly EdgeType[] = [
   "PUBLISHES",
   "SUBSCRIBES",
   "REFERENCES",
+  "MOUNTS",
+  "APPLIES_HOOK",
+  "DECORATES",
+  "IMPLEMENTED_BY",
+  "PROTECTED_BY",
+  "CONTINUES_TO",
+  "ROUTE_PREFIX",
+  "QUERIES",
+  "UPDATES",
 ];
 
 function packet(
@@ -219,12 +240,57 @@ function searchNodes(
     .all(...SEARCHABLE_KINDS, query, query, query, limit, offset) as StoredNode[];
 }
 
+function routePathFromQuery(query: string): string | null {
+  return query.match(/\/[A-Za-z0-9_~!$&'()*+,;=:@%./{}-]*/u)?.[0] ?? null;
+}
+
+function routeNodesForLiteral(
+  database: AtlasDatabase,
+  routePath: string,
+  limit: number,
+  offset: number,
+): StoredNode[] {
+  return database
+    .prepare(
+      `SELECT
+         id, kind, name, qualified_name AS qualifiedName, file_path AS filePath,
+         language, start_line AS startLine, start_column AS startColumn,
+         end_line AS endLine, end_column AS endColumn, signature, visibility,
+         source_type AS sourceType, provenance_category AS provenance,
+         confidence, metadata_json AS metadataJson
+       FROM nodes
+       WHERE kind = 'api_route'
+         AND (
+           json_extract(metadata_json, '$.route_path_hash') = ?
+           OR id IN (
+             SELECT target_node_id FROM edges
+             WHERE edge_type = 'ROUTE_PREFIX'
+               AND json_extract(metadata_json, '$.effective_route_path_hash') = ?
+           )
+         )
+       ORDER BY json_extract(metadata_json, '$.http_method'), file_path, start_line, id
+       LIMIT ? OFFSET ?`,
+    )
+    .all(
+      sha256(`route:${routePath}`),
+      sha256(`route:${routePath}`),
+      limit,
+      offset,
+    ) as StoredNode[];
+}
+
 export function searchPacket(context: FreshContext, input: SearchInput): AnswerPacket {
   return withDatabase(context, (database) => {
     const scope = input.query.trim().toLowerCase();
     const offset = decodeCursor(input.cursor, "search", scope);
     const pageSize = Math.min(input.limit, context.config.limits.maxMcpResultNodes);
-    const rows = searchNodes(database, input.query, pageSize + 1, offset);
+    const routePath = routePathFromQuery(input.query);
+    const exactRouteRows = routePath === null
+      ? []
+      : routeNodesForLiteral(database, routePath, pageSize + 1, offset);
+    const rows = exactRouteRows.length > 0
+      ? exactRouteRows
+      : searchNodes(database, input.query, pageSize + 1, offset);
     const hasMore = rows.length > pageSize;
     const page = rows.slice(0, pageSize);
     const uncertainties: AnswerPacket["uncertainties"] = [];
@@ -243,12 +309,46 @@ export function searchPacket(context: FreshContext, input: SearchInput): AnswerP
         candidates: heuristic.map((node) => node.id),
       });
     }
+    const effectivePrefixEdges = routePath === null || page.length === 0
+      ? []
+      : queryEdges(
+          database,
+          `edge_type = 'ROUTE_PREFIX'
+           AND json_extract(metadata_json, '$.effective_route_path_hash') = ?
+           AND target_node_id IN (${page.map(() => "?").join(", ")})`,
+          [sha256(`route:${routePath}`), ...page.map((node) => node.id)],
+          pageSize,
+        );
+    const prefixByRoute = new Map(
+      effectivePrefixEdges.map((edge) => [edge.targetNodeId, edge]),
+    );
     return packet(
       {
         answer_context: { topic: input.query, tool: "codeatlas_search" },
-        facts: page.map((node) => nodeFact(node, "Search result")),
-        relationships: [],
-        source_snippets: [],
+        facts: page.map((node) => {
+          const prefix = prefixByRoute.get(node.id);
+          if (prefix === undefined || routePath === null) {
+            return nodeFactWithTransientRoute(context.status.root, node, "Search result");
+          }
+          const method = parseMetadata(node.metadataJson).http_method;
+          return {
+            statement: `Search result verified effective route ${typeof method === "string" ? method : "HTTP"} ${routePath} (${node.name}) [node_id: ${node.id}].`,
+            confidence: Math.min(node.confidence, prefix.confidence),
+            source_type: prefix.sourceType,
+            provenance: prefix.provenance,
+            evidence: evidenceFrom(
+              parseMetadata(prefix.metadataJson),
+              prefix.filePath,
+              prefix.line,
+            ),
+          };
+        }),
+        relationships: relationshipsFromEdges(database, effectivePrefixEdges),
+        source_snippets: sourceSnippetsForNodes(context.status.root, page, {
+          maxSnippets: 6,
+          maxLines: Math.min(10, context.config.limits.maxSourceSnippetLines),
+          maxBytes: context.config.limits.maxSourceSnippetBytes,
+        }),
         uncertainties,
         pagination: {
           cursor: hasMore ? encodeCursor(offset + pageSize, "search", scope) : null,
@@ -260,8 +360,8 @@ export function searchPacket(context: FreshContext, input: SearchInput): AnswerP
   });
 }
 
-function descriptiveFacts(node: StoredNode): AnswerPacket["facts"] {
-  const facts = [nodeFact(node)];
+function descriptiveFacts(repositoryRoot: string, node: StoredNode): AnswerPacket["facts"] {
+  const facts = [nodeFactWithTransientRoute(repositoryRoot, node)];
   const details = [
     node.language === null ? null : `language ${node.language}`,
     node.visibility === null ? null : `visibility ${node.visibility}`,
@@ -327,9 +427,13 @@ export function getNodePacket(
     return packet(
       {
         answer_context: { topic: resolution.node.name, tool: "codeatlas_get_node" },
-        facts: descriptiveFacts(resolution.node),
-        relationships: selectedEdges.map(relationshipFromEdge),
-        source_snippets: [],
+        facts: descriptiveFacts(context.status.root, resolution.node),
+        relationships: relationshipsFromEdges(database, selectedEdges),
+        source_snippets: sourceSnippetsForNodes(context.status.root, [resolution.node], {
+          maxSnippets: 1,
+          maxLines: Math.min(12, context.config.limits.maxSourceSnippetLines),
+          maxBytes: context.config.limits.maxSourceSnippetBytes,
+        }),
         uncertainties,
         pagination: { cursor: null, has_more: false },
       },
@@ -360,17 +464,17 @@ export function dependenciesPacket(
     }
     const scope = `${resolution.node.id}:${input.direction}`;
     const offset = decodeCursor(input.cursor, "dependencies", scope);
-    const allRows = listEdgesForNode(
+    const pageSize = Math.min(input.limit, context.config.limits.maxMcpResultNodes);
+    const rows = listEdgesForNode(
       database,
       resolution.node.id,
       input.direction,
-      context.config.limits.maxMcpResultNodes,
-      0,
+      pageSize + 1,
+      offset,
       DEPENDENCY_EDGE_TYPES,
     );
-    const rows = rankEdges(database, allRows, resolution.node.id);
-    const hasMore = rows.length > offset + input.limit;
-    const page = rows.slice(offset, offset + input.limit);
+    const hasMore = rows.length > pageSize;
+    const page = rankEdges(database, rows.slice(0, pageSize), resolution.node.id);
     const related = getNodesByIds(database, relatedNodeIds(page, resolution.node.id));
     const uncertainties = uncertaintiesForNodes(
       database,
@@ -390,13 +494,26 @@ export function dependenciesPacket(
           topic: `${resolution.node.name} dependencies`,
           tool: "codeatlas_dependencies",
         },
-        facts: [nodeFact(resolution.node, "Dependency target"), ...related.map((node) => nodeFact(node, "Related node"))],
-        relationships: page.map(relationshipFromEdge),
-        source_snippets: [],
+        facts: [
+          nodeFactWithTransientRoute(context.status.root, resolution.node, "Dependency target"),
+          ...related.map((node) =>
+            nodeFactWithTransientRoute(context.status.root, node, "Related node"),
+          ),
+        ],
+        relationships: relationshipsFromEdges(database, page),
+        source_snippets: sourceSnippetsForNodes(
+          context.status.root,
+          [resolution.node, ...related],
+          {
+            maxSnippets: 6,
+            maxLines: Math.min(10, context.config.limits.maxSourceSnippetLines),
+            maxBytes: context.config.limits.maxSourceSnippetBytes,
+          },
+        ),
         uncertainties,
         pagination: {
           cursor: hasMore
-            ? encodeCursor(offset + input.limit, "dependencies", scope)
+            ? encodeCursor(offset + pageSize, "dependencies", scope)
             : null,
           has_more: hasMore,
         },
@@ -661,7 +778,9 @@ export function tracePacket(context: FreshContext, input: TraceInput): AnswerPac
     const page = rankedItems.slice(offset, offset + input.limit);
     const reachedIds = page.map((item) => item.edge.targetNodeId);
     const reached = new Map(getNodesByIds(database, reachedIds).map((node) => [node.id, node]));
-    const facts: AnswerPacket["facts"] = [nodeFact(resolution.node, "Trace start")];
+    const facts: AnswerPacket["facts"] = [
+      nodeFactWithTransientRoute(context.status.root, resolution.node, "Trace start"),
+    ];
     for (const item of page) {
       const node = reached.get(item.edge.targetNodeId);
       if (node === undefined) continue;
@@ -690,8 +809,16 @@ export function tracePacket(context: FreshContext, input: TraceInput): AnswerPac
       {
         answer_context: { topic: resolution.node.name, tool: "codeatlas_trace" },
         facts,
-        relationships: page.map((item) => relationshipFromEdge(item.edge)),
-        source_snippets: [],
+        relationships: relationshipsFromEdges(database, page.map((item) => item.edge)),
+        source_snippets: sourceSnippetsForNodes(
+          context.status.root,
+          [resolution.node, ...reached.values()],
+          {
+            maxSnippets: 8,
+            maxLines: Math.min(10, context.config.limits.maxSourceSnippetLines),
+            maxBytes: context.config.limits.maxSourceSnippetBytes,
+          },
+        ),
         uncertainties,
         pagination: {
           cursor: hasMore ? encodeCursor(offset + input.limit, "trace", scope) : null,
@@ -765,7 +892,9 @@ export function impactPacket(context: FreshContext, input: ImpactInput): AnswerP
       ? item.edge.targetNodeId
       : item.edge.sourceNodeId);
     const affected = new Map(getNodesByIds(database, affectedIds).map((node) => [node.id, node]));
-    const facts: AnswerPacket["facts"] = [nodeFact(resolution.node, "Impact target")];
+    const facts: AnswerPacket["facts"] = [
+      nodeFactWithTransientRoute(context.status.root, resolution.node, "Impact target"),
+    ];
     for (const item of page) {
       const relatedId = item.edge.edgeType === "BELONGS_TO_FEATURE"
         ? item.edge.targetNodeId
@@ -799,8 +928,16 @@ export function impactPacket(context: FreshContext, input: ImpactInput): AnswerP
       {
         answer_context: { topic: resolution.node.name, tool: "codeatlas_impact" },
         facts,
-        relationships: page.map((item) => relationshipFromEdge(item.edge)),
-        source_snippets: [],
+        relationships: relationshipsFromEdges(database, page.map((item) => item.edge)),
+        source_snippets: sourceSnippetsForNodes(
+          context.status.root,
+          [resolution.node, ...affected.values()],
+          {
+            maxSnippets: 8,
+            maxLines: Math.min(10, context.config.limits.maxSourceSnippetLines),
+            maxBytes: context.config.limits.maxSourceSnippetBytes,
+          },
+        ),
         uncertainties,
         pagination: {
           cursor: hasMore ? encodeCursor(offset + input.limit, "impact", scope) : null,
@@ -812,7 +949,10 @@ export function impactPacket(context: FreshContext, input: ImpactInput): AnswerP
   });
 }
 
-function featureMemberFacts(nodes: readonly StoredNode[]): AnswerPacket["facts"] {
+function featureMemberFacts(
+  repositoryRoot: string,
+  nodes: readonly StoredNode[],
+): AnswerPacket["facts"] {
   return nodes.map((node) => {
     const role = node.kind === "api_route"
       ? "Entrypoint"
@@ -821,7 +961,7 @@ function featureMemberFacts(nodes: readonly StoredNode[]): AnswerPacket["facts"]
         : node.kind === "external_service"
           ? "External dependency"
           : "Component";
-    return nodeFact(node, role);
+    return nodeFactWithTransientRoute(repositoryRoot, node, role);
   });
 }
 
@@ -841,6 +981,7 @@ export function explainFeaturePacket(
     }
     const scope = resolution.node.id;
     const offset = decodeCursor(input.cursor, "explain-feature", scope);
+    const pageSize = Math.min(input.limit, context.config.limits.maxMcpResultNodes);
     const memberships = database
       .prepare(
         `SELECT
@@ -851,15 +992,19 @@ export function explainFeaturePacket(
          FROM edges
          WHERE target_node_id = ? AND edge_type = 'BELONGS_TO_FEATURE'
          ORDER BY source_node_id, id
-         LIMIT ?`,
+         LIMIT ? OFFSET ?`,
       )
       .all(
         resolution.node.id,
-        context.config.limits.maxMcpResultNodes,
+        pageSize + 1,
+        offset,
       ) as StoredEdge[];
-    const rankedMemberships = rankEdges(database, memberships, resolution.node.id);
-    const hasMore = rankedMemberships.length > offset + input.limit;
-    const page = rankedMemberships.slice(offset, offset + input.limit);
+    const hasMore = memberships.length > pageSize;
+    const page = rankEdges(
+      database,
+      memberships.slice(0, pageSize),
+      resolution.node.id,
+    );
     const members = getNodesByIds(database, page.map((edge) => edge.sourceNodeId));
     const memberIds = members.map((node) => node.id);
     const remainingRelationshipBudget = Math.max(
@@ -891,13 +1036,20 @@ export function explainFeaturePacket(
           topic: resolution.node.name,
           tool: "codeatlas_explain_feature",
         },
-        facts: [nodeFact(resolution.node, "Feature"), ...featureMemberFacts(members)],
-        relationships: [...page, ...executionEdges].map(relationshipFromEdge),
-        source_snippets: [],
+        facts: [
+          nodeFact(resolution.node, "Feature"),
+          ...featureMemberFacts(context.status.root, members),
+        ],
+        relationships: relationshipsFromEdges(database, [...page, ...executionEdges]),
+        source_snippets: sourceSnippetsForNodes(context.status.root, members, {
+          maxSnippets: 8,
+          maxLines: Math.min(10, context.config.limits.maxSourceSnippetLines),
+          maxBytes: context.config.limits.maxSourceSnippetBytes,
+        }),
         uncertainties,
         pagination: {
           cursor: hasMore
-            ? encodeCursor(offset + input.limit, "explain-feature", scope)
+            ? encodeCursor(offset + pageSize, "explain-feature", scope)
             : null,
           has_more: hasMore,
         },

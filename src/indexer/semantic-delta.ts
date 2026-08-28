@@ -1,6 +1,7 @@
 import { sha256 } from "../core/hashing.js";
 import type { GraphEdge, GraphNode } from "../graph/types.js";
 import type { ParsedFile, UnresolvedReference } from "../parser/parser.js";
+import type { CompilerPublicApiFacts } from "../graph/typescript-resolution.js";
 
 export type SemanticChangeClass =
   | "content_only"
@@ -221,6 +222,7 @@ export function buildFileSemanticFacts(
   language: string | null,
   content: string,
   parsedFile: ParsedFile | null,
+  compilerPublicApi: CompilerPublicApiFacts | null = null,
 ): FileSemanticFacts {
   const nodes = parsedFile?.nodes ?? [];
   const edges = parsedFile?.edges ?? [];
@@ -244,7 +246,10 @@ export function buildFileSemanticFacts(
   const exportedSymbols = exportTargets.map((node) => ({
     id: node.id,
     name: node.name,
-    fingerprint: fingerprint(publicContracts.get(node.id) ?? [semanticNode(node)]),
+    fingerprint: fingerprint([
+      fingerprint(publicContracts.get(node.id) ?? [semanticNode(node)]),
+      compilerPublicApi?.exportedSymbols[node.name] ?? null,
+    ]),
   }));
   const importReferences = references.filter(
     (reference) => reference.kind === "import" || reference.kind === "export",
@@ -274,7 +279,10 @@ export function buildFileSemanticFacts(
       ...references.filter((reference) => reference.kind === "export").map(semanticReferenceIdentity),
     ]),
     referencesFingerprint: fingerprint(outgoingReferences.map(semanticReferenceIdentity)),
-    publicApiFingerprint: fingerprint([...publicContracts.values()].flat()),
+    publicApiFingerprint: fingerprint([
+      fingerprint([...publicContracts.values()].flat()),
+      compilerPublicApi?.fingerprint ?? null,
+    ]),
     frameworkFingerprint: fingerprint([
       ...frameworkNodes.map(semanticNode),
       ...frameworkEdges.map(semanticEdge),

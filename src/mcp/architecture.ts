@@ -99,7 +99,8 @@ function relationshipsForNodes(
        WHERE (source_node_id IN (${placeholders}) OR target_node_id IN (${placeholders}))
          AND edge_type IN (
            'BELONGS_TO_FEATURE', 'BELONGS_TO_DOMAIN', 'DEPENDS_ON', 'EXPOSES',
-           'HANDLES', 'IMPORTS', 'REFERENCES'
+           'HANDLES', 'IMPORTS', 'REFERENCES', 'MOUNTS', 'APPLIES_HOOK',
+           'IMPLEMENTED_BY', 'PROTECTED_BY', 'ROUTE_PREFIX', 'QUERIES', 'UPDATES'
          )
        ORDER BY edge_type, source_node_id, target_node_id
        LIMIT ?`,

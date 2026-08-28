@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { initializeRepository } from "../../src/cli/init.js";
 import { indexRepository } from "../../src/cli/index-command.js";
 import { workspacePaths } from "../../src/core/workspace.js";
+import { runIndex } from "../../src/indexer/indexer.js";
 import { openDatabase } from "../../src/storage/database.js";
+import { searchPacket, tracePacket } from "../../src/mcp/graph-tools.js";
+import { ensureFreshIndex } from "../../src/mcp/freshness.js";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
 
 interface ExpectedFrameworkGraph {
@@ -39,7 +42,47 @@ async function createFrameworkRepository(): Promise<TestRepository> {
   return repository;
 }
 
+function normalizedGraph(repositoryRoot: string): { nodes: unknown[]; edges: unknown[] } {
+  const database = openDatabase(workspacePaths(repositoryRoot).database, { readonly: true });
+  try {
+    return {
+      nodes: database
+        .prepare(
+          `SELECT id, kind, name, qualified_name, file_path, language,
+                  start_line, start_column, end_line, end_column, signature,
+                  visibility, content_hash, source_type, provenance_category,
+                  confidence, metadata_json
+           FROM nodes
+           ORDER BY id`,
+        )
+        .all(),
+      edges: database
+        .prepare(
+          `SELECT id, source_node_id, target_node_id, edge_type, source_type,
+                  provenance_category, confidence, file_path, line, metadata_json
+           FROM edges
+           ORDER BY id`,
+        )
+        .all(),
+    };
+  } finally {
+    database.close();
+  }
+}
+
 describe("Phase 5 framework adapters", () => {
+  it("produces an equivalent normalized graph across full rebuilds", async () => {
+    const repository = await createFrameworkRepository();
+    await initializeRepository(repository.root);
+    const initial = normalizedGraph(repository.root);
+
+    await runIndex({ startPath: repository.root, full: true });
+    expect(normalizedGraph(repository.root)).toEqual(initial);
+
+    await runIndex({ startPath: repository.root, full: true });
+    expect(normalizedGraph(repository.root)).toEqual(initial);
+  });
+
   it("extracts known API routes and database models with evidence", async () => {
     const repository = await createFrameworkRepository();
     const expected = JSON.parse(
@@ -172,5 +215,207 @@ describe("Phase 5 framework adapters", () => {
       databaseModels: 0,
       frameworks: [],
     });
+  });
+
+  it("materializes verified Fastify auth composition and Prisma model operations", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write(
+      "api/prisma/schema.prisma",
+      [
+        "model User {",
+        "  id String @id",
+        "  completedChallenges String[]",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    await repository.write(
+      "api/auth.ts",
+      [
+        "export async function handleAuth(): Promise<void> {",
+        "  return;",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    await repository.write(
+      "api/routes.ts",
+      [
+        'import type { FastifyPluginCallback } from "fastify";',
+        'import { PrismaClient } from "@prisma/client";',
+        "const prisma = new PrismaClient();",
+        "export async function deleteResetModule(): Promise<void> {",
+        "  await prisma.user.findUniqueOrThrow({ where: { id: 'user' } });",
+        "  await prisma.user.update({ where: { id: 'user' }, data: {} });",
+        "}",
+        "export const protectedRoutes: FastifyPluginCallback = (fastify, _options, done) => {",
+        '  fastify.delete("/account/reset-module", deleteResetModule);',
+        "  done();",
+        "};",
+        "",
+      ].join("\n"),
+    );
+    await repository.write(
+      "api/app.ts",
+      [
+        'import Fastify from "fastify";',
+        'import { handleAuth } from "./auth.js";',
+        'import { protectedRoutes } from "./routes.js";',
+        "const fastify = Fastify();",
+        'fastify.decorate("authorize", handleAuth);',
+        "fastify.register(protectedRoutes, {",
+        '  prefix: "/api",',
+        "  onRequest: fastify.authorize,",
+        "});",
+        "",
+      ].join("\n"),
+    );
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "Fastify and Prisma composition");
+    await initializeRepository(repository.root);
+
+    const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
+    let routeId: string;
+    try {
+      routeId = database
+        .prepare("SELECT id FROM nodes WHERE kind = 'api_route' AND name = 'DELETE deleteResetModule'")
+        .pluck()
+        .get() as string;
+      const edges = database
+        .prepare(
+          `SELECT edges.edge_type AS edgeType, source.name AS sourceName,
+                  target.name AS targetName, edges.source_type AS sourceType,
+                  edges.provenance_category AS provenance, edges.confidence
+           FROM edges
+           JOIN nodes source ON source.id = edges.source_node_id
+           JOIN nodes target ON target.id = edges.target_node_id
+           WHERE edges.edge_type IN (
+             'HANDLES', 'IMPLEMENTED_BY', 'DECORATES', 'MOUNTS', 'APPLIES_HOOK',
+             'PROTECTED_BY', 'CONTINUES_TO', 'ROUTE_PREFIX', 'QUERIES', 'UPDATES'
+           )
+           ORDER BY edges.edge_type, source.name, target.name`,
+        )
+        .all() as Array<{
+          edgeType: string;
+          sourceName: string;
+          targetName: string;
+          sourceType: string;
+          provenance: string;
+          confidence: number;
+        }>;
+      expect(edges).toContainEqual(
+        expect.objectContaining({
+          edgeType: "HANDLES",
+          sourceName: "DELETE deleteResetModule",
+          targetName: "deleteResetModule",
+        }),
+      );
+      expect(edges).toContainEqual(
+        expect.objectContaining({
+          edgeType: "IMPLEMENTED_BY",
+          sourceName: "authorize",
+          targetName: "handleAuth",
+        }),
+      );
+      expect(edges).toContainEqual(
+        expect.objectContaining({
+          edgeType: "DECORATES",
+          sourceName: "handleAuth",
+          targetName: "authorize",
+        }),
+      );
+      expect(edges).toContainEqual(
+        expect.objectContaining({
+          edgeType: "MOUNTS",
+          sourceName: "register protectedRoutes",
+          targetName: "protectedRoutes",
+        }),
+      );
+      expect(edges).toContainEqual(
+        expect.objectContaining({
+          edgeType: "APPLIES_HOOK",
+          sourceName: "register protectedRoutes",
+          targetName: "authorize",
+        }),
+      );
+      expect(edges).toContainEqual(
+        expect.objectContaining({
+          edgeType: "PROTECTED_BY",
+          sourceName: "DELETE deleteResetModule",
+          targetName: "authorize",
+        }),
+      );
+      expect(edges).toContainEqual(
+        expect.objectContaining({
+          edgeType: "CONTINUES_TO",
+          sourceName: "handleAuth",
+          targetName: "DELETE deleteResetModule",
+        }),
+      );
+      expect(edges).toContainEqual(
+        expect.objectContaining({
+          edgeType: "ROUTE_PREFIX",
+          sourceName: "register protectedRoutes",
+          targetName: "DELETE deleteResetModule",
+        }),
+      );
+      for (const edgeType of ["QUERIES", "UPDATES"]) {
+        expect(edges).toContainEqual(
+          expect.objectContaining({
+            edgeType,
+            sourceName: "deleteResetModule",
+            targetName: "User",
+            sourceType: "framework",
+            provenance: "verified",
+            confidence: 1,
+          }),
+        );
+      }
+      expect(
+        database
+          .prepare(
+            `SELECT count(*) FROM resolution_issues
+             WHERE reference_name IN ('prisma.user.findUniqueOrThrow', 'prisma.user.update')`,
+          )
+          .pluck()
+          .get(),
+      ).toBe(0);
+    } finally {
+      database.close();
+    }
+
+    const context = await ensureFreshIndex(repository.root);
+    const search = searchPacket(context, {
+      query: "DELETE /account/reset-module",
+      limit: 10,
+    });
+    expect(search.facts).toContainEqual(
+      expect.objectContaining({ statement: expect.stringContaining("DELETE /account/reset-module") }),
+    );
+    const prefixedSearch = searchPacket(context, {
+      query: "DELETE /api/account/reset-module",
+      limit: 10,
+    });
+    expect(prefixedSearch.facts).toContainEqual(
+      expect.objectContaining({
+        statement: expect.stringContaining("DELETE /api/account/reset-module"),
+      }),
+    );
+    expect(prefixedSearch.relationships).toContainEqual(
+      expect.objectContaining({ edge_type: "ROUTE_PREFIX" }),
+    );
+    const trace = tracePacket(context, {
+      start: routeId!,
+      max_depth: 5,
+      limit: 50,
+    });
+    expect(trace.relationships.map((relationship) => relationship.edge_type)).toEqual(
+      expect.arrayContaining(["HANDLES", "PROTECTED_BY", "IMPLEMENTED_BY", "QUERIES", "UPDATES"]),
+    );
+    expect(trace.relationships.every((relationship) =>
+      relationship.source !== undefined && relationship.target !== undefined
+    )).toBe(true);
+    expect(trace.source_snippets.length).toBeGreaterThan(0);
   });
 });

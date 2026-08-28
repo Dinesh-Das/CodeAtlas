@@ -42,6 +42,26 @@ export const answerPacketSchema = z
           source_type: z.enum(SOURCE_TYPES),
           provenance: z.enum(PROVENANCE_CATEGORIES).default("verified"),
           evidence: evidenceSchema.omit({ column: true }),
+          source: z
+            .object({
+              node_id: z.string(),
+              name: z.string(),
+              qualified_name: z.string().nullable(),
+              file: z.string().nullable(),
+              line: z.number().int().positive().nullable(),
+            })
+            .strict()
+            .optional(),
+          target: z
+            .object({
+              node_id: z.string(),
+              name: z.string(),
+              qualified_name: z.string().nullable(),
+              file: z.string().nullable(),
+              line: z.number().int().positive().nullable(),
+            })
+            .strict()
+            .optional(),
         })
         .strict(),
     ),
@@ -78,8 +98,13 @@ export const answerPacketSchema = z
       .object({
         fingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
         head_commit: z.string(),
-        working_tree_checked: z.literal(true),
+        mode: z.enum(["authoritative", "watch_cache"]),
+        working_tree_checked: z.boolean(),
         checked_at: z.string().datetime(),
+        authoritative_checked_at: z.string().datetime(),
+        request_at: z.string().datetime(),
+        cache_invalidated: z.boolean(),
+        reconciliation_max_age_ms: z.number().int().positive(),
         structural_generation: z.number().int().nonnegative(),
         semantic_generation: z.number().int().nonnegative(),
         search_generation: z.number().int().nonnegative(),

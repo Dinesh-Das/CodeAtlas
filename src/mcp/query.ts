@@ -1,5 +1,8 @@
 import { sha256 } from "../core/hashing.js";
 import { CodeAtlasError } from "../core/errors.js";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import path from "node:path";
+import { isPathInside } from "../core/paths.js";
 import type {
   EdgeType,
   NodeKind,
@@ -120,8 +123,25 @@ export function evidenceForNode(node: StoredNode): AnswerPacket["facts"][number]
   );
 }
 
-export function relationshipFromEdge(edge: StoredEdge): AnswerPacket["relationships"][number] {
+function relationshipEndpoint(node: StoredNode): NonNullable<
+  AnswerPacket["relationships"][number]["source"]
+> {
+  return {
+    node_id: node.id,
+    name: node.name,
+    qualified_name: node.qualifiedName,
+    file: node.filePath,
+    line: node.startLine,
+  };
+}
+
+export function relationshipFromEdge(
+  edge: StoredEdge,
+  nodesById?: ReadonlyMap<string, StoredNode>,
+): AnswerPacket["relationships"][number] {
   const evidence = evidenceFrom(parseMetadata(edge.metadataJson), edge.filePath, edge.line);
+  const source = nodesById?.get(edge.sourceNodeId);
+  const target = nodesById?.get(edge.targetNodeId);
   return {
     source_node_id: edge.sourceNodeId,
     target_node_id: edge.targetNodeId,
@@ -130,6 +150,107 @@ export function relationshipFromEdge(edge: StoredEdge): AnswerPacket["relationsh
     source_type: edge.sourceType,
     provenance: edge.provenance,
     evidence: { file: evidence.file, line: evidence.line },
+    ...(source === undefined ? {} : { source: relationshipEndpoint(source) }),
+    ...(target === undefined ? {} : { target: relationshipEndpoint(target) }),
+  };
+}
+
+export function relationshipsFromEdges(
+  database: AtlasDatabase,
+  edges: readonly StoredEdge[],
+): AnswerPacket["relationships"] {
+  const nodes = getNodesByIds(
+    database,
+    edges.flatMap((edge) => [edge.sourceNodeId, edge.targetNodeId]),
+  );
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  return edges.map((edge) => relationshipFromEdge(edge, nodesById));
+}
+
+function safeSourcePath(repositoryRoot: string, filePath: string): string | null {
+  const candidate = path.resolve(repositoryRoot, ...filePath.split("/"));
+  if (!isPathInside(repositoryRoot, candidate) || !existsSync(candidate)) return null;
+  try {
+    const root = realpathSync(repositoryRoot);
+    const resolved = realpathSync(candidate);
+    return isPathInside(root, resolved) ? resolved : null;
+  } catch {
+    return null;
+  }
+}
+
+export function sourceSnippetsForNodes(
+  repositoryRoot: string,
+  nodes: readonly StoredNode[],
+  options: { maxSnippets: number; maxLines: number; maxBytes: number },
+): AnswerPacket["source_snippets"] {
+  const snippets: AnswerPacket["source_snippets"] = [];
+  const seen = new Set<string>();
+  let remainingBytes = options.maxBytes;
+  for (const node of nodes) {
+    if (snippets.length >= options.maxSnippets || remainingBytes <= 0) break;
+    if (node.filePath === null || node.filePath === "." || seen.has(node.id)) continue;
+    const sourcePath = safeSourcePath(repositoryRoot, node.filePath);
+    if (sourcePath === null) continue;
+    seen.add(node.id);
+    const lines = readFileSync(sourcePath, "utf8").split(/\r?\n/u);
+    const startLine = Math.max(1, Math.min(node.startLine ?? 1, Math.max(1, lines.length)));
+    const requestedEnd = node.endLine ?? startLine;
+    const endLine = Math.min(
+      Math.max(startLine, requestedEnd),
+      startLine + options.maxLines - 1,
+      Math.max(1, lines.length),
+    );
+    let content = lines.slice(startLine - 1, endLine).join("\n");
+    const encoded = Buffer.from(content, "utf8");
+    if (encoded.byteLength > remainingBytes) {
+      content = encoded.subarray(0, remainingBytes).toString("utf8").replace(/�+$/u, "");
+    }
+    if (content === "") continue;
+    const actualEndLine = startLine + content.split("\n").length - 1;
+    remainingBytes -= Buffer.byteLength(content, "utf8");
+    snippets.push({
+      node_id: node.id,
+      file: node.filePath,
+      start_line: startLine,
+      end_line: actualEndLine,
+      content,
+      trust: "untrusted_repository_content",
+    });
+  }
+  return snippets;
+}
+
+export function transientRoutePath(repositoryRoot: string, node: StoredNode): string | null {
+  if (node.kind !== "api_route" || node.filePath === null) return null;
+  const routePathHash = parseMetadata(node.metadataJson).route_path_hash;
+  if (typeof routePathHash !== "string") return null;
+  const sourcePath = safeSourcePath(repositoryRoot, node.filePath);
+  if (sourcePath === null) return null;
+  const lines = readFileSync(sourcePath, "utf8").split(/\r?\n/u);
+  const start = Math.max(0, (node.startLine ?? 1) - 1);
+  const end = Math.min(lines.length, Math.max(start + 1, node.endLine ?? start + 1));
+  const source = lines.slice(start, end).join("\n");
+  for (const match of source.matchAll(/(["'`])((?:\\.|(?!\1).)*)\1/gsu)) {
+    const raw = match[2] ?? "";
+    const value = raw.replace(/\\([\\"'`])/gu, "$1");
+    if (sha256(`route:${value}`) === routePathHash) return value;
+  }
+  return null;
+}
+
+export function nodeFactWithTransientRoute(
+  repositoryRoot: string,
+  node: StoredNode,
+  prefix = "Graph node",
+): AnswerPacket["facts"][number] {
+  const fact = nodeFact(node, prefix);
+  const routePath = transientRoutePath(repositoryRoot, node);
+  if (routePath === null) return fact;
+  const method = parseMetadata(node.metadataJson).http_method;
+  return {
+    ...fact,
+    statement: `${prefix} ${typeof method === "string" ? method : "HTTP"} ${routePath} (${node.name}) [node_id: ${node.id}] is an api_route at ${node.filePath}:${node.startLine ?? 1}.`,
   };
 }
 
@@ -137,8 +258,13 @@ export function freshnessFor(context: FreshContext): AnswerPacket["freshness"] {
   return {
     fingerprint: context.status.currentFingerprint,
     head_commit: context.status.headCommit,
-    working_tree_checked: true,
+    mode: context.status.freshnessMode,
+    working_tree_checked: context.status.freshnessMode === "authoritative",
     checked_at: context.checkedAt,
+    authoritative_checked_at: context.status.authoritativeCheckedAt,
+    request_at: context.requestAt,
+    cache_invalidated: context.status.cacheInvalidated,
+    reconciliation_max_age_ms: context.status.reconciliationMaxAgeMs,
     structural_generation: context.status.generations.structural,
     semantic_generation: context.status.generations.semantic,
     search_generation: context.status.generations.search,

@@ -11,6 +11,7 @@ export interface FreshContext {
   status: StatusResult;
   config: CodeAtlasConfig;
   checkedAt: string;
+  requestAt: string;
 }
 
 export type FreshnessRequirement =
@@ -67,6 +68,7 @@ export async function ensureFreshIndex(
   return {
     status,
     config: await loadConfig(status.root),
-    checkedAt: new Date().toISOString(),
+    checkedAt: status.authoritativeCheckedAt,
+    requestAt: new Date().toISOString(),
   };
 }

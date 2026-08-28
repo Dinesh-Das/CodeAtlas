@@ -24,6 +24,11 @@ export interface SemanticTarget {
   endColumn: number;
 }
 
+export interface CompilerPublicApiFacts {
+  fingerprint: string;
+  exportedSymbols: Readonly<Record<string, string>>;
+}
+
 interface SemanticCall {
   expressionStart: number;
   expressionEnd: number;
@@ -378,6 +383,103 @@ export class TypeScriptProjectResolver {
       return target;
     } catch {
       this.#metrics.semanticResolutionMs += performance.now() - semanticStartedAt;
+      return null;
+    }
+  }
+
+  /** Returns compiler-resolved exported types, including inferred return/value and JSDoc types. */
+  publicApiFacts(sourceFile: string): CompilerPublicApiFacts | null {
+    if (!/\.[cm]?[jt]sx?$/u.test(sourceFile)) return null;
+    try {
+      const project = this.#loadProject(sourceFile);
+      if (project.program === undefined) {
+        const programStartedAt = performance.now();
+        project.program = ts.createProgram({
+          rootNames: project.rootNames,
+          options: project.configPath === null
+            ? { ...project.options, noLib: true, skipLibCheck: true, types: [] }
+            : project.options,
+          ...(project.projectReferences === undefined
+            ? {}
+            : { projectReferences: project.projectReferences }),
+        });
+        this.#metrics.programCreationMs += performance.now() - programStartedAt;
+        this.#metrics.programsCreated += 1;
+      }
+      project.checker ??= project.program.getTypeChecker();
+      const absoluteSource = path.join(this.#repositoryRoot, ...sourceFile.split("/"));
+      const source = project.program.getSourceFile(absoluteSource) ??
+        project.program.getSourceFiles().find((file) =>
+          this.#relativeIndexedPath(file.fileName) === sourceFile,
+        );
+      if (source === undefined) return null;
+      const sourceSymbol = project.checker.getSymbolAtLocation(source) ??
+        (source as ts.SourceFile & { symbol?: ts.Symbol }).symbol;
+      if (sourceSymbol === undefined) {
+        return { fingerprint: "[]", exportedSymbols: {} };
+      }
+      const formatFlags =
+        ts.TypeFormatFlags.NoTruncation |
+        ts.TypeFormatFlags.WriteTypeArgumentsOfSignature |
+        ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope;
+      const signatureFlags = ts.TypeFormatFlags.NoTruncation |
+        ts.TypeFormatFlags.WriteTypeArgumentsOfSignature;
+      const entries = project.checker.getExportsOfModule(sourceSymbol)
+        .map((exported) => {
+          let target = exported;
+          if ((exported.flags & ts.SymbolFlags.Alias) !== 0) {
+            try {
+              target = project.checker!.getAliasedSymbol(exported);
+            } catch {
+              target = exported;
+            }
+          }
+          const declaration =
+            target.valueDeclaration ??
+            target.declarations?.[0] ??
+            exported.valueDeclaration ??
+            exported.declarations?.[0] ??
+            source;
+          const valueType = project.checker!.getTypeOfSymbolAtLocation(target, declaration);
+          const declaredType = project.checker!.getDeclaredTypeOfSymbol(target);
+          const renderType = (type: ts.Type): string =>
+            project.checker!.typeToString(type, declaration, formatFlags);
+          const renderSignatures = (type: ts.Type): string[] => [
+            ...type.getCallSignatures().map((signature) =>
+              project.checker!.signatureToString(
+                signature,
+                declaration,
+                signatureFlags,
+                ts.SignatureKind.Call,
+              ),
+            ),
+            ...type.getConstructSignatures().map((signature) =>
+              project.checker!.signatureToString(
+                signature,
+                declaration,
+                signatureFlags,
+                ts.SignatureKind.Construct,
+              ),
+            ),
+          ].sort((left, right) => left.localeCompare(right));
+          return {
+            name: exported.getName(),
+            valueType: renderType(valueType),
+            declaredType: renderType(declaredType),
+            signatures: [...new Set([
+              ...renderSignatures(valueType),
+              ...renderSignatures(declaredType),
+            ])],
+          };
+        })
+        .sort((left, right) => left.name.localeCompare(right.name));
+      return {
+        fingerprint: JSON.stringify(entries),
+        exportedSymbols: Object.fromEntries(
+          entries.map((entry) => [entry.name, JSON.stringify(entry)]),
+        ),
+      };
+    } catch {
       return null;
     }
   }

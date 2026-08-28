@@ -53,6 +53,8 @@ export function extractFrameworkGraph(
 ): FrameworkExtraction {
   const nodes: GraphNode[] = [];
   const edges: GraphEdge[] = [];
+  const references: FrameworkExtraction["references"] = [];
+  const suppressedReferences: FrameworkExtraction["suppressedReferences"] = [];
   const detectedFrameworks: string[] = [];
   const failures: FrameworkExtraction["failures"] = [];
   for (const adapter of adapters.values()) {
@@ -62,9 +64,12 @@ export function extractFrameworkGraph(
       const entities = {
         routes: adapter.extractRoutes(context),
         models: adapter.extractModels(context),
+        supporting: adapter.extractSupportingNodes?.(context) ?? [],
       };
-      nodes.push(...entities.routes, ...entities.models);
+      nodes.push(...entities.routes, ...entities.models, ...entities.supporting);
       edges.push(...adapter.extractFrameworkRelationships(context, entities));
+      references.push(...(adapter.extractFrameworkReferences?.(context, entities) ?? []));
+      suppressedReferences.push(...(adapter.suppressedReferences?.(context) ?? []));
       detectedFrameworks.push(adapter.name);
     } catch (error) {
       failures.push({
@@ -76,6 +81,8 @@ export function extractFrameworkGraph(
   return {
     nodes,
     edges,
+    references,
+    suppressedReferences,
     detectedFrameworks: detectedFrameworks.sort((left, right) => left.localeCompare(right)),
     failures,
   };
@@ -89,6 +96,7 @@ export function mergeFrameworkGraph(
     parsedFile === null &&
     extraction.nodes.length === 0 &&
     extraction.edges.length === 0 &&
+    extraction.references.length === 0 &&
     extraction.failures.length === 0
   ) {
     return null;
@@ -103,10 +111,24 @@ export function mergeFrameworkGraph(
   const edges = new Map(base.edges.map((edge) => [edge.id, edge]));
   for (const node of extraction.nodes) nodes.set(node.id, node);
   for (const edge of extraction.edges) edges.set(edge.id, edge);
+  const suppressed = new Set(
+    extraction.suppressedReferences.map(
+      (reference) => `${reference.kind}\0${reference.line}\0${reference.column}`,
+    ),
+  );
   return {
     ...base,
     nodes: [...nodes.values()],
     edges: [...edges.values()],
+    unresolvedReferences: [
+      ...base.unresolvedReferences.filter(
+        (reference) =>
+          !suppressed.has(
+            `${reference.kind}\0${reference.evidence.line}\0${reference.evidence.column}`,
+          ),
+      ),
+      ...extraction.references,
+    ],
     errors: [
       ...base.errors,
       ...extraction.failures.map((failure) => ({

@@ -366,6 +366,13 @@ const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    version: 8,
+    sql: `
+      CREATE INDEX idx_resolution_issues_import_hash
+        ON resolution_issues(reference_kind, reason, reference_hash, file_path);
+    `,
+  },
 ];
 
 export function runMigrations(database: Database.Database): void {

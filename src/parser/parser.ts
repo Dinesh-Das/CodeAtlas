@@ -44,6 +44,13 @@ export interface UnresolvedReference {
     | "queue_publish"
     | "dependency_injection"
     | "runtime_registration"
+    | "framework_route_handler"
+    | "framework_implementation"
+    | "framework_mount"
+    | "framework_hook"
+    | "framework_protection"
+    | "prisma_query"
+    | "prisma_update"
     | "reflection"
     | "generated";
   sourceNodeId: string;

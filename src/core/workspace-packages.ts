@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import picomatch from "picomatch";
 
 interface RootPackageManifest {
   workspaces?: unknown;
@@ -35,23 +36,14 @@ function pnpmPatterns(content: string): string[] {
   return patterns;
 }
 
-function globExpression(pattern: string): RegExp {
-  const normalized = pattern.replace(/^\.\//u, "").replace(/\/$/u, "");
-  let expression = "^";
-  for (let index = 0; index < normalized.length; index += 1) {
-    const character = normalized[index]!;
-    if (character === "*" && normalized[index + 1] === "*") {
-      expression += ".*";
-      index += 1;
-    } else if (character === "*") {
-      expression += "[^/]*";
-    } else if (character === "?") {
-      expression += "[^/]";
-    } else {
-      expression += character.replace(/[\\^$.*+?()[\]{}|]/gu, "\\$&");
-    }
-  }
-  return new RegExp(`${expression}$`, "u");
+function workspaceMatcher(pattern: string): (directory: string) => boolean {
+  const normalized = pattern.trim().replace(/^\.\//u, "").replace(/\/$/u, "");
+  return picomatch(normalized, {
+    bash: true,
+    dot: true,
+    noext: false,
+    noglobstar: false,
+  });
 }
 
 /** Returns package manifests that are actual root/workspace members, not arbitrary nested packages. */
@@ -85,18 +77,18 @@ export function workspaceManifestPaths(
 
   const matchers = patterns
     .filter((pattern) => pattern.trim() !== "" && !pattern.trim().startsWith("!"))
-    .map(globExpression);
+    .map(workspaceMatcher);
   const exclusions = patterns
     .filter((pattern) => pattern.trim().startsWith("!"))
-    .map((pattern) => globExpression(pattern.trim().slice(1)));
+    .map((pattern) => workspaceMatcher(pattern.trim().slice(1)));
   for (const manifestPath of indexedPaths) {
     if (path.posix.basename(manifestPath) !== "package.json" || manifestPath === "package.json") {
       continue;
     }
     const directory = path.posix.dirname(manifestPath);
     if (
-      matchers.some((matcher) => matcher.test(directory)) &&
-      !exclusions.some((matcher) => matcher.test(directory))
+      matchers.some((matcher) => matcher(directory)) &&
+      !exclusions.some((matcher) => matcher(directory))
     ) {
       result.add(manifestPath);
     }

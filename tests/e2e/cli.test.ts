@@ -45,12 +45,12 @@ describe("compiled CLI", () => {
     expect(JSON.parse(jsonIndexResult.stdout)).toMatchObject({
       changedFiles: 1,
       fullRebuild: false,
-      semanticChanges: { implementation_only: 1 },
+      semanticChanges: { public_contract_change: 1 },
       generations: {
-        structural: 1,
-        semantic: 1,
+        structural: 2,
+        semantic: 2,
         search: 1,
-        architecture: 1,
+        architecture: 2,
       },
       phaseMetrics: expect.arrayContaining([
         expect.objectContaining({ phase: "tree_sitter_parsing" }),
@@ -63,7 +63,7 @@ describe("compiled CLI", () => {
     expect(quietIndexResult).toEqual({ stdout: "", stderr: "" });
 
     const doctor = await runCli("doctor", repository.root);
-    expect(doctor.stdout).toContain("[OK] SQLite: quick_check=ok, journal_mode=wal, schema=7");
+    expect(doctor.stdout).toContain("[OK] SQLite: quick_check=ok, journal_mode=wal, schema=8");
     expect(doctor.stdout).toContain("[OK] Graph integrity:");
     expect(doctor.stdout).toContain("[OK] Relationship quality:");
     expect(doctor.stdout).toContain("[OK] Database storage:");

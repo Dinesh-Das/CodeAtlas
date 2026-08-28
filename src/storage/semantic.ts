@@ -50,6 +50,32 @@ export function listFileSemanticFacts(database: AtlasDatabase): FileSemanticFact
     .map(fromRow);
 }
 
+export function listFileSemanticFactPaths(database: AtlasDatabase): string[] {
+  return (
+    database.prepare("SELECT path FROM file_semantics ORDER BY path").all() as Array<{
+      path: string;
+    }>
+  ).map((row) => row.path);
+}
+
+export function getFileSemanticFactsForPaths(
+  database: AtlasDatabase,
+  filePaths: readonly string[],
+): FileSemanticFacts[] {
+  const uniquePaths = [...new Set(filePaths)];
+  const facts: FileSemanticFacts[] = [];
+  for (let offset = 0; offset < uniquePaths.length; offset += 400) {
+    const chunk = uniquePaths.slice(offset, offset + 400);
+    if (chunk.length === 0) continue;
+    const placeholders = chunk.map(() => "?").join(", ");
+    const rows = database
+      .prepare(`SELECT * FROM file_semantics WHERE path IN (${placeholders}) ORDER BY path`)
+      .all(...chunk) as SemanticRow[];
+    facts.push(...rows.map(fromRow));
+  }
+  return facts;
+}
+
 export function upsertFileSemanticFacts(
   database: AtlasDatabase,
   facts: FileSemanticFacts,
@@ -108,11 +134,20 @@ export function deleteResolvedEdgesForFiles(
   database: AtlasDatabase,
   filePaths: readonly string[],
 ): void {
-  const select = cachedStatement(database, "SELECT edge_id FROM resolved_edges WHERE file_path = ?");
-  const remove = cachedStatement(database, "DELETE FROM edges WHERE id = ?");
-  for (const filePath of filePaths) {
-    const rows = select.all(filePath) as Array<{ edge_id: string }>;
-    for (const row of rows) remove.run(row.edge_id);
+  const uniquePaths = [...new Set(filePaths)];
+  for (let offset = 0; offset < uniquePaths.length; offset += 400) {
+    const chunk = uniquePaths.slice(offset, offset + 400);
+    if (chunk.length === 0) continue;
+    const placeholders = chunk.map(() => "?").join(", ");
+    database
+      .prepare(
+        `DELETE FROM edges
+         WHERE id IN (
+           SELECT edge_id FROM resolved_edges
+           WHERE file_path IN (${placeholders})
+         )`,
+      )
+      .run(...chunk);
   }
 }
 

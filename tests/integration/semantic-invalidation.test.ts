@@ -196,6 +196,55 @@ describe("semantic-delta invalidation", () => {
     expect(timestamps(repository, "src/unrelated.ts")).toEqual(unrelatedBefore);
   });
 
+  it("invalidates consumers when an exported function's inferred return type changes", async () => {
+    const repository = await initializedRepository({
+      "src/value.ts": "export function value() { return 1; }\n",
+      "src/consumer.ts":
+        'import { value } from "./value.js";\nexport const formatted = value().toFixed();\n',
+    });
+    await repository.write("src/value.ts", 'export function value() { return "1"; }\n');
+    await expect(indexRepository(repository.root)).resolves.toMatchObject({
+      changedFiles: 1,
+      invalidatedFiles: 1,
+      semanticChanges: { public_contract_change: 1 },
+      work: { dependentFilesInvalidated: 1 },
+    });
+  });
+
+  it("invalidates consumers when an exported object's inferred property type changes", async () => {
+    const repository = await initializedRepository({
+      "src/config.ts": "export const config = { enabled: true };\n",
+      "src/consumer.ts":
+        'import { config } from "./config.js";\nexport const enabled: boolean = config.enabled;\n',
+    });
+    await repository.write(
+      "src/config.ts",
+      'export const config = { enabled: "yes" };\n',
+    );
+    await expect(indexRepository(repository.root)).resolves.toMatchObject({
+      changedFiles: 1,
+      invalidatedFiles: 1,
+      semanticChanges: { public_contract_change: 1 },
+    });
+  });
+
+  it("uses JSDoc types in JavaScript public API fingerprints", async () => {
+    const repository = await initializedRepository({
+      "src/value.js": "/** @returns {number} */\nexport function value() { return 1; }\n",
+      "src/consumer.js":
+        'import { value } from "./value.js";\nexport const formatted = value().toFixed();\n',
+    });
+    await repository.write(
+      "src/value.js",
+      "/** @returns {string} */\nexport function value() { return 1; }\n",
+    );
+    await expect(indexRepository(repository.root)).resolves.toMatchObject({
+      changedFiles: 1,
+      invalidatedFiles: 1,
+      semanticChanges: { public_contract_change: 1 },
+    });
+  });
+
   it("treats TypeScript project configuration as an explicit broad resolution change", async () => {
     const repository = await initializedRepository({
       "tsconfig.json": JSON.stringify({

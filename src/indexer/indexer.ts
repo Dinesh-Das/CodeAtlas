@@ -36,6 +36,7 @@ import {
   mergeFrameworkGraph,
   supportsFrameworkExtraction,
 } from "../framework/registry.js";
+import { materializeFrameworkRelationships } from "../framework/materialize.js";
 import { createEdgeId, createNodeId } from "../graph/ids.js";
 import {
   loadRenamePathAliases,
@@ -43,6 +44,7 @@ import {
   type RenamePlan,
 } from "../graph/renames.js";
 import { resolveReferences, type ResolutionResult } from "../graph/resolver.js";
+import { TypeScriptProjectResolver } from "../graph/typescript-resolution.js";
 import type { GraphEdge, GraphNode } from "../graph/types.js";
 import type { RepositoryInfo } from "../git/repository.js";
 import { detectRepository } from "../git/repository.js";
@@ -82,8 +84,8 @@ import {
   deleteExtractedEdgesForFile,
   deleteFileSemanticFacts,
   deleteResolvedEdgesForFiles,
-  getFileSemanticFacts,
-  listFileSemanticFacts,
+  getFileSemanticFactsForPaths,
+  listFileSemanticFactPaths,
   upsertFileSemanticFacts,
 } from "../storage/semantic.js";
 import { CODEATLAS_VERSION, INDEXER_VERSION, SCHEMA_VERSION } from "../version.js";
@@ -747,8 +749,30 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         itemsProcessed: parsedReferenceCount,
         inclusive: true,
       });
+      const compilerPublicApiByPath = new Map();
+      const compilerApiResolver = new TypeScriptProjectResolver(
+        repository.root,
+        new Set(candidates.map((candidate) => candidate.relativePath)),
+      );
+      for (const candidate of changed) {
+        const hasExports = candidate.parsedFile?.edges.some(
+          (edge) => edge.edgeType === "EXPORTS",
+        ) === true || candidate.parsedFile?.unresolvedReferences.some(
+          (reference) => reference.kind === "export",
+        ) === true;
+        if (!hasExports) continue;
+        const facts = compilerApiResolver.publicApiFacts(candidate.relativePath);
+        if (facts !== null) compilerPublicApiByPath.set(candidate.relativePath, facts);
+      }
+      const previousFactPaths = [
+        ...changed.map((candidate) =>
+          changes.renamed.find((rename) => rename.path === candidate.relativePath)?.previousPath ??
+            candidate.relativePath,
+        ),
+        ...changes.deleted,
+      ];
       const previousFactsByPath = new Map(
-        listFileSemanticFacts(database).map((facts) => [facts.path, facts]),
+        getFileSemanticFactsForPaths(database, previousFactPaths).map((facts) => [facts.path, facts]),
       );
       for (const candidate of changed) {
         const shouldPersistFacts =
@@ -768,6 +792,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           candidate.language,
           candidate.content,
           candidate.parsedFile,
+          compilerPublicApiByPath.get(candidate.relativePath) ?? null,
         );
       }
 
@@ -823,8 +848,8 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           invalidatedPaths.add(filePath);
         }
         if (moduleConfigurationChanged) {
-          for (const facts of previousFactsByPath.values()) {
-            if (currentByPath.has(facts.path)) invalidatedPaths.add(facts.path);
+          for (const filePath of listFileSemanticFactPaths(database)) {
+            if (currentByPath.has(filePath)) invalidatedPaths.add(filePath);
           }
         }
       }
@@ -832,6 +857,9 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         if (!currentByPath.has(filePath) || directlyChangedPaths.has(filePath)) {
           invalidatedPaths.delete(filePath);
         }
+      }
+      for (const facts of getFileSemanticFactsForPaths(database, [...invalidatedPaths])) {
+        previousFactsByPath.set(facts.path, facts);
       }
       const renamePlans = new Map<string, RenamePlan>();
       if (!fullRebuild) {
@@ -859,6 +887,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
                 rename.current.language,
                 rename.current.content,
                 plan.parsedFile,
+                compilerPublicApiByPath.get(rename.path) ?? null,
               );
             }
           }
@@ -1287,6 +1316,14 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             repository.id,
             repository.root,
             resolutionInputs,
+            indexedAt,
+          );
+        }
+        if (config.analysis.frameworks) {
+          materializeFrameworkRelationships(
+            database,
+            repository.id,
+            repository.root,
             indexedAt,
           );
         }

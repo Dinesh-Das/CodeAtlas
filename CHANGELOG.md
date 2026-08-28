@@ -2,9 +2,21 @@
 
 All notable changes follow semantic versioning.
 
-## Unreleased
+## 0.10.0-beta.1 - 2026-08-28
 
 ### Added
+
+- Verified Fastify framework composition for decorators, implementations, plugin mounts,
+  registration hooks, route protection, hook continuation, and hashed route prefixes. Exact base
+  and effective prefixed route literals are recovered transiently for MCP answers without storing
+  plaintext route paths.
+- Verified Prisma client `QUERIES` and `UPDATES` relationships from deterministic
+  `prisma.<model>.<operation>` calls to parsed schema model nodes.
+- Compiler-aware TypeScript/JavaScript public API fingerprints for inferred function returns,
+  inferred exported values/objects, and JSDoc types.
+- Endpoint labels and bounded evidence snippets on graph packets, truthful authoritative versus
+  watched-cache freshness metadata, and database-backed dependency/feature pagination beyond the
+  per-response result cap.
 
 - TypeScript compiler-backed module and receiver-aware call resolution, workspace package nodes,
   internal package dependencies, package exports, aliases, and project configuration support.
@@ -33,9 +45,12 @@ All notable changes follow semantic versioning.
 - Search uses normalized developer intent and SQL-backed page retrieval instead of paginating a
   permanently truncated in-memory candidate set.
 - Architecture computation occurs outside the SQLite write transaction; generation-linked
-  persistence remains atomic and crash-repairable. Schema 6 adds resolver/query indexes and a
-  rowid-addressed external-content FTS index with transactional bulk rebuilds; the indexing
-  contract is `large-repo-9`.
+  persistence remains atomic and crash-repairable. Schema 8 includes semantic-delta state,
+  resolution-hash indexes, and a rowid-addressed external-content FTS index with transactional bulk
+  rebuilds; the indexing contract is `framework-semantics-11`.
+- Tiny incremental updates fetch semantic records only for changed, deleted, renamed, or actually
+  invalidated files; resolved-edge deletion is set-based, unresolved-import wakeup is grouped and
+  hash-indexed, and workspace matching uses standards-complete brace/extglob/globstar semantics.
 - The supported runtime is Node.js 22.12 or newer, matching the strictest runtime dependency; CI
   validates Node.js 22.12 and 24.
 

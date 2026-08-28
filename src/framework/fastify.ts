@@ -2,6 +2,7 @@ import JavaScriptLanguage from "tree-sitter-javascript";
 import TypeScriptLanguages from "tree-sitter-typescript";
 import type { DetectedLanguage } from "../core/languages.js";
 import type { GraphEdge, GraphNode } from "../graph/types.js";
+import type { UnresolvedReference } from "../parser/parser.js";
 import { createTree, type SyntaxNode } from "../parser/tree-sitter.js";
 import {
   containerNodeId,
@@ -9,10 +10,14 @@ import {
   frameworkNode,
   literalHash,
   locationFor,
-  symbolNodeId,
 } from "./graph.js";
 import { identifierText, memberParts, stringLiteralValue, walkSyntax } from "./syntax.js";
-import type { FrameworkAdapter, FrameworkEntities, RepositoryContext } from "./types.js";
+import type {
+  FrameworkAdapter,
+  FrameworkEntities,
+  RepositoryContext,
+  SuppressedFrameworkReference,
+} from "./types.js";
 
 const HTTP_METHODS = new Set([
   "delete",
@@ -23,17 +28,46 @@ const HTTP_METHODS = new Set([
   "post",
   "put",
 ]);
+const REQUEST_HOOKS = new Set(["onRequest", "preHandler"]);
 
 interface FastifyRoute {
   syntaxNode: SyntaxNode;
+  callableNode: SyntaxNode;
   method: string;
   path: string | null;
   handler: string | null;
+  hooks: string[];
+}
+
+interface FastifyDecorator {
+  syntaxNode: SyntaxNode;
+  callableNode: SyntaxNode;
+  name: string;
+  implementation: string | null;
+}
+
+interface FastifyRegistration {
+  syntaxNode: SyntaxNode;
+  callableNode: SyntaxNode;
+  plugin: string | null;
+  hooks: string[];
+  prefix: string | null;
+}
+
+interface FastifyHookBinding {
+  syntaxNode: SyntaxNode;
+  callableNode: SyntaxNode;
+  hook: string;
+  implementation: string | null;
 }
 
 interface FastifyAnalysis {
   detected: boolean;
   routes: FastifyRoute[];
+  decorators: FastifyDecorator[];
+  registrations: FastifyRegistration[];
+  hookBindings: FastifyHookBinding[];
+  suppressedReferences: SuppressedFrameworkReference[];
 }
 
 const analyses = new WeakMap<RepositoryContext, FastifyAnalysis>();
@@ -59,6 +93,31 @@ function handlerName(node: SyntaxNode | null): string | null {
   return identifierText(node) ?? memberParts(node)?.join(".") ?? null;
 }
 
+function handlerNames(node: SyntaxNode | null): string[] {
+  if (node?.type === "array") {
+    return node.namedChildren
+      .map(handlerName)
+      .filter((value): value is string => value !== null);
+  }
+  const name = handlerName(node);
+  return name === null ? [] : [name];
+}
+
+function requestHooks(options: SyntaxNode | null): string[] {
+  return [...REQUEST_HOOKS].flatMap((name) =>
+    handlerNames(pairValue(options, new Set([name]))),
+  );
+}
+
+function suppressed(
+  kind: UnresolvedReference["kind"],
+  node: SyntaxNode | null,
+): SuppressedFrameworkReference | null {
+  if (node === null) return null;
+  const location = locationFor(node);
+  return { kind, line: location.line, column: location.column };
+}
+
 function analyze(context: RepositoryContext): FastifyAnalysis {
   const cached = analyses.get(context);
   if (cached !== undefined) return cached;
@@ -79,8 +138,8 @@ function analyze(context: RepositoryContext): FastifyAnalysis {
       for (const specifier of child.namedChildren) {
         const imported = identifierText(specifier.childForFieldName("name"));
         const local = identifierText(specifier.childForFieldName("alias")) ?? imported;
-        if (imported === "fastify" || imported === "Fastify") {
-          if (local !== null) factories.add(local);
+        if ((imported === "fastify" || imported === "Fastify") && local !== null) {
+          factories.add(local);
         }
       }
     }
@@ -99,6 +158,10 @@ function analyze(context: RepositoryContext): FastifyAnalysis {
   });
 
   const routes: FastifyRoute[] = [];
+  const decorators: FastifyDecorator[] = [];
+  const registrations: FastifyRegistration[] = [];
+  const hookBindings: FastifyHookBinding[] = [];
+  const suppressedReferences: SuppressedFrameworkReference[] = [];
   walkSyntax(root, (node) => {
     if (node.type !== "call_expression") return;
     const callable = node.childForFieldName("function");
@@ -107,42 +170,109 @@ function analyze(context: RepositoryContext): FastifyAnalysis {
     const method = identifierText(callable.childForFieldName("property"))?.toLowerCase();
     if (receiver === undefined || method === undefined) return;
     const receiverTail = receiver.split(".").at(-1) ?? receiver;
-    const looksLikeFastify = receivers.has(receiver) || receiverTail === "fastify";
-    if (!looksLikeFastify) return;
-    const argumentsNode = node.childForFieldName("arguments");
-    const args = argumentsNode?.namedChildren ?? [];
+    if (!receivers.has(receiver) && receiverTail !== "fastify") return;
+    const args = node.childForFieldName("arguments")?.namedChildren ?? [];
+
+    if (
+      !HTTP_METHODS.has(method) &&
+      method !== "route" &&
+      method !== "decorate" &&
+      method !== "register" &&
+      method !== "addhook"
+    ) {
+      return;
+    }
+    const genericCall = suppressed("call", callable);
+    if (genericCall !== null) suppressedReferences.push(genericCall);
 
     if (HTTP_METHODS.has(method)) {
       detected = true;
+      const options = args.length >= 3 ? args.at(-2) ?? null : null;
       routes.push({
         syntaxNode: node,
+        callableNode: callable,
         method: method.toUpperCase(),
         path: stringLiteralValue(args[0] ?? null),
         handler: handlerName(args.at(-1) ?? null),
+        hooks: requestHooks(options),
       });
       return;
     }
-    if (method !== "route") return;
-    const options = args[0] ?? null;
-    const methodNode = pairValue(options, new Set(["method"]));
-    const pathNode = pairValue(options, new Set(["url", "path"]));
-    const handlerNode = pairValue(options, new Set(["handler"]));
-    const methods = methodNode?.type === "array"
-      ? methodNode.namedChildren.map(stringLiteralValue).filter((value): value is string => value !== null)
-      : [stringLiteralValue(methodNode)].filter((value): value is string => value !== null);
-    if (methods.length === 0) return;
-    detected = true;
-    for (const routeMethod of methods) {
-      routes.push({
-        syntaxNode: node,
-        method: routeMethod.toUpperCase(),
-        path: stringLiteralValue(pathNode),
-        handler: handlerName(handlerNode),
-      });
+
+    if (method === "route") {
+      const options = args[0] ?? null;
+      const methodNode = pairValue(options, new Set(["method"]));
+      const pathNode = pairValue(options, new Set(["url", "path"]));
+      const handlerNode = pairValue(options, new Set(["handler"]));
+      const methods = methodNode?.type === "array"
+        ? methodNode.namedChildren
+            .map(stringLiteralValue)
+            .filter((value): value is string => value !== null)
+        : [stringLiteralValue(methodNode)].filter((value): value is string => value !== null);
+      if (methods.length === 0) return;
+      detected = true;
+      for (const routeMethod of methods) {
+        routes.push({
+          syntaxNode: node,
+          callableNode: callable,
+          method: routeMethod.toUpperCase(),
+          path: stringLiteralValue(pathNode),
+          handler: handlerName(handlerNode),
+          hooks: requestHooks(options),
+        });
+      }
+      return;
     }
+
+    if (method === "decorate") {
+      const name = stringLiteralValue(args[0] ?? null);
+      if (name === null) return;
+      detected = true;
+      decorators.push({
+        syntaxNode: node,
+        callableNode: callable,
+        name,
+        implementation: handlerName(args[1] ?? null),
+      });
+      return;
+    }
+
+    if (method === "register") {
+      detected = true;
+      const options = args[1] ?? null;
+      registrations.push({
+        syntaxNode: node,
+        callableNode: callable,
+        plugin: handlerName(args[0] ?? null),
+        hooks: requestHooks(options),
+        prefix: stringLiteralValue(pairValue(options, new Set(["prefix"]))),
+      });
+      const runtimeRegistration = suppressed("runtime_registration", args.at(-1) ?? null);
+      if (runtimeRegistration !== null && handlerName(args.at(-1) ?? null) !== null) {
+        suppressedReferences.push(runtimeRegistration);
+      }
+      return;
+    }
+
+    const hook = stringLiteralValue(args[0] ?? null);
+    if (hook === null || !REQUEST_HOOKS.has(hook)) return;
+    detected = true;
+    hookBindings.push({
+      syntaxNode: node,
+      callableNode: callable,
+      hook,
+      implementation: handlerName(args[1] ?? null),
+    });
   });
 
-  const result = { detected, routes };
+  const result = {
+    detected,
+    routes,
+    decorators,
+    registrations,
+    hookBindings,
+    suppressedReferences,
+  };
   analyses.set(context, result);
   return result;
 }
@@ -163,13 +293,133 @@ function routeNode(context: RepositoryContext, route: FastifyRoute): GraphNode {
       route_path_hash: pathHash,
       path_kind: route.path === null ? "dynamic" : "static_literal",
       handler: route.handler,
+      hook_count: route.hooks.length,
     },
   });
 }
 
+function decoratorNode(context: RepositoryContext, decorator: FastifyDecorator): GraphNode {
+  return frameworkNode(context, {
+    kind: "configuration",
+    name: decorator.name,
+    qualifiedName: `fastify.${decorator.name}`,
+    location: locationFor(decorator.syntaxNode),
+    framework: "fastify",
+    signature: `fastify.decorate(<literal>, ${decorator.implementation ?? "<dynamic>"})`,
+    metadata: {
+      fastify_entity: "decorator",
+      decorator_name_hash: literalHash("fastify_decorator", decorator.name),
+      implementation: decorator.implementation,
+    },
+  });
+}
+
+function registrationNode(
+  context: RepositoryContext,
+  registration: FastifyRegistration,
+): GraphNode {
+  const location = locationFor(registration.syntaxNode);
+  return frameworkNode(context, {
+    kind: "configuration",
+    name: `register ${registration.plugin ?? "dynamic plugin"}`,
+    qualifiedName: `fastify:registration:${registration.plugin ?? "dynamic"}:${location.line}`,
+    location,
+    framework: "fastify",
+    confidence: registration.plugin === null ? 0.8 : 1,
+    signature: `fastify.register(${registration.plugin ?? "<dynamic>"})`,
+    metadata: {
+      fastify_entity: "registration",
+      plugin: registration.plugin,
+      hook_count: registration.hooks.length,
+      prefix_hash:
+        registration.prefix === null
+          ? null
+          : literalHash("fastify_route_prefix", registration.prefix),
+      prefix_kind: registration.prefix === null ? "none" : "static_literal",
+    },
+  });
+}
+
+function hookBindingNode(context: RepositoryContext, binding: FastifyHookBinding): GraphNode {
+  const location = locationFor(binding.syntaxNode);
+  return frameworkNode(context, {
+    kind: "configuration",
+    name: `${binding.hook} hook`,
+    qualifiedName: `fastify:hook:${binding.hook}:${location.line}`,
+    location,
+    framework: "fastify",
+    signature: `fastify.addHook(<literal>, ${binding.implementation ?? "<dynamic>"})`,
+    metadata: {
+      fastify_entity: "hook_binding",
+      hook: binding.hook,
+      implementation: binding.implementation,
+    },
+  });
+}
+
+function supportingNode(
+  entities: FrameworkEntities,
+  entity: string,
+  line: number,
+): GraphNode | null {
+  return entities.supporting.find(
+    (node) => node.metadata.fastify_entity === entity && node.startLine === line,
+  ) ?? null;
+}
+
+function enclosingCallableNodeId(context: RepositoryContext, syntaxNode: SyntaxNode): string {
+  const line = syntaxNode.startPosition.row + 1;
+  const candidates = (context.parsedFile?.nodes ?? []).filter(
+    (node) =>
+      (node.kind === "function" || node.kind === "method") &&
+      node.startLine !== null &&
+      node.endLine !== null &&
+      node.startLine <= line &&
+      node.endLine >= line,
+  );
+  candidates.sort(
+    (left, right) =>
+      (left.endLine! - left.startLine!) - (right.endLine! - right.startLine!),
+  );
+  return candidates[0]?.id ?? containerNodeId(context);
+}
+
+function frameworkReference(
+  context: RepositoryContext,
+  input: {
+    name: string;
+    kind: UnresolvedReference["kind"];
+    sourceNodeId: string;
+    syntaxNode: SyntaxNode;
+    metadata?: Record<string, unknown>;
+  },
+): UnresolvedReference {
+  const location = locationFor(input.syntaxNode);
+  return {
+    name: input.name,
+    kind: input.kind,
+    sourceNodeId: input.sourceNodeId,
+    localName: null,
+    importedName: null,
+    provenance: "verified",
+    confidence: 1,
+    metadata: { framework: "fastify", ...(input.metadata ?? {}) },
+    evidence: {
+      sourceType: "framework",
+      file: context.relativeFilePath,
+      line: location.line,
+      column: location.column,
+    },
+  };
+}
+
+function hookTarget(expression: string): string {
+  return expression.split(".").at(-1) ?? expression;
+}
+
 export const fastifyAdapter: FrameworkAdapter = {
   name: "fastify",
-  version: "fastify-framework-1",
+  version: "fastify-framework-2",
 
   supports(_relativeFilePath, language) {
     return ["typescript", "tsx", "javascript", "jsx"].includes(language ?? "");
@@ -187,36 +437,171 @@ export const fastifyAdapter: FrameworkAdapter = {
     return [];
   },
 
+  extractSupportingNodes(context) {
+    const analysis = analyze(context);
+    return [
+      ...analysis.decorators.map((decorator) => decoratorNode(context, decorator)),
+      ...analysis.registrations.map((registration) => registrationNode(context, registration)),
+      ...analysis.hookBindings.map((binding) => hookBindingNode(context, binding)),
+    ];
+  },
+
   extractFrameworkRelationships(context, entities: FrameworkEntities): GraphEdge[] {
     const edges: GraphEdge[] = [];
-    const routes = analyze(context).routes;
+    const analysis = analyze(context);
     for (const [index, node] of entities.routes.entries()) {
-      const route = routes[index];
+      const route = analysis.routes[index];
       if (route === undefined) continue;
-      const location = locationFor(route.syntaxNode);
       edges.push(
         frameworkEdge(context, {
           edgeType: "EXPOSES",
-          sourceNodeId: containerNodeId(context),
+          sourceNodeId: enclosingCallableNodeId(context, route.syntaxNode),
           targetNodeId: node.id,
-          location,
+          location: locationFor(route.syntaxNode),
           metadata: { framework: "fastify" },
         }),
       );
-      if (route.handler === null || route.handler.includes(".")) continue;
-      const target = symbolNodeId(context, route.handler, ["function", "method"]);
-      if (target !== null) {
-        edges.push(
-          frameworkEdge(context, {
-            edgeType: "HANDLES",
-            sourceNodeId: node.id,
-            targetNodeId: target,
-            location,
-            metadata: { framework: "fastify" },
+    }
+    const supportingEntities: Array<{
+      type: string;
+      relationship: string;
+      syntaxNode: SyntaxNode;
+    }> = [
+      ...analysis.decorators.map((entry) => ({
+        type: "decorator",
+        relationship: "decorate",
+        syntaxNode: entry.syntaxNode,
+      })),
+      ...analysis.registrations.map((entry) => ({
+        type: "registration",
+        relationship: "register",
+        syntaxNode: entry.syntaxNode,
+      })),
+      ...analysis.hookBindings.map((entry) => ({
+        type: "hook_binding",
+        relationship: "add_hook",
+        syntaxNode: entry.syntaxNode,
+      })),
+    ];
+    for (const entry of supportingEntities) {
+      const node = supportingNode(
+        entities,
+        entry.type,
+        entry.syntaxNode.startPosition.row + 1,
+      );
+      if (node === null) continue;
+      edges.push(
+        frameworkEdge(context, {
+          edgeType: "CONFIGURES",
+          sourceNodeId: enclosingCallableNodeId(context, entry.syntaxNode),
+          targetNodeId: node.id,
+          location: locationFor(entry.syntaxNode),
+          metadata: { framework: "fastify", relationship: entry.relationship },
+        }),
+      );
+    }
+    return edges;
+  },
+
+  extractFrameworkReferences(context, entities) {
+    const references: UnresolvedReference[] = [];
+    const analysis = analyze(context);
+    for (const [index, route] of analysis.routes.entries()) {
+      const routeGraphNode = entities.routes[index];
+      if (routeGraphNode === undefined) continue;
+      if (route.handler !== null) {
+        references.push(
+          frameworkReference(context, {
+            name: route.handler,
+            kind: "framework_route_handler",
+            sourceNodeId: routeGraphNode.id,
+            syntaxNode: route.callableNode,
+            metadata: { relationship: "route_handler" },
+          }),
+        );
+      }
+      for (const hook of route.hooks) {
+        references.push(
+          frameworkReference(context, {
+            name: hookTarget(hook),
+            kind: "framework_protection",
+            sourceNodeId: routeGraphNode.id,
+            syntaxNode: route.callableNode,
+            metadata: { hook_expression: hook, relationship: "route_hook" },
           }),
         );
       }
     }
-    return edges;
+    for (const decorator of analysis.decorators) {
+      const node = supportingNode(
+        entities,
+        "decorator",
+        decorator.syntaxNode.startPosition.row + 1,
+      );
+      if (node !== null && decorator.implementation !== null) {
+        references.push(
+          frameworkReference(context, {
+            name: decorator.implementation,
+            kind: "framework_implementation",
+            sourceNodeId: node.id,
+            syntaxNode: decorator.callableNode,
+            metadata: { relationship: "decorator_implementation" },
+          }),
+        );
+      }
+    }
+    for (const registration of analysis.registrations) {
+      const node = supportingNode(
+        entities,
+        "registration",
+        registration.syntaxNode.startPosition.row + 1,
+      );
+      if (node === null) continue;
+      if (registration.plugin !== null) {
+        references.push(
+          frameworkReference(context, {
+            name: registration.plugin,
+            kind: "framework_mount",
+            sourceNodeId: node.id,
+            syntaxNode: registration.callableNode,
+            metadata: { relationship: "plugin_registration" },
+          }),
+        );
+      }
+      for (const hook of registration.hooks) {
+        references.push(
+          frameworkReference(context, {
+            name: hookTarget(hook),
+            kind: "framework_hook",
+            sourceNodeId: node.id,
+            syntaxNode: registration.callableNode,
+            metadata: { hook_expression: hook, relationship: "plugin_hook" },
+          }),
+        );
+      }
+    }
+    for (const binding of analysis.hookBindings) {
+      const node = supportingNode(
+        entities,
+        "hook_binding",
+        binding.syntaxNode.startPosition.row + 1,
+      );
+      if (node !== null && binding.implementation !== null) {
+        references.push(
+          frameworkReference(context, {
+            name: hookTarget(binding.implementation),
+            kind: "framework_hook",
+            sourceNodeId: node.id,
+            syntaxNode: binding.callableNode,
+            metadata: { relationship: "add_hook" },
+          }),
+        );
+      }
+    }
+    return references;
+  },
+
+  suppressedReferences(context) {
+    return analyze(context).suppressedReferences;
   },
 };

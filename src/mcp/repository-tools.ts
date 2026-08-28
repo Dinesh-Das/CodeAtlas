@@ -31,7 +31,9 @@ export function statusPacket(context: FreshContext): AnswerPacket {
       facts: [
         {
           statement: status.synchronized
-            ? `Repository ${status.repository} is indexed and fully synchronized with the current working tree.`
+            ? status.freshnessMode === "authoritative"
+              ? `Repository ${status.repository} is indexed and synchronized with the authoritatively checked working tree.`
+              : `Repository ${status.repository} is indexed and synchronized under the filesystem-watch cache; the last authoritative check was ${status.authoritativeCheckedAt}.`
             : `Repository ${status.repository} has a current structural graph; one or more derived generations are stale.`,
           confidence: 1,
           source_type: "config",
@@ -46,7 +48,7 @@ export function statusPacket(context: FreshContext): AnswerPacket {
           evidence: { file: ".git/HEAD", line: 1 },
         },
         {
-          statement: `Working tree dirty state is ${String(status.dirty)}; the checked fingerprint is ${status.currentFingerprint}.`,
+          statement: `Working tree dirty state is ${String(status.dirty)}; freshness mode is ${status.freshnessMode}, the authoritative check was ${status.authoritativeCheckedAt}, and the checked fingerprint is ${status.currentFingerprint}.`,
           confidence: 1,
           source_type: "git",
           provenance: "git",

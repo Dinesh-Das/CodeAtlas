@@ -16,6 +16,7 @@ export function memberParts(node: SyntaxNode | null): string[] | null {
   if (node === null) return null;
   const identifier = identifierText(node);
   if (identifier !== null) return [identifier];
+  if (node.type === "this" || node.type === "super") return [node.type];
   if (node.type === "member_expression" || node.type === "attribute") {
     const object = memberParts(node.childForFieldName("object"));
     const property = identifierText(

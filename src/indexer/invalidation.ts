@@ -77,19 +77,48 @@ export function findUnresolvedImporters(
   addedPaths: readonly string[],
 ): Set<string> {
   if (addedPaths.length === 0) return new Set();
-  const issues = database
+  const sourceFiles = database
     .prepare(
-      `SELECT file_path, reference_hash
+      `SELECT DISTINCT file_path
        FROM resolution_issues
-       WHERE reference_kind = 'import' AND reason = 'unresolved_reference'`,
+       WHERE reference_kind = 'import' AND reason = 'unresolved_reference'
+       ORDER BY file_path`,
     )
-    .all() as ResolutionIssueRow[];
-  const importers = new Set<string>();
-  for (const issue of issues) {
+    .all() as Array<{ file_path: string }>;
+  const groupFor = (filePath: string): string =>
+    `${/\.pyi?$/u.test(filePath) ? "python" : "javascript"}\0${path.posix.dirname(filePath)}`;
+  const representativeByGroup = new Map<string, string>();
+  for (const row of sourceFiles) {
+    representativeByGroup.set(groupFor(row.file_path), row.file_path);
+  }
+  const groupsByHash = new Map<string, Set<string>>();
+  for (const [group, sourceFile] of representativeByGroup) {
     for (const addedPath of addedPaths) {
-      if (possibleImportHashes(issue.file_path, addedPath).has(issue.reference_hash)) {
+      for (const hash of possibleImportHashes(sourceFile, addedPath)) {
+        const groups = groupsByHash.get(hash) ?? new Set<string>();
+        groups.add(group);
+        groupsByHash.set(hash, groups);
+      }
+    }
+  }
+  const importers = new Set<string>();
+  const hashes = [...groupsByHash.keys()];
+  for (let offset = 0; offset < hashes.length; offset += 400) {
+    const chunk = hashes.slice(offset, offset + 400);
+    if (chunk.length === 0) continue;
+    const placeholders = chunk.map(() => "?").join(", ");
+    const issues = database
+      .prepare(
+        `SELECT file_path, reference_hash
+         FROM resolution_issues
+         WHERE reference_kind = 'import'
+           AND reason = 'unresolved_reference'
+           AND reference_hash IN (${placeholders})`,
+      )
+      .all(...chunk) as ResolutionIssueRow[];
+    for (const issue of issues) {
+      if (groupsByHash.get(issue.reference_hash)?.has(groupFor(issue.file_path)) === true) {
         importers.add(issue.file_path);
-        break;
       }
     }
   }

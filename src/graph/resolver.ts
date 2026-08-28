@@ -321,6 +321,20 @@ function edgeTypeFor(reference: UnresolvedReference): EdgeType {
       return "DEPENDS_ON";
     case "runtime_registration":
       return "CONFIGURES";
+    case "framework_route_handler":
+      return "HANDLES";
+    case "framework_implementation":
+      return "IMPLEMENTED_BY";
+    case "framework_mount":
+      return "MOUNTS";
+    case "framework_hook":
+      return "APPLIES_HOOK";
+    case "framework_protection":
+      return "PROTECTED_BY";
+    case "prisma_query":
+      return "QUERIES";
+    case "prisma_update":
+      return "UPDATES";
     case "extends":
       return "EXTENDS";
     case "implements":
@@ -340,6 +354,19 @@ function expectedKinds(reference: UnresolvedReference): ReadonlySet<NodeKind> {
     reference.kind === "queue_subscribe"
   ) {
     return new Set(["function", "method", "class"]);
+  }
+  if (
+    reference.kind === "framework_route_handler" ||
+    reference.kind === "framework_implementation" ||
+    reference.kind === "framework_mount"
+  ) {
+    return new Set(["function", "method", "class"]);
+  }
+  if (reference.kind === "framework_hook" || reference.kind === "framework_protection") {
+    return new Set(["configuration", "function", "method"]);
+  }
+  if (reference.kind === "prisma_query" || reference.kind === "prisma_update") {
+    return new Set(["database_model"]);
   }
   if (reference.kind === "dependency_injection") {
     return new Set(["class", "interface", "function"]);
@@ -517,6 +544,15 @@ function symbolCandidates(
       ),
       exact: true,
     };
+  }
+
+  if (typeof reference.metadata.framework === "string") {
+    const frameworkCandidates = (indexes.byName.get(last) ?? []).filter((node) =>
+      kinds.has(node.kind),
+    );
+    if (frameworkCandidates.length === 1) {
+      return { nodes: frameworkCandidates, exact: true, sourceType: "framework" };
+    }
   }
 
   if (parts.length > 1) {
@@ -773,7 +809,10 @@ function persistEdges(
     const distance = distances === null
       ? 1
       : candidateDistance(reference, candidate, modulesByFile, distances);
-    const sourceType: SourceType = sourceTypeOverride ??
+    const frameworkSource = typeof reference.metadata.framework === "string"
+      ? "framework" as const
+      : undefined;
+    const sourceType: SourceType = sourceTypeOverride ?? frameworkSource ??
       (exact && candidates.length === 1 ? "ast" : "heuristic");
     const edgeType = edgeTypeFor(reference);
     const id = createEdgeId(

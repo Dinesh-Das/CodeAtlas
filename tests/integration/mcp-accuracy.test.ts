@@ -2,11 +2,19 @@ import { afterEach, describe, expect, it } from "vitest";
 import { initializeRepository } from "../../src/cli/init.js";
 import { DEFAULT_CONFIG } from "../../src/core/config.js";
 import { workspacePaths } from "../../src/core/workspace.js";
-import { getNodePacket, tracePacket } from "../../src/mcp/graph-tools.js";
+import {
+  dependenciesPacket,
+  explainFeaturePacket,
+  getNodePacket,
+  tracePacket,
+} from "../../src/mcp/graph-tools.js";
 import { ensureFreshIndex } from "../../src/mcp/freshness.js";
-import { sourcePacket } from "../../src/mcp/repository-tools.js";
+import { sourcePacket, statusPacket } from "../../src/mcp/repository-tools.js";
 import { answerPacketSchema } from "../../src/mcp/schemas.js";
 import { openDatabase } from "../../src/storage/database.js";
+import { upsertEdge } from "../../src/storage/edges.js";
+import { upsertNode } from "../../src/storage/nodes.js";
+import type { GraphNode } from "../../src/graph/types.js";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
 
 const repositories: TestRepository[] = [];
@@ -175,5 +183,163 @@ describe("Phase 7 MCP accuracy", () => {
     expect(response.uncertainties).toContainEqual(
       expect.objectContaining({ reason: "insufficient_evidence" }),
     );
+  });
+
+  it("reports authoritative versus watched-cache freshness truthfully", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write("src/status.ts", "export const status = true;\n");
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "freshness metadata fixture");
+    await initializeRepository(repository.root);
+
+    const authoritative = statusPacket(await ensureFreshIndex(repository.root));
+    expect(authoritative.freshness).toMatchObject({
+      mode: "authoritative",
+      working_tree_checked: true,
+      reconciliation_max_age_ms: 30_000,
+    });
+    const cached = statusPacket(await ensureFreshIndex(repository.root));
+    expect(cached.freshness).toMatchObject({
+      mode: "watch_cache",
+      working_tree_checked: false,
+      authoritative_checked_at: authoritative.freshness.authoritative_checked_at,
+      reconciliation_max_age_ms: 30_000,
+    });
+    expect(cached.freshness.request_at >= cached.freshness.authoritative_checked_at).toBe(true);
+  });
+
+  it("paginates all dependencies and feature members beyond the configured 200-node cap", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write("src/hub.ts", "export function hub(): void {}\n");
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "pagination fixture");
+    await initializeRepository(repository.root);
+    const context = await ensureFreshIndex(repository.root);
+
+    const database = openDatabase(workspacePaths(repository.root).database);
+    let hubId: string;
+    const featureId = "feature-pagination-fixture";
+    const memberIds: string[] = [];
+    try {
+      hubId = database
+        .prepare("SELECT id FROM nodes WHERE qualified_name = 'hub'")
+        .pluck()
+        .get() as string;
+      const timestamp = new Date().toISOString();
+      const baseNode = (input: Pick<GraphNode, "id" | "kind" | "name" | "qualifiedName">): GraphNode => ({
+        ...input,
+        filePath: "src/hub.ts",
+        language: "typescript",
+        startLine: 1,
+        startColumn: 0,
+        endLine: 1,
+        endColumn: 31,
+        signature: null,
+        visibility: "public",
+        contentHash: null,
+        sourceType: input.kind === "feature" ? "heuristic" : "ast",
+        provenance: input.kind === "feature" ? "inferred" : "verified",
+        confidence: 1,
+        metadata: {
+          evidence: { source_type: "ast", file: "src/hub.ts", line: 1, column: 0 },
+        },
+      });
+      upsertNode(
+        database,
+        baseNode({ id: featureId, kind: "feature", name: "Pagination", qualifiedName: "Pagination" }),
+        timestamp,
+      );
+      const write = database.transaction(() => {
+        for (let index = 0; index < 230; index += 1) {
+          const memberId = `pagination-member-${index.toString().padStart(3, "0")}`;
+          memberIds.push(memberId);
+          upsertNode(
+            database,
+            baseNode({
+              id: memberId,
+              kind: "function",
+              name: `member${index}`,
+              qualifiedName: `member${index}`,
+            }),
+            timestamp,
+          );
+          upsertEdge(
+            database,
+            {
+              id: `pagination-dependency-${index}`,
+              sourceNodeId: hubId,
+              targetNodeId: memberId,
+              edgeType: "REFERENCES",
+              sourceType: "ast",
+              provenance: "verified",
+              confidence: 1,
+              filePath: "src/hub.ts",
+              line: 1,
+              metadata: {
+                evidence: { source_type: "ast", file: "src/hub.ts", line: 1, column: 0 },
+              },
+            },
+            timestamp,
+          );
+          upsertEdge(
+            database,
+            {
+              id: `pagination-membership-${index}`,
+              sourceNodeId: memberId,
+              targetNodeId: featureId,
+              edgeType: "BELONGS_TO_FEATURE",
+              sourceType: "heuristic",
+              provenance: "inferred",
+              confidence: 0.9,
+              filePath: "src/hub.ts",
+              line: 1,
+              metadata: {
+                evidence: { source_type: "heuristic", file: "src/hub.ts", line: 1, column: 0 },
+              },
+            },
+            timestamp,
+          );
+        }
+      });
+      write();
+    } finally {
+      database.close();
+    }
+
+    const dependencies = new Set<string>();
+    let dependencyCursor: string | null = null;
+    do {
+      const page = dependenciesPacket(context, {
+        target: hubId!,
+        direction: "outgoing",
+        limit: 50,
+        cursor: dependencyCursor,
+      });
+      for (const relationship of page.relationships) {
+        dependencies.add(relationship.target_node_id);
+        expect(relationship.target?.name).toMatch(/^member\d+$/u);
+      }
+      dependencyCursor = page.pagination.cursor;
+    } while (dependencyCursor !== null);
+    expect(dependencies).toEqual(new Set(memberIds));
+
+    const featureMembers = new Set<string>();
+    let featureCursor: string | null = null;
+    do {
+      const page = explainFeaturePacket(context, {
+        feature: featureId,
+        limit: 50,
+        cursor: featureCursor,
+      });
+      for (const relationship of page.relationships) {
+        if (relationship.edge_type === "BELONGS_TO_FEATURE") {
+          featureMembers.add(relationship.source_node_id);
+        }
+      }
+      featureCursor = page.pagination.cursor;
+    } while (featureCursor !== null);
+    expect(featureMembers).toEqual(new Set(memberIds));
   });
 });
