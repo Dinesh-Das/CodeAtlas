@@ -24,6 +24,7 @@
     "test:watch": "vitest",
     "benchmark": "npm run build && node scripts/benchmark.mjs --profile smoke",
     "benchmark:full": "npm run build && node scripts/benchmark.mjs --profile full",
+    "benchmark:real": "npm run build && node scripts/benchmark-real.mjs",
     "check": "npm run typecheck && npm test",
     "prepack": "npm run build",
     "package:smoke": "node scripts/package-smoke.mjs",
