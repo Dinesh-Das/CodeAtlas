@@ -45,8 +45,8 @@ describe("setup and direct overview", () => {
     ) as { mcpServers: Record<string, unknown> };
     expect(antigravity.mcpServers.codeatlas).toMatchObject({
       command: "codeatlas",
-      args: ["mcp", repository.root],
-      cwd: repository.root,
+      args: ["mcp", result.repositoryRoot],
+      cwd: result.repositoryRoot,
     });
     await expect(setupRepository(repository.root, {
       targets: ["cursor", "antigravity"],
