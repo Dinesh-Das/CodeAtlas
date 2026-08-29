@@ -373,6 +373,13 @@ const migrations: readonly Migration[] = [
         ON resolution_issues(reference_kind, reason, reference_hash, file_path);
     `,
   },
+  {
+    version: 9,
+    sql: `
+      CREATE INDEX idx_resolved_edges_edge ON resolved_edges(edge_id);
+      CREATE INDEX idx_dependency_communities_node ON dependency_communities(node_id);
+    `,
+  },
 ];
 
 export function runMigrations(database: Database.Database): void {

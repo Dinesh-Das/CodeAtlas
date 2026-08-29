@@ -1067,7 +1067,16 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       const writeIndex = database.transaction(() => {
         if (fullRebuild) {
           suspendNodeSearchSync(database);
-          database.exec("DELETE FROM edges; DELETE FROM nodes; DELETE FROM files;");
+          database.exec(`
+            DELETE FROM resolved_edges;
+            DELETE FROM resolution_issues;
+            DELETE FROM dependency_communities;
+            DELETE FROM architecture_metrics;
+            DELETE FROM edges;
+            DELETE FROM nodes;
+            DELETE FROM file_semantics;
+            DELETE FROM files;
+          `);
         } else {
           for (const filePath of changes.deleted) {
             deleteNodesForFile(database, filePath);
@@ -1362,12 +1371,18 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         }
 
         if (resolutionInputs.length > 0) {
+          const resolutionReferenceCount = resolutionInputs.reduce(
+            (count, input) => count + input.parsedFile.unresolvedReferences.length,
+            0,
+          );
+          telemetry.start("graph_resolution", resolutionReferenceCount);
           resolutionResult.value = resolveReferences(
             database,
             repository.id,
             repository.root,
             resolutionInputs,
             indexedAt,
+            (completed, total) => telemetry.progress("graph_resolution", completed, total),
           );
         }
         if (frameworkMaterializationRequired) {

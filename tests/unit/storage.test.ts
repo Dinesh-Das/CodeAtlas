@@ -21,6 +21,12 @@ describe("SQLite storage", () => {
     try {
       expect(getJournalMode(database)).toBe("wal");
       expect(verifyDatabase(database)).toBe(true);
+      expect(
+        database.pragma("index_info(idx_resolved_edges_edge)") as Array<{ name: string }>,
+      ).toEqual([expect.objectContaining({ name: "edge_id" })]);
+      expect(
+        database.pragma("index_info(idx_dependency_communities_node)") as Array<{ name: string }>,
+      ).toEqual([expect.objectContaining({ name: "node_id" })]);
 
       const id = createNodeId("repo", "file", "src/payment.ts", "src/payment.ts");
       upsertNode(

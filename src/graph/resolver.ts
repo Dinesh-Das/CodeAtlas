@@ -917,6 +917,7 @@ export function resolveReferences(
   repositoryRoot: string,
   parsedInputs: readonly ParsedInput[],
   timestamp: string,
+  onProgress?: (completed: number, total: number) => void,
 ): ResolutionResult {
   const resolutionStartedAt = performance.now();
   let candidateGenerationMs = 0;
@@ -951,6 +952,12 @@ export function resolveReferences(
   let ambiguous = 0;
   let candidateCount = 0;
   const edgeIds = new Set<string>();
+  const totalReferences = importReferences.length + otherReferences.length;
+  let processedReferences = 0;
+  const reportProgress = (): void => {
+    processedReferences += 1;
+    onProgress?.(processedReferences, totalReferences);
+  };
 
   for (const reference of importReferences) {
     const candidateStartedAt = performance.now();
@@ -970,6 +977,7 @@ export function resolveReferences(
         ),
       });
       unresolved += 1;
+      reportProgress();
       continue;
     }
     if (candidates.length > 1) {
@@ -1002,6 +1010,7 @@ export function resolveReferences(
       }
       bindingsByFile.set(reference.evidence.file, bindings);
     }
+    reportProgress();
   }
 
   const relevantNames = new Set<string>();
@@ -1038,7 +1047,10 @@ export function resolveReferences(
   const distances = new ImportDistanceIndex(database, modulesByFile, nodeById);
   for (const reference of otherReferences) {
     const source = nodeById.get(reference.sourceNodeId);
-    if (source === undefined) continue;
+    if (source === undefined) {
+      reportProgress();
+      continue;
+    }
     const candidateStartedAt = performance.now();
     const candidates = symbolCandidates(
       reference,
@@ -1065,6 +1077,7 @@ export function resolveReferences(
         timestamp,
       );
       unresolved += 1;
+      reportProgress();
       continue;
     }
     if (candidates.nodes.length > 1) {
@@ -1091,6 +1104,7 @@ export function resolveReferences(
       edgeIds,
       candidates.sourceType,
     );
+    reportProgress();
   }
 
   return {
