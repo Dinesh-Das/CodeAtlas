@@ -277,12 +277,16 @@ async function initializedRepository(startPath: string): Promise<RepositoryInfo>
   return repository;
 }
 
-/** Fast MCP path: Git supplies changed paths and only those paths are hashed. */
-export async function getFastStatus(startPath = process.cwd()): Promise<StatusResult> {
+/** Fast status path: Git supplies changed paths and only those paths are hashed. */
+export async function getFastStatus(
+  startPath = process.cwd(),
+  options: { forceReconcile?: boolean } = {},
+): Promise<StatusResult> {
   await new Promise<void>((resolve) => setImmediate(resolve));
   const cachedRoot = fastRootByStartPath.get(path.resolve(startPath));
   const cached = cachedRoot === undefined ? undefined : fastStatusEntries.get(cachedRoot);
   if (
+    options.forceReconcile !== true &&
     cached !== undefined &&
     !cached.dirty &&
     Date.now() - cached.checkedAt < FAST_RECONCILIATION_INTERVAL_MS
@@ -296,7 +300,9 @@ export async function getFastStatus(startPath = process.cwd()): Promise<StatusRe
   const cacheWasInvalidated = cached?.dirty === true;
   const repository = await initializedRepository(startPath);
   const config = await loadConfig(repository.root);
-  let ignoreRules = fastIgnoreRules.get(repository.root);
+  let ignoreRules = options.forceReconcile === true
+    ? undefined
+    : fastIgnoreRules.get(repository.root);
   if (ignoreRules === undefined) {
     ignoreRules = await loadIgnoreRules(repository.root);
     fastIgnoreRules.set(repository.root, ignoreRules);

@@ -275,7 +275,7 @@ describe("Phase 7 MCP accuracy", () => {
     expect(response.relationships).toHaveLength(DEFAULT_CONFIG.limits.maxExecutionPaths);
   });
 
-  it("reports authoritative versus watched-cache freshness truthfully", async () => {
+  it("reports authoritative MCP freshness on every request", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);
     await repository.write("src/status.ts", "export const status = true;\n");
@@ -289,14 +289,13 @@ describe("Phase 7 MCP accuracy", () => {
       working_tree_checked: true,
       reconciliation_max_age_ms: 30_000,
     });
-    const cached = statusPacket(await ensureFreshIndex(repository.root));
-    expect(cached.freshness).toMatchObject({
-      mode: "watch_cache",
-      working_tree_checked: false,
-      authoritative_checked_at: authoritative.freshness.authoritative_checked_at,
+    const repeated = statusPacket(await ensureFreshIndex(repository.root));
+    expect(repeated.freshness).toMatchObject({
+      mode: "authoritative",
+      working_tree_checked: true,
       reconciliation_max_age_ms: 30_000,
     });
-    expect(cached.freshness.request_at >= cached.freshness.authoritative_checked_at).toBe(true);
+    expect(repeated.freshness.request_at >= repeated.freshness.authoritative_checked_at).toBe(true);
   });
 
   it("paginates all dependencies and feature members beyond the configured 200-node cap", async () => {

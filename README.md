@@ -308,10 +308,9 @@ path with an absolute repository path. A copyable file is available at
 CodeAtlas was installed, restart it so the new executable is available on `PATH`.
 
 The server uses stdio and writes no protocol-breaking output to stdout. Every tool request passes
-through the freshness gate and performs an incremental index update when needed. Long-lived MCP
-processes may satisfy unchanged requests from the filesystem-watch cache between authoritative
-reconciliations; the Answer Packet reports `mode`, `working_tree_checked`, the authoritative check
-time, request time, cache invalidation state, and the 30-second maximum reconciliation age.
+through the freshness gate, authoritatively checks Git state, and performs an incremental index
+update when needed. The Answer Packet reports `mode`, `working_tree_checked`, the authoritative
+check time, request time, cache invalidation state, and the reconciliation-age contract.
 All source snippets in the stable Answer Packet contract are labeled
 `untrusted_repository_content`. Empty or ambiguous results return explicit uncertainty such as
 `insufficient_evidence`, `unresolved_reference`, or `dynamic_relationship`; the MCP layer never
@@ -441,11 +440,11 @@ sha256(
 Tracked deletions receive an explicit deletion marker. Untracked files respect Git ignore
 rules plus CodeAtlas exclusions. This covers HEAD, staged, unstaged, untracked, renamed, and
 deleted state, including tracked files marked assume-unchanged. `codeatlas status` performs the
-full reconciliation. Long-lived MCP processes invalidate a watched cache immediately on filesystem
-events and perform an authoritative reconciliation at least every 30 seconds, so repeated unchanged
-requests normally avoid Git while missed watcher events remain bounded. Packets distinguish
-`authoritative` from `watch_cache`; `working_tree_checked` is true only for the former, and
-`authoritative_checked_at` never advances merely because cached state was reused.
+full reconciliation. Fast status callers invalidate a watched cache on filesystem events and
+perform an authoritative reconciliation at least every 30 seconds. MCP requests always bypass
+that watcher cache and verify Git state before answering, avoiding event-delivery races after an
+edit. Packets distinguish `authoritative` from `watch_cache`; `working_tree_checked` is true only
+for the former, and `authoritative_checked_at` never advances merely because cached state was reused.
 
 `codeatlas index` classifies Git state, verifies file hashes, and recomputes the required reverse
 dependency neighborhood. A bounded invalidation that reaches its depth/file cap safely falls back

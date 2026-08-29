@@ -54,11 +54,13 @@ export async function ensureFreshIndex(
   repositoryPath: string,
   requirement: FreshnessRequirement = "all",
 ): Promise<FreshContext> {
-  let status = await getFastStatus(repositoryPath);
+  // Filesystem watcher delivery can lag behind the request that follows an edit.
+  // MCP answers must therefore reconcile Git state instead of trusting that cache.
+  let status = await getFastStatus(repositoryPath, { forceReconcile: true });
   if (!satisfies(status, requirement)) {
     await refreshOnce(status.root);
     clearFastStatusCache(status.root);
-    status = await getFastStatus(repositoryPath);
+    status = await getFastStatus(repositoryPath, { forceReconcile: true });
   }
   if (!satisfies(status, requirement)) {
     throw new CodeAtlasError(
