@@ -1,8 +1,12 @@
 # Contributing
 
-CodeAtlas follows the implementation phases in the requirements documents. Preserve the core
-contract: deterministic analysis before heuristics, provenance on every graph fact, current
-working-tree evidence, no secret values, and strict Parser/Graph/Storage/Git/MCP/CLI boundaries.
+Thank you for helping make CodeAtlas more trustworthy. Please follow the
+[Code of Conduct](CODE_OF_CONDUCT.md), check the [roadmap](ROADMAP.md), and use the focused issue
+forms for incorrect edges, missing framework coverage, or performance regressions.
+
+Preserve the core contract: deterministic analysis before heuristics, provenance on every graph
+fact, current-working-tree evidence, no secret values, and strict
+Parser/Graph/Storage/Git/MCP/CLI boundaries.
 
 Before submitting a change:
 
@@ -25,6 +29,9 @@ Add unit tests for local algorithms and integration tests for repository-to-grap
 Parser adapters require fixture repositories and expected graph snapshots. Do not introduce an
 LLM call to derive a relationship that can be obtained from syntax, Git, configuration, schema,
 or framework conventions.
+
+For an incorrect or missing relationship, include the smallest public reproduction you can and
+assert its edge type, target, confidence, provenance, evidence location, and conditional state.
 
 Keep `package.json`, `package-lock.json`, `src/version.ts`, and the changelog version aligned.
 Release maintainers should follow [RELEASING.md](RELEASING.md); normal contributions must not

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Dinesh-Das/CodeAtlas/security/policy
+    about: Please report security issues privately using the security policy.
+  - name: Questions and ideas
+    url: https://github.com/Dinesh-Das/CodeAtlas/discussions
+    about: Use Discussions for usage questions and open-ended ideas when Discussions is enabled.

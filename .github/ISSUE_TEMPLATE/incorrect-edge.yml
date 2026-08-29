@@ -1,0 +1,45 @@
+name: Incorrect graph edge
+description: Report a relationship CodeAtlas added, missed, or labeled with the wrong certainty.
+title: "[edge] "
+labels: ["accuracy"]
+body:
+  - type: markdown
+    attributes:
+      value: Please remove secrets and include the smallest source example that reproduces the edge.
+  - type: input
+    id: version
+    attributes:
+      label: CodeAtlas version
+      placeholder: 0.10.0-beta.1
+    validations:
+      required: true
+  - type: dropdown
+    id: problem
+    attributes:
+      label: Problem
+      options:
+        - Missing relationship
+        - Incorrect relationship
+        - Incorrect verified/inferred/dynamic label
+        - Incorrect source location or evidence
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Minimal source example
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed and expected evidence
+      description: Include the MCP tool/CLI command and redact private repository content.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Relevant `codeatlas doctor` output
+      render: text

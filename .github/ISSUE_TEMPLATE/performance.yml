@@ -1,0 +1,44 @@
+name: Performance regression
+description: Report slow indexing, queries, high memory, or excessive database growth.
+title: "[performance] "
+labels: ["performance"]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: CodeAtlas version, Node.js version, and operating system
+    validations:
+      required: true
+  - type: input
+    id: scale
+    attributes:
+      label: Repository scale
+      placeholder: 20k files, 300k LOC, TypeScript monorepo
+    validations:
+      required: true
+  - type: dropdown
+    id: scenario
+    attributes:
+      label: Scenario
+      options:
+        - Cold/full index
+        - No-change freshness
+        - Incremental index
+        - Search or graph query
+        - Peak memory
+        - Database size
+    validations:
+      required: true
+  - type: textarea
+    id: measurements
+    attributes:
+      label: Command and measurements
+      description: Prefer benchmark JSON or `index --json`; remove repository-sensitive paths.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: `codeatlas doctor` output
+      render: text

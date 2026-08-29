@@ -1,7 +1,7 @@
 {
   "name": "@dinesh-das/codeatlas",
   "version": "0.10.0-beta.1",
-  "description": "Local-first repository knowledge graphs for AI coding agents through MCP.",
+  "description": "Evidence-first code intelligence for AI coding agents, with verified and inferred repository relationships through MCP.",
   "type": "module",
   "bin": {
     "codeatlas": "dist/cli/index.js"
@@ -13,6 +13,8 @@
     "CHANGELOG.md",
     "SECURITY.md",
     "RELEASING.md",
+    "CODE_OF_CONDUCT.md",
+    "ROADMAP.md",
     "examples"
   ],
   "scripts": {
@@ -37,7 +39,10 @@
     "code-intelligence",
     "knowledge-graph",
     "mcp",
-    "developer-tools"
+    "developer-tools",
+    "static-analysis",
+    "call-graph",
+    "typescript"
   ],
   "repository": {
     "type": "git",

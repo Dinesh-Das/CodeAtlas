@@ -1,21 +1,101 @@
 # CodeAtlas
 
-CodeAtlas builds a living knowledge graph of your Git repository and exposes it to AI coding
-agents through MCP. Instead of repeatedly searching the entire codebase, an agent can ask how
-features, modules, functions, APIs, and data models are connected and receive current file/line
-evidence.
+**Give your AI coding agent a verified, continuously updated map of your codebase.**
 
-The complete MVP includes structural parsing, relationship resolution, incremental indexing,
-framework adapters, architecture analysis, grounded MCP queries, and release packaging.
+CodeAtlas traces architecture, execution, APIs, and data access—and labels every answer as
+verified, inferred, dynamic, or unresolved. It runs locally, follows the working tree, and returns
+file/line evidence instead of asking you to trust a black box.
 
-The governing principle is simple: the working tree owns the facts, deterministic analysis
-structures those facts, and an LLM may explain them later.
+- Trace requests end to end.
+- Understand an unfamiliar architecture.
+- Find the blast radius before changing code.
+- See exactly what is known, inferred, or unresolved.
+- Keep source code on your machine.
 
-## What is implemented
+```bash
+npm install --global @dinesh-das/codeatlas
+codeatlas init
+codeatlas setup
+```
 
-- TypeScript/Node.js CLI with `init`, `index`, `status`, `doctor`, and safe `clean` commands.
+Get value before configuring an agent:
+
+```bash
+codeatlas overview
+```
+
+```text
+How does account reset work?
+
+DELETE /account/reset-module
+  ├─ PROTECTED_BY authorize                         VERIFIED
+  │    └─ IMPLEMENTED_BY handleAuth                 VERIFIED
+  │         └─ MAY_CONTINUE_TO route                CONDITIONAL
+  └─ HANDLES deleteResetModule                      VERIFIED
+       ├─ QUERIES user                              VERIFIED · Prisma
+       └─ UPDATES user                              VERIFIED · Prisma
+
+Evidence: source files, lines, provenance, confidence, and unresolved candidates
+```
+
+## Why CodeAtlas
+
+Grep finds matching text. Embedding search finds similar text. CodeAtlas answers a different
+question: **what relationships can the repository actually support with evidence?**
+
+```text
+working tree
+    ↓
+incremental Tree-sitter + TypeScript compiler + framework analysis
+    ↓
+evidence graph (verified / inferred / dynamic / unresolved)
+    ↓
+bounded search, traces, impact, architecture, and source packets
+    ↓
+your coding agent explains the evidence
+```
+
+Semantic similarity may eventually help retrieve candidates, but it never turns similarity into a
+claimed relationship. The graph/compiler/framework layers validate relationships first.
+
+## Measured on a large repository
+
+The reproducible real-repository benchmark indexed freeCodeCamp commit
+`6d0d89755eb233631adfdb5d44596339c5bbe97b` (19,424 files and 220,775 tracked JS/TS LOC):
+
+| Scenario | Result |
+|---|---:|
+| Cold/full index | 119.20 s |
+| One implementation file | 7.23 s |
+| Exported symbol change | 8.18 s |
+| Search p95 | 4.87 ms |
+| Trace p95 | 124.98 ms |
+| Impact p95 | 44.06 ms |
+| External peak RSS | 3.35 GB |
+
+Results are hardware- and repository-dependent. Reproduce them with
+`npm run benchmark:real -- --repository PATH`; generated 100k–1M LOC profiles are also included.
+CodeAtlas is a beta: the benchmark is evidence, not a promise that every repository has the same
+shape or compiler cost.
+
+## Trust model
+
+- `VERIFIED`: deterministic AST, compiler, framework, schema, or configuration evidence.
+- `INFERRED`: a bounded heuristic with reduced confidence and visible provenance.
+- `DYNAMIC`: runtime behavior was detected but cannot be statically proven.
+- `UNRESOLVED`: CodeAtlas records the gap instead of silently choosing a target.
+
+Source snippets are read from the current working tree, bounded by configuration, and labeled as
+untrusted repository content. CodeAtlas does not expose or require a model's private chain of
+thought; it gives the model—and you—the evidence needed to evaluate the answer.
+
+## What ships in the beta
+
+- TypeScript/Node.js CLI with `init`, `overview`, `setup`, `index`, `status`, `doctor`, and safe
+  `clean` commands.
 - Git-root detection with an explicit V1 error for non-Git directories.
-- Local `.codeatlas/` workspace creation and idempotent `.gitignore` integration.
+- Local `.codeatlas/` workspace creation with a default Git `info/exclude` rule; tracked
+  `.gitignore` changes require the explicit `init --shared-ignore` option.
 - Strict, versioned configuration. Invalid configuration is never silently replaced.
 - `.gitignore`, nested `.gitignore`, `.codeatlasignore`, generated-directory, and secret-file
   exclusions.
@@ -28,7 +108,8 @@ structures those facts, and an LLM may explain them later.
 - Evidence-bearing module, class, interface, function, method, and variable nodes.
 - Deterministic `CONTAINS`, `EXPORTS`, `IMPORTS`, `CALLS`, `EXTENDS`, `IMPLEMENTS`, and
   `REFERENCES` relationships.
-- Project-aware TypeScript resolution through the compiler API, including `tsconfig`/`jsconfig`
+- Project-aware TypeScript resolution through the target repository's compatible compiler (with a
+  visible bundled fallback), including `tsconfig`/`jsconfig`
   inheritance, `baseUrl`, `paths`, Node package exports, workspace packages, and receiver-type
   verification for call targets when compiler evidence is available.
 - Explicit unresolved and multi-candidate resolution records; ambiguous edges use confidence
@@ -50,6 +131,8 @@ structures those facts, and an LLM may explain them later.
   provenance edges; lower-similarity moves remain delete plus create.
 - Optional, separately registered framework adapters for Express, Fastify, FastAPI, Prisma, and
   SQLAlchemy.
+- Fastify plugin-parameter propagation, nested and inline registrations, inline handler nodes,
+  inherited prefixes/hooks, `preValidation`, and conditional hook-to-handler continuation.
 - Evidence-bearing `api_route` and `database_model` nodes with `EXPOSES`, `HANDLES`,
   `CONTAINS`, and `REFERENCES` relationships.
 - Deterministic feature/domain grouping and modularity-optimized dependency communities derived
@@ -115,13 +198,13 @@ From any directory inside the Git repository you want to understand:
 
 ```bash
 codeatlas init
-codeatlas status
-codeatlas mcp
+codeatlas overview
+codeatlas setup
 ```
 
-`init` creates the ignored local `.codeatlas/` workspace and performs the first index. `mcp`
-starts the stdio server and normally runs under an MCP-compatible coding agent rather than in a
-terminal you interact with directly.
+`init` creates the locally ignored `.codeatlas/` workspace and performs the first index. `setup`
+detects supported coding agents and configures their MCP client. `overview` gives an immediate
+architecture summary without an LLM.
 
 ## Development setup
 
@@ -147,17 +230,22 @@ node /absolute/path/to/CodeAtlas/dist/cli/index.js init
 ## Commands
 
 ```text
-codeatlas init [path]         Create the workspace and initial structural graph
-codeatlas index [path]        Synchronize changes and their dependency neighborhoods
-codeatlas index --full [path] Rebuild the structural graph transactionally
-codeatlas index --quiet       Suppress progress output
-codeatlas index --json        Emit a machine-readable result (progress stays on stderr)
-codeatlas status [path]       Compare the working tree with the stored fingerprint
-codeatlas status --json       Return machine-readable status
-codeatlas doctor [path]       Check Node, parsers, Git, config, SQLite, and WAL
-codeatlas clean [path]        Remove the local index after confirmation
-codeatlas clean --force       Remove it non-interactively
-codeatlas mcp [path]          Start the CodeAtlas MCP server over stdio
+codeatlas init [path]             Create the workspace and initial structural graph
+codeatlas init --shared-ignore    Deliberately add .codeatlas/ to tracked .gitignore
+codeatlas overview [path]         Print architecture, entrypoints, and hotspots directly
+codeatlas overview --json         Emit a machine-readable architecture summary
+codeatlas setup [path]            Configure detected Codex/Claude/Cursor/Antigravity clients
+codeatlas setup --all --dry-run   Preview every supported MCP configuration destination
+codeatlas index [path]            Synchronize changes and dependency neighborhoods
+codeatlas index --full [path]     Rebuild the structural graph transactionally
+codeatlas index --quiet           Suppress progress output
+codeatlas index --json            Emit a machine-readable result (progress stays on stderr)
+codeatlas status [path]           Compare the working tree with the stored fingerprint
+codeatlas status --json           Return machine-readable status
+codeatlas doctor [path]           Check runtime, compiler, parsers, Git, storage, and graph health
+codeatlas clean [path]            Remove the local index after confirmation
+codeatlas clean --force           Remove it non-interactively
+codeatlas mcp [path]              Start the CodeAtlas MCP server over stdio
 ```
 
 ## Local workspace
@@ -173,8 +261,9 @@ codeatlas mcp [path]          Start the CodeAtlas MCP server over stdio
 └── logs/
 ```
 
-`.codeatlas/` is added to `.gitignore` exactly once. The `lock` file exists only while an
-index writer owns the workspace.
+By default, `.codeatlas/` is written to Git's local `info/exclude`, leaving tracked files
+untouched. Use `codeatlas init --shared-ignore` only when the team deliberately wants the rule in
+`.gitignore`. The `lock` file exists only while an index writer owns the workspace.
 
 The database stores structural metadata and hashes, not complete source files or string literal
 values. Import module values used during resolution remain transient; unresolved import records
@@ -182,8 +271,19 @@ store only a SHA-256 hash. Source contents remain in the working tree.
 
 ## MCP setup
 
-Configure an MCP-compatible host to launch `codeatlas mcp` with the repository as its working
-directory, or pass the repository path explicitly:
+The fastest path is automatic setup:
+
+```bash
+codeatlas setup
+```
+
+CodeAtlas detects Codex, Claude Code, Cursor, and Antigravity. Use `--target cursor,codex` to pick
+clients, `--all` to configure all supported formats, or `--dry-run` to inspect destinations first.
+Existing unrelated MCP servers are preserved, and a conflicting `codeatlas` entry is never
+silently overwritten.
+
+To configure another MCP-compatible host manually, launch `codeatlas mcp` with the repository as
+its working directory or pass the repository path explicitly:
 
 ```bash
 codeatlas mcp /absolute/path/to/repository
@@ -257,7 +357,7 @@ facts.
 | Framework | Extraction |
 |---|---|
 | Express | Application/router HTTP calls and local handler relationships |
-| Fastify | HTTP routes, decorators, plugin mounts/prefixes, request hooks, protection, implementations, and continuation flow |
+| Fastify | Routes, typed/registered plugin receivers, inline handlers/plugins, nested prefixes, request hooks including `preValidation`, protection, implementations, and conditional continuation |
 | FastAPI | Decorated application/router routes and handler relationships |
 | Prisma | Schema models/fields/references plus verified client query and update operations |
 | SQLAlchemy | Declarative mapped classes, mapped fields, and local model relationships |

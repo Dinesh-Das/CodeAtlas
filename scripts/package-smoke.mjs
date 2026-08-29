@@ -45,6 +45,8 @@ try {
     "SECURITY.md",
     "CHANGELOG.md",
     "RELEASING.md",
+    "CODE_OF_CONDUCT.md",
+    "ROADMAP.md",
     "dist/cli/index.js",
     "examples/mcp-config.json",
     "examples/README.md",
@@ -95,10 +97,23 @@ try {
   if (status.synchronized !== true || status.symbols < 1) {
     throw new Error("Installed CLI did not create a synchronized structural index.");
   }
-  const gitignore = await readFile(path.join(fixtureRoot, ".gitignore"), "utf8");
-  if (!gitignore.split(/\r?\n/u).includes(".codeatlas/")) {
-    throw new Error("Installed CLI did not add .codeatlas/ to .gitignore.");
+  const localExclude = await readFile(path.join(fixtureRoot, ".git", "info", "exclude"), "utf8");
+  if (!localExclude.split(/\r?\n/u).includes(".codeatlas/")) {
+    throw new Error("Installed CLI did not exclude .codeatlas/ through Git info/exclude.");
   }
+  const { stdout: trackedIgnoreStatus } = await run(
+    "git",
+    ["status", "--short", "--", ".gitignore"],
+    fixtureRoot,
+  );
+  if (trackedIgnoreStatus.trim() !== "") {
+    throw new Error("Installed CLI unexpectedly modified the repository .gitignore.");
+  }
+  const { stdout: overviewOutput } = await execute("overview", fixtureRoot);
+  if (!overviewOutput.includes("Ask your coding agent")) {
+    throw new Error("Installed CLI did not produce the direct architecture overview.");
+  }
+  await execute("setup", "--all", "--dry-run", fixtureRoot);
 
   process.stdout.write(
     `✓ Packed ${packageResult.filename} (${packageResult.entryCount} files)\n` +

@@ -7,13 +7,17 @@ All notable changes follow semantic versioning.
 ### Added
 
 - Verified Fastify framework composition for decorators, implementations, plugin mounts,
-  registration hooks, route protection, hook continuation, and hashed route prefixes. Exact base
+  registration hooks, route protection, conditional hook continuation, and hashed route prefixes. Exact base
   and effective prefixed route literals are recovered transiently for MCP answers without storing
   plaintext route paths.
 - Verified Prisma client `QUERIES` and `UPDATES` relationships from deterministic
   `prisma.<model>.<operation>` calls to parsed schema model nodes.
 - Compiler-aware TypeScript/JavaScript public API fingerprints for inferred function returns,
   inferred exported values/objects, and JSDoc types.
+- `codeatlas overview` for an immediate architecture summary and `codeatlas setup` for Codex,
+  Claude Code, Cursor, and Antigravity MCP configuration.
+- Nested/inline Fastify plugin receivers and handlers, `preValidation`, inherited hook/prefix
+  composition, and inline handler graph nodes.
 - Endpoint labels and bounded evidence snippets on graph packets, truthful authoritative versus
   watched-cache freshness metadata, and database-backed dependency/feature pagination beyond the
   per-response result cap.
@@ -34,6 +38,22 @@ All notable changes follow semantic versioning.
 
 ### Changed
 
+- `codeatlas init` now uses Git's local `info/exclude` by default; changing the tracked
+  `.gitignore` requires `--shared-ignore`.
+- Prerelease tags publish to their npm prerelease dist-tag rather than accidentally becoming
+  `latest`.
+- TypeScript semantic analysis prefers a compatible compiler installed by the target repository,
+  falls back to the bundled compiler, and reports the exact choice in `codeatlas doctor`.
+- Comment/format-only exported-file edits reuse compiler API fingerprints, framework composition
+  rematerializes only after relevant semantic changes, and trace path budgets are spent using
+  execution-semantic priority before result ranking.
+- Tree-sitter input buffers now scale with source size, so files larger than 32 KiB are parsed
+  normally instead of falling back to generic file metadata.
+- Fastify hook flow now uses conditional `MAY_CONTINUE_TO` relationships rather than claiming that
+  a hook must continue to a route handler.
+- Prisma operations resolve database models by `metadata.client_accessor`, including lower-case
+  schema model names, instead of guessed capitalization.
+
 - Replaced all-pairs import-distance precomputation with bounded on-demand traversal and indexed
   symbol candidate generation.
 - Replaced connected components with deterministic multilevel Louvain modularity optimization and
@@ -47,7 +67,7 @@ All notable changes follow semantic versioning.
 - Architecture computation occurs outside the SQLite write transaction; generation-linked
   persistence remains atomic and crash-repairable. Schema 8 includes semantic-delta state,
   resolution-hash indexes, and a rowid-addressed external-content FTS index with transactional bulk
-  rebuilds; the indexing contract is `framework-semantics-11`.
+  rebuilds; the indexing contract is `framework-semantics-12`.
 - Tiny incremental updates fetch semantic records only for changed, deleted, renamed, or actually
   invalidated files; resolved-edge deletion is set-based, unresolved-import wakeup is grouped and
   hash-indexed, and workspace matching uses standards-complete brace/extglob/globstar semantics.

@@ -27,4 +27,14 @@ jobs:
           if(process.env.GITHUB_REF_NAME !== 'v' + version) {
           throw new Error('Tag ' + process.env.GITHUB_REF_NAME + ' does not match v' + version); }"
       - run: npm run release:check
-      - run: npm publish
+      - name: Publish with the correct npm dist-tag
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [[ "$version" == *-* ]]; then
+            prerelease="${version#*-}"
+            dist_tag="${prerelease%%.*}"
+            npm publish --tag "$dist_tag"
+          else
+            npm publish
+          fi

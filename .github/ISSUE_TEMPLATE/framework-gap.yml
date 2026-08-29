@@ -1,0 +1,31 @@
+name: Framework coverage gap
+description: Share a production framework pattern that CodeAtlas does not yet understand.
+title: "[framework] "
+labels: ["framework", "accuracy"]
+body:
+  - type: input
+    id: framework
+    attributes:
+      label: Framework and version
+      placeholder: Fastify 5.x
+    validations:
+      required: true
+  - type: textarea
+    id: pattern
+    attributes:
+      label: Minimal real-world pattern
+      description: Replace business names and secrets while preserving the syntax and composition.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected nodes, relationships, and certainty
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: Current CodeAtlas result
+      description: Include the query and relevant evidence/uncertainty packet.

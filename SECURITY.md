@@ -46,3 +46,8 @@ only bounded aggregate churn, commit/contributor counts, and the latest commit h
 Users should still protect `.codeatlas/` with normal filesystem permissions. Although the
 database is automatically ignored by Git, it contains repository names, paths, symbol metadata
 and structural relationships.
+
+When a compatible `typescript` package with the required compiler API is installed in the target
+repository, CodeAtlas loads that compiler to honor the repository's own resolution semantics.
+Analyze only repositories and installed dependencies you trust to execute locally; `codeatlas
+doctor` reports whether the repository or bundled compiler is active and why fallback occurred.

@@ -18,10 +18,12 @@ owned by an unrelated project. The installed executable is still `codeatlas`.
    semantic version.
 2. Run `npm ci` followed by `npm run release:check`.
 3. Commit the release changes and push them through the normal review process.
-4. Create and push a tag named exactly `v<package version>`, such as `v0.8.0`.
+4. Create and push a tag named exactly `v<package version>`, such as `v0.10.0-beta.1`.
 5. Confirm the `npm Release` workflow succeeds and verify the published package metadata and
    provenance on npm.
 
 The workflow refuses to publish when the Git tag and package version differ. The release check
 also builds from a clean `dist/`, packs the exact npm tarball, installs it into a disposable Git
 repository, invokes the installed binary, initializes CodeAtlas, and verifies synchronized status.
+Prerelease versions publish under their prerelease identifier (`beta`, `rc`, and so on) rather
+than npm's `latest` dist-tag. Stable versions publish to `latest`.
