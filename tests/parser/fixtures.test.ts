@@ -165,4 +165,26 @@ describe("parser invariants", () => {
       ]),
     );
   });
+
+  it("parses exported symbols after more than 32 KiB of source", () => {
+    const adapter = getLanguageAdapter("typescript");
+    const padding = "// deterministic large-file padding\n".repeat(1_200);
+    const parsed = adapter!.parseFile({
+      repositoryId: "repo",
+      repositoryRoot: ".",
+      relativeFilePath: "large.ts",
+      language: "typescript",
+      content: `${padding}export function afterBufferBoundary(): boolean { return true; }\n`,
+      contentHash: "hash",
+    });
+
+    expect(Buffer.byteLength(padding, "utf8")).toBeGreaterThan(32 * 1024);
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: "function",
+        qualifiedName: "afterBufferBoundary",
+      }),
+    );
+  });
 });

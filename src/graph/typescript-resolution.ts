@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import ts from "typescript-compiler";
@@ -27,6 +28,118 @@ export interface SemanticTarget {
 export interface CompilerPublicApiFacts {
   fingerprint: string;
   exportedSymbols: Readonly<Record<string, string>>;
+}
+
+export interface SemanticCompilerInfo {
+  version: string;
+  source: "repository" | "bundled";
+  resolvedPath: string | null;
+  targetVersion: string | null;
+  fallbackReason:
+    | "not_installed"
+    | "incompatible_version"
+    | "incompatible_api"
+    | "load_failed"
+    | null;
+}
+
+interface SelectedCompiler {
+  compiler: typeof ts;
+  info: SemanticCompilerInfo;
+}
+
+function compatibleCompilerVersion(version: string): boolean {
+  const major = Number.parseInt(version.split(".")[0] ?? "", 10);
+  return Number.isInteger(major) && major >= 5 && major <= 7;
+}
+
+function exposesRequiredCompilerApi(value: Partial<typeof ts>): value is typeof ts {
+  return value.sys !== undefined &&
+    typeof value.sys.fileExists === "function" &&
+    typeof value.sys.readFile === "function" &&
+    typeof value.createProgram === "function" &&
+    typeof value.resolveModuleName === "function" &&
+    typeof value.readConfigFile === "function" &&
+    typeof value.parseJsonConfigFileContent === "function" &&
+    typeof value.findConfigFile === "function" &&
+    typeof value.isCallExpression === "function" &&
+    typeof value.isNewExpression === "function" &&
+    typeof value.isSourceFile === "function" &&
+    value.ModuleKind !== undefined &&
+    value.ModuleResolutionKind !== undefined &&
+    value.TypeFormatFlags !== undefined &&
+    value.SymbolFlags !== undefined &&
+    value.SignatureKind !== undefined;
+}
+
+function selectTypeScriptCompiler(repositoryRoot: string): SelectedCompiler {
+  const bundled: SelectedCompiler = {
+    compiler: ts,
+    info: {
+      version: ts.version,
+      source: "bundled",
+      resolvedPath: null,
+      targetVersion: null,
+      fallbackReason: "not_installed",
+    },
+  };
+  try {
+    const repositoryRequire = createRequire(path.join(repositoryRoot, "package.json"));
+    const resolvedPath = repositoryRequire.resolve("typescript");
+    const target = repositoryRequire(resolvedPath) as Partial<typeof ts>;
+    if (typeof target.version !== "string") {
+      return {
+        ...bundled,
+        info: { ...bundled.info, resolvedPath, fallbackReason: "load_failed" },
+      };
+    }
+    const targetVersion = target.version;
+    if (!compatibleCompilerVersion(targetVersion)) {
+      return {
+        ...bundled,
+        info: {
+          ...bundled.info,
+          resolvedPath,
+          targetVersion,
+          fallbackReason: "incompatible_version",
+        },
+      };
+    }
+    if (!exposesRequiredCompilerApi(target)) {
+      return {
+        ...bundled,
+        info: {
+          ...bundled.info,
+          resolvedPath,
+          targetVersion,
+          fallbackReason: "incompatible_api",
+        },
+      };
+    }
+    return {
+      compiler: target,
+      info: {
+        version: targetVersion,
+        source: "repository",
+        resolvedPath,
+        targetVersion,
+        fallbackReason: null,
+      },
+    };
+  } catch (error) {
+    const missing = (error as NodeJS.ErrnoException).code === "MODULE_NOT_FOUND";
+    return {
+      ...bundled,
+      info: {
+        ...bundled.info,
+        fallbackReason: missing ? "not_installed" : "load_failed",
+      },
+    };
+  }
+}
+
+export function semanticCompilerInfo(repositoryRoot: string): SemanticCompilerInfo {
+  return selectTypeScriptCompiler(path.resolve(repositoryRoot)).info;
 }
 
 interface SemanticCall {
@@ -104,6 +217,8 @@ function exportTargets(value: unknown, subpath: string): string[] {
 export class TypeScriptProjectResolver {
   readonly #repositoryRoot: string;
   readonly #indexedPaths: ReadonlySet<string>;
+  readonly #compiler: typeof ts;
+  readonly #compilerInfo: SemanticCompilerInfo;
   readonly #projectBySource = new Map<string, ProjectContext>();
   readonly #projectByConfig = new Map<string, ProjectContext>();
   readonly #configByDirectory = new Map<string, string | null>();
@@ -127,6 +242,9 @@ export class TypeScriptProjectResolver {
   constructor(repositoryRoot: string, indexedPaths: ReadonlySet<string>) {
     this.#repositoryRoot = path.resolve(repositoryRoot);
     this.#indexedPaths = indexedPaths;
+    const selectedCompiler = selectTypeScriptCompiler(this.#repositoryRoot);
+    this.#compiler = selectedCompiler.compiler;
+    this.#compilerInfo = selectedCompiler.info;
     const workspaceManifests = workspaceManifestPaths(this.#repositoryRoot, indexedPaths);
     for (const relativePath of workspaceManifests) {
       const manifest = json(path.join(this.#repositoryRoot, ...relativePath.split("/")));
@@ -172,8 +290,15 @@ export class TypeScriptProjectResolver {
     const sourceDirectory = path.dirname(absoluteSource);
     let configPath = this.#configByDirectory.get(sourceDirectory);
     if (configPath === undefined) {
-      configPath = ts.findConfigFile(sourceDirectory, ts.sys.fileExists, "tsconfig.json") ??
-        ts.findConfigFile(sourceDirectory, ts.sys.fileExists, "jsconfig.json") ?? null;
+      configPath = this.#compiler.findConfigFile(
+        sourceDirectory,
+        this.#compiler.sys.fileExists,
+        "tsconfig.json",
+      ) ?? this.#compiler.findConfigFile(
+        sourceDirectory,
+        this.#compiler.sys.fileExists,
+        "jsconfig.json",
+      ) ?? null;
       this.#configByDirectory.set(sourceDirectory, configPath);
     }
     if (configPath !== null) {
@@ -184,11 +309,11 @@ export class TypeScriptProjectResolver {
         this.#metrics.projectDiscoveryMs += performance.now() - startedAt;
         return existing;
       }
-      const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
+      const loaded = this.#compiler.readConfigFile(configPath, this.#compiler.sys.readFile);
       if (loaded.error === undefined) {
-        const parsed = ts.parseJsonConfigFileContent(
+        const parsed = this.#compiler.parseJsonConfigFileContent(
           loaded.config,
-          ts.sys,
+          this.#compiler.sys,
           path.dirname(configPath),
           undefined,
           configPath,
@@ -213,8 +338,8 @@ export class TypeScriptProjectResolver {
       options: {
         allowJs: true,
         resolveJsonModule: true,
-        module: ts.ModuleKind.NodeNext,
-        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        module: this.#compiler.ModuleKind.NodeNext,
+        moduleResolution: this.#compiler.ModuleResolutionKind.NodeNext,
       },
       rootNames: [absoluteSource],
     };
@@ -262,7 +387,12 @@ export class TypeScriptProjectResolver {
     if (!/\.[cm]?[jt]sx?$/u.test(sourceFile)) return [];
     const project = this.#loadProject(sourceFile);
     const absoluteSource = path.join(this.#repositoryRoot, ...sourceFile.split("/"));
-    const resolved = ts.resolveModuleName(specifier, absoluteSource, project.options, ts.sys)
+    const resolved = this.#compiler.resolveModuleName(
+      specifier,
+      absoluteSource,
+      project.options,
+      this.#compiler.sys,
+    )
       .resolvedModule?.resolvedFileName;
     const compilerCandidate = resolved === undefined ? null : this.#relativeIndexedPath(resolved);
     const candidates = [...new Set([
@@ -313,7 +443,7 @@ export class TypeScriptProjectResolver {
       const project = this.#loadProject(reference.evidence.file);
       if (project.program === undefined) {
         const programStartedAt = performance.now();
-        project.program = ts.createProgram({
+        project.program = this.#compiler.createProgram({
           rootNames: project.rootNames,
           options: project.options,
           ...(project.projectReferences === undefined
@@ -344,7 +474,7 @@ export class TypeScriptProjectResolver {
         this.#metrics.semanticCacheMisses += 1;
         const indexed: SemanticCall[] = [];
         const visit = (node: ts.Node): void => {
-          if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+          if (this.#compiler.isCallExpression(node) || this.#compiler.isNewExpression(node)) {
             const expressionStart = node.expression.getStart(source);
             const expressionEnd = node.expression.getEnd();
             const expressionText = node.expression.getText(source);
@@ -394,7 +524,7 @@ export class TypeScriptProjectResolver {
       const project = this.#loadProject(sourceFile);
       if (project.program === undefined) {
         const programStartedAt = performance.now();
-        project.program = ts.createProgram({
+        project.program = this.#compiler.createProgram({
           rootNames: project.rootNames,
           options: project.configPath === null
             ? { ...project.options, noLib: true, skipLibCheck: true, types: [] }
@@ -419,15 +549,15 @@ export class TypeScriptProjectResolver {
         return { fingerprint: "[]", exportedSymbols: {} };
       }
       const formatFlags =
-        ts.TypeFormatFlags.NoTruncation |
-        ts.TypeFormatFlags.WriteTypeArgumentsOfSignature |
-        ts.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope;
-      const signatureFlags = ts.TypeFormatFlags.NoTruncation |
-        ts.TypeFormatFlags.WriteTypeArgumentsOfSignature;
+        this.#compiler.TypeFormatFlags.NoTruncation |
+        this.#compiler.TypeFormatFlags.WriteTypeArgumentsOfSignature |
+        this.#compiler.TypeFormatFlags.UseAliasDefinedOutsideCurrentScope;
+      const signatureFlags = this.#compiler.TypeFormatFlags.NoTruncation |
+        this.#compiler.TypeFormatFlags.WriteTypeArgumentsOfSignature;
       const entries = project.checker.getExportsOfModule(sourceSymbol)
         .map((exported) => {
           let target = exported;
-          if ((exported.flags & ts.SymbolFlags.Alias) !== 0) {
+          if ((exported.flags & this.#compiler.SymbolFlags.Alias) !== 0) {
             try {
               target = project.checker!.getAliasedSymbol(exported);
             } catch {
@@ -450,7 +580,7 @@ export class TypeScriptProjectResolver {
                 signature,
                 declaration,
                 signatureFlags,
-                ts.SignatureKind.Call,
+                this.#compiler.SignatureKind.Call,
               ),
             ),
             ...type.getConstructSignatures().map((signature) =>
@@ -458,7 +588,7 @@ export class TypeScriptProjectResolver {
                 signature,
                 declaration,
                 signatureFlags,
-                ts.SignatureKind.Construct,
+                this.#compiler.SignatureKind.Construct,
               ),
             ),
           ].sort((left, right) => left.localeCompare(right));
@@ -488,6 +618,10 @@ export class TypeScriptProjectResolver {
     return { ...this.#metrics };
   }
 
+  compilerInfo(): SemanticCompilerInfo {
+    return { ...this.#compilerInfo };
+  }
+
   #semanticTarget(
     declaration: ts.SignatureDeclaration | ts.JSDocSignature,
   ): SemanticTarget | null {
@@ -501,12 +635,12 @@ export class TypeScriptProjectResolver {
     const end = source.getLineAndCharacterOfPosition(declaration.getEnd());
     const qualifiedParts = [name];
     let parent: ts.Node | undefined = declaration.parent;
-    while (parent !== undefined && !ts.isSourceFile(parent)) {
+    while (parent !== undefined && !this.#compiler.isSourceFile(parent)) {
       if (
-        (ts.isClassDeclaration(parent) ||
-          ts.isClassExpression(parent) ||
-          ts.isInterfaceDeclaration(parent) ||
-          ts.isModuleDeclaration(parent)) &&
+        (this.#compiler.isClassDeclaration(parent) ||
+          this.#compiler.isClassExpression(parent) ||
+          this.#compiler.isInterfaceDeclaration(parent) ||
+          this.#compiler.isModuleDeclaration(parent)) &&
         parent.name !== undefined
       ) {
         qualifiedParts.unshift(parent.name.getText(source));

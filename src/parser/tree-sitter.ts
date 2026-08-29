@@ -39,7 +39,12 @@ export interface AddedSymbol {
 export function createTree(language: unknown, source: string): Parser.Tree {
   const parser = new Parser();
   parser.setLanguage(language);
-  return parser.parse(source);
+  // tree-sitter's Node binding uses a 32 KiB default input buffer and rejects a string whose
+  // encoded input is larger than that buffer. Use the next power of two above the UTF-8 payload
+  // so large source files remain a normal parser input rather than falling back to parse_error.
+  const requiredBytes = Buffer.byteLength(source, "utf8") + 1;
+  const bufferSize = 2 ** Math.ceil(Math.log2(Math.max(32 * 1024, requiredBytes)));
+  return parser.parse(source, undefined, { bufferSize });
 }
 
 export function evidenceFor(input: ParseInput, node: SyntaxNode): Evidence {

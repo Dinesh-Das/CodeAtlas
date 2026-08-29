@@ -44,7 +44,10 @@ import {
   type RenamePlan,
 } from "../graph/renames.js";
 import { resolveReferences, type ResolutionResult } from "../graph/resolver.js";
-import { TypeScriptProjectResolver } from "../graph/typescript-resolution.js";
+import {
+  TypeScriptProjectResolver,
+  type CompilerPublicApiFacts,
+} from "../graph/typescript-resolution.js";
 import type { GraphEdge, GraphNode } from "../graph/types.js";
 import type { RepositoryInfo } from "../git/repository.js";
 import { detectRepository } from "../git/repository.js";
@@ -749,21 +752,6 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         itemsProcessed: parsedReferenceCount,
         inclusive: true,
       });
-      const compilerPublicApiByPath = new Map();
-      const compilerApiResolver = new TypeScriptProjectResolver(
-        repository.root,
-        new Set(candidates.map((candidate) => candidate.relativePath)),
-      );
-      for (const candidate of changed) {
-        const hasExports = candidate.parsedFile?.edges.some(
-          (edge) => edge.edgeType === "EXPORTS",
-        ) === true || candidate.parsedFile?.unresolvedReferences.some(
-          (reference) => reference.kind === "export",
-        ) === true;
-        if (!hasExports) continue;
-        const facts = compilerApiResolver.publicApiFacts(candidate.relativePath);
-        if (facts !== null) compilerPublicApiByPath.set(candidate.relativePath, facts);
-      }
       const previousFactPaths = [
         ...changed.map((candidate) =>
           changes.renamed.find((rename) => rename.path === candidate.relativePath)?.previousPath ??
@@ -774,6 +762,8 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       const previousFactsByPath = new Map(
         getFileSemanticFactsForPaths(database, previousFactPaths).map((facts) => [facts.path, facts]),
       );
+      const compilerPublicApiByPath = new Map<string, CompilerPublicApiFacts>();
+      const compilerCandidates: IndexedCandidate[] = [];
       for (const candidate of changed) {
         const shouldPersistFacts =
           candidate.parsedFile !== null ||
@@ -787,13 +777,64 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           parsingReadWorkMs += performance.now() - readStartedAt;
           parsingReadCount += 1;
         }
-        candidate.semanticFacts = buildFileSemanticFacts(
+        const preliminaryFacts = buildFileSemanticFacts(
           candidate.relativePath,
           candidate.language,
           candidate.content,
           candidate.parsedFile,
-          compilerPublicApiByPath.get(candidate.relativePath) ?? null,
+          null,
         );
+        candidate.semanticFacts = preliminaryFacts;
+
+        const hasExports = candidate.parsedFile?.edges.some(
+          (edge) => edge.edgeType === "EXPORTS",
+        ) === true || candidate.parsedFile?.unresolvedReferences.some(
+          (reference) => reference.kind === "export",
+        ) === true;
+        const compilerLanguage = ["typescript", "tsx", "javascript", "jsx"].includes(
+          candidate.language ?? "",
+        );
+        if (!hasExports || !compilerLanguage) continue;
+
+        const rename = changes.renamed.find((entry) => entry.path === candidate.relativePath);
+        const previousFacts = rename === undefined
+          ? previousFactsByPath.get(candidate.relativePath)
+          : undefined;
+        if (
+          previousFacts !== undefined &&
+          previousFacts.tokenFingerprint === preliminaryFacts.tokenFingerprint
+        ) {
+          const previousExports = new Map(
+            previousFacts.exportedSymbols.map((entry) => [entry.id, entry]),
+          );
+          candidate.semanticFacts = {
+            ...preliminaryFacts,
+            publicApiFingerprint: previousFacts.publicApiFingerprint,
+            exportedSymbols: preliminaryFacts.exportedSymbols.map((entry) =>
+              previousExports.get(entry.id) ?? entry,
+            ),
+          };
+          continue;
+        }
+        compilerCandidates.push(candidate);
+      }
+
+      if (compilerCandidates.length > 0) {
+        const compilerApiResolver = new TypeScriptProjectResolver(
+          repository.root,
+          new Set(candidates.map((candidate) => candidate.relativePath)),
+        );
+        for (const candidate of compilerCandidates) {
+          const facts = compilerApiResolver.publicApiFacts(candidate.relativePath);
+          if (facts !== null) compilerPublicApiByPath.set(candidate.relativePath, facts);
+          candidate.semanticFacts = buildFileSemanticFacts(
+            candidate.relativePath,
+            candidate.language,
+            candidate.content!,
+            candidate.parsedFile,
+            facts,
+          );
+        }
       }
 
       const semanticDeltas: SemanticDelta[] = [];
@@ -1012,6 +1053,16 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       });
       const resolutionInputs = [...directResolutionInputs, ...dependentResolutionInputs];
       const resolvedPaths = [...new Set(resolutionInputs.map((input) => input.relativePath))];
+      const frameworkMaterializationRequired = config.analysis.frameworks && (
+        fullRebuild ||
+        semanticDeltas.some((delta) =>
+          delta.frameworkChanged ||
+          delta.publicContractChanged ||
+          delta.outgoingChanged ||
+          delta.changeClass === "deleted" ||
+          delta.changeClass === "renamed",
+        )
+      );
       let sqliteMutations = 0;
       const writeIndex = database.transaction(() => {
         if (fullRebuild) {
@@ -1319,7 +1370,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             indexedAt,
           );
         }
-        if (config.analysis.frameworks) {
+        if (frameworkMaterializationRequired) {
           materializeFrameworkRelationships(
             database,
             repository.id,

@@ -43,6 +43,7 @@ export interface SemanticDelta {
   architectureChanged: boolean;
   outgoingChanged: boolean;
   publicContractChanged: boolean;
+  frameworkChanged: boolean;
   changedExportNodeIds: string[];
   changedExportNames: string[];
 }
@@ -196,6 +197,14 @@ function semanticTokenStream(content: string, language: string | null): string {
   return output.trim();
 }
 
+function compilerRelevantComments(content: string): string {
+  return [...content.matchAll(
+    /\/\*\*[\s\S]*?\*\/|\/\/\/[^\r\n]*|\/\/\s*@(?!generated\b)[A-Za-z][^\r\n]*/gu,
+  )]
+    .map((match) => match[0].replace(/\s+/gu, " ").trim())
+    .join("\n");
+}
+
 function publicContractFor(
   target: GraphNode,
   nodesById: ReadonlyMap<string, GraphNode>,
@@ -271,7 +280,9 @@ export function buildFileSemanticFacts(
 
   return {
     path: filePath,
-    tokenFingerprint: sha256(semanticTokenStream(content, language)),
+    tokenFingerprint: sha256(
+      `${semanticTokenStream(content, language)}\n${compilerRelevantComments(content)}`,
+    ),
     symbolsFingerprint: fingerprint(semanticNodes),
     importsFingerprint: fingerprint(importReferences.map(semanticReferenceIdentity)),
     exportsFingerprint: fingerprint([
@@ -338,6 +349,7 @@ export function classifySemanticDelta(
   const path = current?.path ?? previous?.path ?? "";
   if (previous === null && current === null) throw new Error("A semantic delta requires facts.");
   if (previous === null) {
+    const emptyFingerprint = fingerprint([]);
     return {
       path,
       changeClass: forcedClass ?? "added",
@@ -347,11 +359,13 @@ export function classifySemanticDelta(
       architectureChanged: true,
       outgoingChanged: true,
       publicContractChanged: current!.exportedSymbols.length > 0,
+      frameworkChanged: current!.frameworkFingerprint !== emptyFingerprint,
       changedExportNodeIds: current!.exportedSymbols.map((entry) => entry.id),
       changedExportNames: current!.exportedSymbols.map((entry) => entry.name),
     };
   }
   if (current === null) {
+    const emptyFingerprint = fingerprint([]);
     return {
       path,
       changeClass: forcedClass ?? "deleted",
@@ -361,6 +375,7 @@ export function classifySemanticDelta(
       architectureChanged: true,
       outgoingChanged: true,
       publicContractChanged: previous.exportedSymbols.length > 0,
+      frameworkChanged: previous.frameworkFingerprint !== emptyFingerprint,
       changedExportNodeIds: previous.exportedSymbols.map((entry) => entry.id),
       changedExportNames: previous.exportedSymbols.map((entry) => entry.name),
     };
@@ -373,11 +388,12 @@ export function classifySemanticDelta(
   const outgoingChanged =
     previous.importsFingerprint !== current.importsFingerprint ||
     previous.referencesFingerprint !== current.referencesFingerprint;
+  const frameworkChanged = previous.frameworkFingerprint !== current.frameworkFingerprint;
   const graphChanged =
     previous.symbolsFingerprint !== current.symbolsFingerprint ||
     outgoingChanged ||
     publicContractChanged ||
-    previous.frameworkFingerprint !== current.frameworkFingerprint;
+    frameworkChanged;
   const searchChanged = previous.searchFingerprint !== current.searchFingerprint;
   const architectureChanged =
     previous.architectureFingerprint !== current.architectureFingerprint ||
@@ -401,6 +417,7 @@ export function classifySemanticDelta(
     architectureChanged,
     outgoingChanged,
     publicContractChanged,
+    frameworkChanged,
     changedExportNodeIds: exports.ids,
     changedExportNames: exports.names,
   };

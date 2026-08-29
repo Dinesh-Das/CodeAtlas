@@ -4,7 +4,7 @@ import { javascriptAdapter, jsxAdapter } from "./languages/javascript.js";
 import { pythonAdapter } from "./languages/python.js";
 import { tsxAdapter, typescriptAdapter } from "./languages/typescript.js";
 
-export const TREE_SITTER_VERSION = "tree-sitter@0.21.1";
+export const TREE_SITTER_VERSION = "tree-sitter@0.21.1+codeatlas-buffer-v2";
 
 const adapters = new Map<DetectedLanguage, LanguageAdapter>([
   ["typescript", typescriptAdapter],

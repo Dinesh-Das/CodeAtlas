@@ -7,6 +7,7 @@ import { getJournalMode, openDatabase, verifyDatabase } from "../storage/databas
 import { SCHEMA_VERSION } from "../version.js";
 import { availableLanguageAdapters } from "../parser/registry.js";
 import { availableFrameworkAdapters } from "../framework/registry.js";
+import { semanticCompilerInfo } from "../graph/typescript-resolution.js";
 import { getStatus } from "./status.js";
 
 export interface DoctorCheck {
@@ -77,6 +78,29 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
     return checks;
   }
 
+
+  const compiler = semanticCompilerInfo(repository.root);
+  const compilerFallbackWarning = [
+    "incompatible_version",
+    "incompatible_api",
+    "load_failed",
+  ].includes(compiler.fallbackReason ?? "");
+  const compilerDetail = compiler.source === "repository"
+    ? `TypeScript ${compiler.version} from the target repository`
+    : compiler.fallbackReason === "incompatible_api"
+      ? `TypeScript ${compiler.version} bundled fallback (target TypeScript ${compiler.targetVersion} does not expose the required compiler API)`
+      : compiler.fallbackReason === "incompatible_version"
+        ? `TypeScript ${compiler.version} bundled fallback (target TypeScript ${compiler.targetVersion} is unsupported)`
+        : compiler.fallbackReason === "load_failed"
+          ? `TypeScript ${compiler.version} bundled fallback (target repository TypeScript could not be loaded)`
+          : `TypeScript ${compiler.version} bundled fallback (target repository has no local TypeScript)`;
+  checks.push({
+    name: "Semantic compiler",
+    ok: !compilerFallbackWarning,
+    detail: compilerDetail,
+    severity: compilerFallbackWarning ? "warning" : "info",
+  });
+
   const initialized = await workspaceExists(repository.root);
   checks.push({
     name: "Workspace",
@@ -107,15 +131,22 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
       const schema = database
         .prepare("SELECT max(version) AS version FROM schema_migrations")
         .get() as { version: number | null };
+      const compatibleSchema = schema.version === SCHEMA_VERSION;
       checks.push({
         name: "SQLite",
-        ok: healthy && journalMode === "wal" && schema.version === SCHEMA_VERSION,
-        detail: `quick_check=${healthy ? "ok" : "failed"}, journal_mode=${journalMode}, schema=${schema.version ?? "none"}`,
+        ok: healthy && journalMode === "wal" && compatibleSchema,
+        detail:
+          `quick_check=${healthy ? "ok" : "failed"}, journal_mode=${journalMode}, ` +
+          `schema=${schema.version ?? "none"}` +
+          (compatibleSchema ? "" : `; expected ${SCHEMA_VERSION}, run \`codeatlas index --full\``),
         severity:
-          healthy && journalMode === "wal" && schema.version === SCHEMA_VERSION
+          healthy && journalMode === "wal" && compatibleSchema
             ? "info"
             : "error",
       });
+      // Later diagnostics query columns and tables introduced by newer migrations. Stop with one
+      // actionable compatibility error instead of obscuring it with a secondary SQL failure.
+      if (!compatibleSchema) return checks;
 
       const unsupported = database
         .prepare(

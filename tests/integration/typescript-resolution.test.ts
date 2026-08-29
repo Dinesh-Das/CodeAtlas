@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeRepository } from "../../src/cli/init.js";
 import { workspacePaths } from "../../src/core/workspace.js";
+import { semanticCompilerInfo } from "../../src/graph/typescript-resolution.js";
 import { openDatabase } from "../../src/storage/database.js";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
 
@@ -11,6 +12,25 @@ afterEach(async () => {
 });
 
 describe("project-aware TypeScript resolution", () => {
+  it("falls back when a target TypeScript package lacks the required compiler API", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write(
+      "node_modules/typescript/package.json",
+      JSON.stringify({ name: "typescript", version: "7.0.2", main: "index.cjs" }),
+    );
+    await repository.write(
+      "node_modules/typescript/index.cjs",
+      'module.exports = { version: "7.0.2" };\n',
+    );
+
+    expect(semanticCompilerInfo(repository.root)).toMatchObject({
+      source: "bundled",
+      targetVersion: "7.0.2",
+      fallbackReason: "incompatible_api",
+    });
+  });
+
   it("preserves exact compiler declaration identity for duplicate methods in one file", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);
