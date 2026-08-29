@@ -16,6 +16,9 @@ All notable changes follow semantic versioning.
   inferred exported values/objects, and JSDoc types.
 - `codeatlas overview` for an immediate architecture summary and `codeatlas setup` for Codex,
   Claude Code, Cursor, and Antigravity MCP configuration.
+- Persisted lifecycle ownership for extracted, resolver-generated, framework-projection,
+  architecture-projection, and rename-history edges, with deterministic edit/revert parity and
+  line-location reconciliation tests.
 - Nested/inline Fastify plugin receivers and handlers, `preValidation`, inherited hook/prefix
   composition, and inline handler graph nodes.
 - Endpoint labels and bounded evidence snippets on graph packets, truthful authoritative versus
@@ -40,6 +43,9 @@ All notable changes follow semantic versioning.
 
 - `codeatlas init` now uses Git's local `info/exclude` by default; changing the tracked
   `.gitignore` requires `--shared-ignore`.
+- `codeatlas init` now renders the same phase progress as `codeatlas index`; live index locks wait
+  for up to 60 seconds, and `codeatlas setup --all` reports unavailable or failed clients while
+  continuing with the remaining targets.
 - Prerelease tags publish to their npm prerelease dist-tag rather than accidentally becoming
   `latest`.
 - TypeScript semantic analysis prefers a compatible compiler installed by the target repository,
@@ -65,14 +71,15 @@ All notable changes follow semantic versioning.
 - Search uses normalized developer intent and SQL-backed page retrieval instead of paginating a
   permanently truncated in-memory candidate set.
 - Architecture computation occurs outside the SQLite write transaction; generation-linked
-  persistence remains atomic and crash-repairable. Schema 8 includes semantic-delta state,
-  resolution-hash indexes, and a rowid-addressed external-content FTS index with transactional bulk
-  rebuilds; the indexing contract is `framework-semantics-12`.
+  persistence remains atomic and crash-repairable. Schema 10 includes semantic-delta and source
+  location state, resolution and dependency-community indexes, explicit edge ownership, and a
+  rowid-addressed external-content FTS index with transactional bulk rebuilds; the indexing
+  contract is `edge-ownership-13`.
 - Tiny incremental updates fetch semantic records only for changed, deleted, renamed, or actually
   invalidated files; resolved-edge deletion is set-based, unresolved-import wakeup is grouped and
   hash-indexed, and workspace matching uses standards-complete brace/extglob/globstar semantics.
 - The supported runtime is Node.js 22.12 or newer, matching the strictest runtime dependency; CI
-  validates Node.js 22.12 and 24.
+  validates Node.js 22.12 and 24, and packed consumer smoke tests run on Linux, macOS, and Windows.
 
 ## 0.9.0 - 2026-08-27
 

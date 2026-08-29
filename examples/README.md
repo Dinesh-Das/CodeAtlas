@@ -4,7 +4,7 @@ Install CodeAtlas globally, initialize the Git repository, and let setup configu
 Codex, Claude Code, Cursor, or Antigravity client:
 
 ```bash
-npm install --global @dinesh-das/codeatlas
+npm install --global @dinesh-das/codeatlas@beta
 cd /absolute/path/to/repository
 codeatlas init
 codeatlas overview

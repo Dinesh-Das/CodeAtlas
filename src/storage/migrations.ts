@@ -380,6 +380,21 @@ const migrations: readonly Migration[] = [
       CREATE INDEX idx_dependency_communities_node ON dependency_communities(node_id);
     `,
   },
+  {
+    version: 10,
+    sql: `
+      ALTER TABLE edges
+        ADD COLUMN owner_kind TEXT NOT NULL DEFAULT 'extracted'
+        CHECK(owner_kind IN (
+          'extracted', 'resolved', 'framework_projection',
+          'architecture_projection', 'rename_history'
+        ));
+      ALTER TABLE file_semantics
+        ADD COLUMN location_fingerprint TEXT NOT NULL DEFAULT '';
+
+      CREATE INDEX idx_edges_owner_file ON edges(owner_kind, file_path);
+    `,
+  },
 ];
 
 export function runMigrations(database: Database.Database): void {

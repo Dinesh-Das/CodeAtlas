@@ -14,6 +14,7 @@ interface SemanticRow {
   framework_fingerprint: string;
   architecture_fingerprint: string;
   search_fingerprint: string;
+  location_fingerprint: string;
   exported_symbols_json: string;
   references_json: string;
 }
@@ -30,6 +31,7 @@ function fromRow(row: SemanticRow): FileSemanticFacts {
     frameworkFingerprint: row.framework_fingerprint,
     architectureFingerprint: row.architecture_fingerprint,
     searchFingerprint: row.search_fingerprint,
+    locationFingerprint: row.location_fingerprint,
     exportedSymbols: JSON.parse(row.exported_symbols_json) as FileSemanticFacts["exportedSymbols"],
     references: JSON.parse(row.references_json) as UnresolvedReference[],
   };
@@ -87,11 +89,13 @@ export function upsertFileSemanticFacts(
        path, token_fingerprint, symbols_fingerprint, imports_fingerprint,
        exports_fingerprint, references_fingerprint, public_api_fingerprint,
        framework_fingerprint, architecture_fingerprint, search_fingerprint,
+       location_fingerprint,
        exported_symbols_json, references_json, updated_at
      ) VALUES (
        @path, @tokenFingerprint, @symbolsFingerprint, @importsFingerprint,
        @exportsFingerprint, @referencesFingerprint, @publicApiFingerprint,
        @frameworkFingerprint, @architectureFingerprint, @searchFingerprint,
+       @locationFingerprint,
        @exportedSymbolsJson, @referencesJson, @timestamp
      )
      ON CONFLICT(path) DO UPDATE SET
@@ -104,6 +108,7 @@ export function upsertFileSemanticFacts(
        framework_fingerprint = excluded.framework_fingerprint,
        architecture_fingerprint = excluded.architecture_fingerprint,
        search_fingerprint = excluded.search_fingerprint,
+       location_fingerprint = excluded.location_fingerprint,
        exported_symbols_json = excluded.exported_symbols_json,
        references_json = excluded.references_json,
        updated_at = excluded.updated_at`,
@@ -156,7 +161,8 @@ export function deleteExtractedEdgesForFile(database: AtlasDatabase, filePath: s
     database,
     `DELETE FROM edges
      WHERE file_path = ?
+       AND owner_kind = 'extracted'
        AND edge_type <> 'RENAMED_FROM'
-       AND id NOT IN (SELECT edge_id FROM resolved_edges WHERE file_path = ?)`,
-  ).run([filePath, filePath]);
+    `,
+  ).run(filePath);
 }

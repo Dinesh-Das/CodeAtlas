@@ -4,6 +4,7 @@ import { ensureCodeAtlasIgnored } from "../core/ignore.js";
 import { ensureWorkspaceDirectories, workspaceExists, workspacePaths } from "../core/workspace.js";
 import { detectRepository } from "../git/repository.js";
 import { runIndex, type IndexResult } from "../indexer/indexer.js";
+import type { IndexProgress } from "../core/telemetry.js";
 
 async function fileExists(filePath: string): Promise<boolean> {
   try {
@@ -22,7 +23,10 @@ export interface InitResult extends IndexResult {
 
 export async function initializeRepository(
   startPath = process.cwd(),
-  options: { sharedIgnore?: boolean } = {},
+  options: {
+    sharedIgnore?: boolean;
+    onProgress?: (progress: IndexProgress) => void;
+  } = {},
 ): Promise<InitResult> {
   const repository = await detectRepository(startPath);
   const paths = workspacePaths(repository.root);
@@ -46,6 +50,7 @@ export async function initializeRepository(
     startPath: repository.root,
     full: createdWorkspace || !hadDatabase,
     precomputedRepository: repository,
+    ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
   });
   return {
     ...result,

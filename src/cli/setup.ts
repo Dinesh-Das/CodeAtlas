@@ -11,13 +11,20 @@ const execFile = promisify(execFileCallback);
 
 export const SETUP_TARGETS = ["codex", "claude", "cursor", "antigravity"] as const;
 export type SetupTarget = (typeof SETUP_TARGETS)[number];
+export type SetupStatus =
+  | "configured"
+  | "already_configured"
+  | "planned"
+  | "not_installed"
+  | "failed";
 
 export interface SetupResult {
   repositoryRoot: string;
   targets: Array<{
     target: SetupTarget;
-    status: "configured" | "already_configured" | "planned";
+    status: SetupStatus;
     destination: string;
+    detail?: string;
   }>;
 }
 
@@ -113,16 +120,17 @@ async function addCliServer(
   serverName: string,
   repositoryRoot: string,
   dryRun: boolean,
+  isCommandAvailable: (command: string) => Promise<boolean>,
 ): Promise<"configured" | "already_configured" | "planned"> {
   const destination = command === "codex"
     ? `${path.join(os.homedir(), ".codex", "config.toml")}#mcp_servers.${serverName}`
     : `${path.join(os.homedir(), ".claude.json")}#projects[${repositoryRoot}].mcpServers.codeatlas`;
-  if (dryRun) return "planned";
-  if (!(await commandAvailable(command))) {
+  if (!dryRun && !(await isCommandAvailable(command))) {
     throw new CodeAtlasError(
       `Error: ${command} is not available on PATH; rerun setup without that target or install it first.`,
     );
   }
+  if (dryRun) return "planned";
   const getArgs = ["mcp", "get", serverName];
   try {
     await execFile(command, getArgs, {
@@ -158,7 +166,13 @@ async function addCliServer(
 
 export async function setupRepository(
   startPath = process.cwd(),
-  options: { targets?: readonly SetupTarget[]; dryRun?: boolean } = {},
+  options: {
+    targets?: readonly SetupTarget[];
+    dryRun?: boolean;
+    continueOnError?: boolean;
+    isCommandAvailable?: (command: string) => Promise<boolean>;
+    detectedTargets?: readonly SetupTarget[];
+  } = {},
 ): Promise<SetupResult> {
   const repository = await detectRepository(startPath);
   if (!(await workspaceExists(repository.root))) {
@@ -173,36 +187,65 @@ export async function setupRepository(
     );
   }
   const dryRun = options.dryRun === true;
+  const continueOnError = options.continueOnError === true;
+  const isCommandAvailable = options.isCommandAvailable ?? commandAvailable;
+  const detectedTargets = continueOnError
+    ? new Set(options.detectedTargets ?? await detectSetupTargets())
+    : null;
   const results: SetupResult["targets"] = [];
   for (const target of targets) {
-    if (target === "codex") {
-      const serverName = `codeatlas-${repository.name.replace(/[^A-Za-z0-9_-]+/gu, "-")}-${repository.id.slice(0, 8)}`;
+    const serverName = target === "codex"
+      ? `codeatlas-${repository.name.replace(/[^A-Za-z0-9_-]+/gu, "-")}-${repository.id.slice(0, 8)}`
+      : "codeatlas";
+    const destination = target === "codex"
+      ? `${path.join(os.homedir(), ".codex", "config.toml")}#mcp_servers.${serverName}`
+      : target === "claude"
+        ? `${path.join(os.homedir(), ".claude.json")} (local project scope)`
+        : target === "cursor"
+          ? path.join(repository.root, ".cursor", "mcp.json")
+          : path.join(repository.root, ".agents", "mcp_config.json");
+    if (detectedTargets !== null && !detectedTargets.has(target)) {
       results.push({
         target,
-        status: await addCliServer("codex", serverName, repository.root, dryRun),
-        destination: `${path.join(os.homedir(), ".codex", "config.toml")}#mcp_servers.${serverName}`,
+        status: "not_installed",
+        destination,
+        detail: `${target} was not detected on this machine.`,
       });
       continue;
     }
-    if (target === "claude") {
+    try {
+      if (target === "codex" || target === "claude") {
+        results.push({
+          target,
+          status: await addCliServer(
+            target,
+            serverName,
+            repository.root,
+            dryRun,
+            isCommandAvailable,
+          ),
+          destination,
+        });
+        continue;
+      }
+      const server = target === "cursor"
+        ? { type: "stdio", command: "codeatlas", args: ["mcp", "${workspaceFolder}"] }
+        : { command: "codeatlas", args: ["mcp", repository.root], cwd: repository.root };
       results.push({
         target,
-        status: await addCliServer("claude", "codeatlas", repository.root, dryRun),
-        destination: `${path.join(os.homedir(), ".claude.json")} (local project scope)`,
+        status: await mergeJsonServer(destination, server, dryRun),
+        destination,
       });
-      continue;
+    } catch (error) {
+      if (!continueOnError) throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      results.push({
+        target,
+        status: /not available on PATH/iu.test(detail) ? "not_installed" : "failed",
+        destination,
+        detail,
+      });
     }
-    const filePath = target === "cursor"
-      ? path.join(repository.root, ".cursor", "mcp.json")
-      : path.join(repository.root, ".agents", "mcp_config.json");
-    const server = target === "cursor"
-      ? { type: "stdio", command: "codeatlas", args: ["mcp", "${workspaceFolder}"] }
-      : { command: "codeatlas", args: ["mcp", repository.root], cwd: repository.root };
-    results.push({
-      target,
-      status: await mergeJsonServer(filePath, server, dryRun),
-      destination: filePath,
-    });
   }
   return { repositoryRoot: repository.root, targets: results };
 }
@@ -223,12 +266,26 @@ export function formatSetupResult(result: SetupResult): string {
     "CodeAtlas MCP setup",
     "",
     ...result.targets.map((entry) => {
-      const marker = entry.status === "already_configured" ? "=" : entry.status === "planned" ? ">" : "+";
-      return `[${marker}] ${entry.target}: ${entry.status.replaceAll("_", " ")} (${entry.destination})`;
+      const marker = entry.status === "already_configured"
+        ? "="
+        : entry.status === "planned"
+          ? ">"
+          : entry.status === "not_installed" || entry.status === "failed"
+            ? "-"
+            : "+";
+      const detail = entry.detail === undefined ? "" : ` — ${entry.detail}`;
+      return `[${marker}] ${entry.target}: ${entry.status.replaceAll("_", " ")} (${entry.destination})${detail}`;
     }),
     "",
-    result.targets.every((entry) => entry.status === "planned")
+    result.targets.some((entry) => entry.status === "planned") &&
+      result.targets.every((entry) =>
+        entry.status === "planned" || entry.status === "not_installed"
+      )
       ? "Dry run only; no configuration was changed."
-      : "Restart or reload the configured coding agents, then ask for a CodeAtlas overview.",
+      : result.targets.some((entry) =>
+          entry.status === "configured" || entry.status === "already_configured"
+        )
+        ? "Restart or reload the configured coding agents, then ask for a CodeAtlas overview."
+        : "No coding agents were configured; review the statuses above.",
   ].join("\n");
 }

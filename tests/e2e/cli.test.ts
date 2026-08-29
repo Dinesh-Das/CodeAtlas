@@ -30,7 +30,9 @@ describe("compiled CLI", () => {
     await repository.git("commit", "-m", "fixture");
 
     const initialized = await runCli("init", repository.root);
-    expect(initialized.stderr).toBe("");
+    expect(initialized.stderr).toContain("Building codebase map...");
+    expect(initialized.stderr).toContain("repository discovery");
+    expect(initialized.stderr).toContain("tree sitter parsing");
     expect(initialized.stdout).toContain("CodeAtlas is ready");
     expect(initialized.stdout).toContain("codeatlas mcp");
 
@@ -63,7 +65,7 @@ describe("compiled CLI", () => {
     expect(quietIndexResult).toEqual({ stdout: "", stderr: "" });
 
     const doctor = await runCli("doctor", repository.root);
-    expect(doctor.stdout).toContain("[OK] SQLite: quick_check=ok, journal_mode=wal, schema=9");
+    expect(doctor.stdout).toContain("[OK] SQLite: quick_check=ok, journal_mode=wal, schema=10");
     expect(doctor.stdout).toContain("[OK] Graph integrity:");
     expect(doctor.stdout).toContain("[OK] Relationship quality:");
     expect(doctor.stdout).toContain("[OK] Database storage:");

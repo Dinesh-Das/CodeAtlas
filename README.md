@@ -13,7 +13,7 @@ file/line evidence instead of asking you to trust a black box.
 - Keep source code on your machine.
 
 ```bash
-npm install --global @dinesh-das/codeatlas
+npm install --global @dinesh-das/codeatlas@beta
 codeatlas init
 codeatlas setup
 ```
@@ -61,22 +61,30 @@ claimed relationship. The graph/compiler/framework layers validate relationships
 ## Measured on a large repository
 
 The reproducible real-repository benchmark indexed freeCodeCamp commit
-`6d0d89755eb233631adfdb5d44596339c5bbe97b` (19,424 files and 220,775 tracked JS/TS LOC):
+`6d0d89755eb233631adfdb5d44596339c5bbe97b` (19,423 tracked files and 220,775
+tracked JS/TS LOC) on Windows x64 with Node.js 24.12.0. The resulting graph contained 159,329
+nodes, 229,885 relationships, 119 API routes, and 10 parser failures:
 
 | Scenario | Result |
 |---|---:|
-| Cold/full index | 119.20 s |
-| One implementation file | 7.23 s |
-| Exported symbol change | 8.18 s |
-| Search p95 | 4.87 ms |
-| Trace p95 | 124.98 ms |
-| Impact p95 | 44.06 ms |
-| External peak RSS | 3.35 GB |
+| Cold/full index | 405.40 s |
+| No-change freshness/index command | 1.88 s |
+| Comment-only file | 3.02 s |
+| One implementation file | 5.35 s |
+| Exported symbol change | 13.56 s |
+| Raw search packet p95 | 42.46 ms |
+| Raw trace packet p95 | 11.57 ms |
+| Raw impact packet p95 | 172.63 ms |
+| Freshness gate p95 | 2,479.07 ms |
+| External peak RSS | 4.20 GiB |
+| SQLite database | 700.70 MiB |
 
 Results are hardware- and repository-dependent. Reproduce them with
 `npm run benchmark:real -- --repository PATH`; generated 100k–1M LOC profiles are also included.
-CodeAtlas is a beta: the benchmark is evidence, not a promise that every repository has the same
-shape or compiler cost.
+The raw packet rows run against an already-open graph context and exclude freshness checks, MCP
+transport, the coding-agent host, and model latency. The freshness row measures the separate
+working-tree synchronization gate. CodeAtlas is a beta: the benchmark is evidence, not a promise
+that every repository has the same shape or compiler cost.
 
 ## Trust model
 
@@ -185,12 +193,12 @@ database service are not required.
 Install the scoped npm package globally. The installed executable remains `codeatlas`:
 
 ```bash
-npm install --global @dinesh-das/codeatlas
+npm install --global @dinesh-das/codeatlas@beta
 codeatlas --version
 ```
 
-The unscoped npm name `codeatlas` belongs to an unrelated package; use the scoped package shown
-above.
+The unscoped npm name `codeatlas` belongs to an unrelated package; use the scoped beta package
+shown above. Stable releases will not require the `@beta` dist-tag.
 
 ## Getting started
 

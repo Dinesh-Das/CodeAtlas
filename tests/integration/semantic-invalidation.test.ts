@@ -44,7 +44,110 @@ function timestamps(repository: TestRepository, pathPattern: string): string[] {
   }
 }
 
+interface NormalizedEdge {
+  id: string;
+  source_node_id: string;
+  target_node_id: string;
+  edge_type: string;
+  source_type: string;
+  provenance_category: string;
+  confidence: number;
+  file_path: string | null;
+  line: number | null;
+  metadata_json: string;
+  owner_kind: string;
+}
+
+function normalizedEdges(repository: TestRepository): NormalizedEdge[] {
+  const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
+  try {
+    return database
+      .prepare(
+        `SELECT id, source_node_id, target_node_id, edge_type, source_type,
+                provenance_category, confidence, file_path, line, metadata_json, owner_kind
+         FROM edges
+         ORDER BY id`,
+      )
+      .all() as NormalizedEdge[];
+  } finally {
+    database.close();
+  }
+}
+
 describe("semantic-delta invalidation", () => {
+  it("keeps the exact graph deterministic across harmless edits and line shifts", async () => {
+    const app = [
+      'import Fastify from "fastify";',
+      'import { handleAuth } from "./auth.js";',
+      'import { protectedRoutes } from "./routes.js";',
+      "const fastify = Fastify();",
+      'fastify.decorate("authorize", handleAuth);',
+      "fastify.register(protectedRoutes, {",
+      '  prefix: "/api",',
+      "  onRequest: fastify.authorize,",
+      "});",
+      "",
+    ].join("\n");
+    const auth = [
+      "export async function handleAuth(): Promise<void> {",
+      "  return;",
+      "}",
+      "",
+    ].join("\n");
+    const repository = await initializedRepository({
+      "api/auth.ts": auth,
+      "api/routes.ts": [
+        'import type { FastifyPluginCallback } from "fastify";',
+        "export async function deleteResetModule(): Promise<void> { return; }",
+        "export const protectedRoutes: FastifyPluginCallback = (fastify, _options, done) => {",
+        '  fastify.delete("/account/reset-module", deleteResetModule);',
+        "  done();",
+        "};",
+        "",
+      ].join("\n"),
+      "api/app.ts": app,
+    });
+    const baseline = normalizedEdges(repository);
+    expect([...new Set(baseline.map((edge) => edge.owner_kind))]).toEqual(
+      expect.arrayContaining(["extracted", "resolved"]),
+    );
+    expect(baseline.some((edge) => edge.owner_kind === "architecture_projection")).toBe(true);
+    expect(baseline.some((edge) => edge.owner_kind === "framework_projection")).toBe(true);
+    expect(baseline.some((edge) => edge.owner_kind === "resolved")).toBe(true);
+
+    await repository.write("api/app.ts", `${app}// harmless comment\n`);
+    await expect(indexRepository(repository.root)).resolves.toMatchObject({
+      changedFiles: 1,
+      invalidatedFiles: 0,
+      work: { architectureFiles: 0 },
+    });
+    await repository.write("api/app.ts", app);
+    await expect(indexRepository(repository.root)).resolves.toMatchObject({
+      changedFiles: 1,
+      invalidatedFiles: 0,
+      work: { architectureFiles: 0 },
+    });
+    expect(normalizedEdges(repository)).toEqual(baseline);
+
+    await repository.write("api/auth.ts", `${"// shifted evidence\n".repeat(5)}${auth}`);
+    await expect(indexRepository(repository.root)).resolves.toMatchObject({
+      changedFiles: 1,
+      invalidatedFiles: 0,
+      semanticChanges: { content_only: 1 },
+      work: { dependentFilesInvalidated: 0, architectureFiles: 0 },
+    });
+    const shiftedIncremental = normalizedEdges(repository);
+    const shiftedMemberships = shiftedIncremental.filter(
+      (edge) =>
+        edge.owner_kind === "architecture_projection" && edge.file_path === "api/auth.ts",
+    );
+    expect(shiftedMemberships.length).toBeGreaterThan(0);
+    expect(shiftedMemberships.some((edge) => (edge.line ?? 0) > 5)).toBe(true);
+
+    await indexRepository(repository.root, true);
+    expect(normalizedEdges(repository)).toEqual(shiftedIncremental);
+  }, 30_000);
+
   it("keeps comment and formatting edits O(changed facts) on a high-fan-out module", async () => {
     const files: Record<string, string> = {
       "src/central.ts": "export function central(value: number): number { return value * 2; }\n",

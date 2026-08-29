@@ -210,14 +210,13 @@ export function materializeFrameworkRelationships(
   database
     .prepare(
       `DELETE FROM edges
-       WHERE source_type = 'framework'
-         AND json_extract(metadata_json, '$.derived_from_verified_framework_edges') = 1`,
+       WHERE owner_kind = 'framework_projection'`,
     )
     .run();
 
   const written = new Set<string>();
   const write = (edge: GraphEdge): void => {
-    upsertEdge(database, edge, timestamp);
+    upsertEdge(database, edge, timestamp, "framework_projection");
     written.add(edge.id);
   };
 

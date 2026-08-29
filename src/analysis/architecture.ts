@@ -65,12 +65,15 @@ export function runArchitectureAnalysis(
   };
   let persistence = 0;
   const persist = database.transaction(() => {
+    database.prepare("DELETE FROM edges WHERE owner_kind = 'architecture_projection'").run();
     removeStaleAnalysisNodes(
       database,
       new Set(grouping.nodes.map((node) => node.id)),
     );
     for (const node of grouping.nodes) upsertNode(database, node, timestamp);
-    for (const edge of grouping.edges) upsertEdge(database, edge, timestamp);
+    for (const edge of grouping.edges) {
+      upsertEdge(database, edge, timestamp, "architecture_projection");
+    }
     replaceArchitectureData(database, signals.metrics, findings, communities, timestamp);
     if (structuralGeneration !== undefined) {
       setRepositoryStates(database, {

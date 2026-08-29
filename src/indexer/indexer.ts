@@ -60,7 +60,11 @@ import {
   TREE_SITTER_VERSION,
 } from "../parser/registry.js";
 import { openDatabase, removeDatabaseFiles, type AtlasDatabase } from "../storage/database.js";
-import { deleteEdgesForFile, upsertEdge } from "../storage/edges.js";
+import {
+  deleteEdgesForFile,
+  refreshArchitectureEdgeLocationsForFiles,
+  upsertEdge,
+} from "../storage/edges.js";
 import { deleteFile, listFiles, upsertFile, type FileRecord } from "../storage/files.js";
 import {
   observeNodeSearchMutations,
@@ -404,11 +408,21 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
   const paths = workspacePaths(repository.root);
   telemetry.start("ignore_config_loading");
   const config = await loadConfig(repository.root);
-  const releaseLock = await acquireIndexLock(repository.root);
+  const ignoreRules = options.precomputedIgnoreRules ?? await loadIgnoreRules(repository.root);
+  telemetry.end("ignore_config_loading", { itemsProcessed: 1 });
+  let waitingForLock = false;
+  const releaseLock = await acquireIndexLock(repository.root, {
+    onWait: () => {
+      if (!waitingForLock) {
+        waitingForLock = true;
+        telemetry.start("index_lock_wait");
+      }
+      telemetry.progress("index_lock_wait", 0, null);
+    },
+  });
+  if (waitingForLock) telemetry.end("index_lock_wait");
 
   try {
-    const ignoreRules = options.precomputedIgnoreRules ?? await loadIgnoreRules(repository.root);
-    telemetry.end("ignore_config_loading", { itemsProcessed: 1 });
     let database: AtlasDatabase;
     try {
       database = openDatabase(paths.database);
@@ -946,7 +960,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       const changedPaths = new Set(changed.map((candidate) => candidate.relativePath));
       const structuralChanged =
         fullRebuild ||
-        semanticDeltas.some((delta) => delta.graphChanged) ||
+        semanticDeltas.some((delta) => delta.graphChanged || delta.locationChanged) ||
         changes.added.length > 0 ||
         changes.deleted.length > 0 ||
         changes.renamed.length > 0;
@@ -1031,6 +1045,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         const requiresResolution =
           fullRebuild ||
           delta?.outgoingChanged === true ||
+          delta?.locationChanged === true ||
           delta?.changeClass === "added" ||
           delta?.changeClass === "renamed" ||
           delta?.changeClass === "module_resolution_change";
@@ -1057,6 +1072,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         fullRebuild ||
         semanticDeltas.some((delta) =>
           delta.frameworkChanged ||
+          delta.locationChanged ||
           delta.publicContractChanged ||
           delta.outgoingChanged ||
           delta.changeClass === "deleted" ||
@@ -1367,7 +1383,9 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           for (const edge of candidate.parsedFile.edges) upsertEdge(database, edge, indexedAt);
         }
         for (const plan of renamePlans.values()) {
-          for (const edge of plan.renameEdges) upsertEdge(database, edge, indexedAt);
+          for (const edge of plan.renameEdges) {
+            upsertEdge(database, edge, indexedAt, "rename_history");
+          }
         }
 
         if (resolutionInputs.length > 0) {
@@ -1385,6 +1403,14 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             (completed, total) => telemetry.progress("graph_resolution", completed, total),
           );
         }
+        refreshArchitectureEdgeLocationsForFiles(
+          database,
+          repository.id,
+          semanticDeltas
+            .filter((delta) => delta.locationChanged && !delta.architectureChanged)
+            .map((delta) => delta.path),
+          indexedAt,
+        );
         if (frameworkMaterializationRequired) {
           materializeFrameworkRelationships(
             database,

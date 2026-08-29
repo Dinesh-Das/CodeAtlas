@@ -2,7 +2,7 @@
 import { Command } from "commander";
 import { CodeAtlasError } from "../core/errors.js";
 import { CODEATLAS_VERSION } from "../version.js";
-import type { IndexProgress } from "../core/telemetry.js";
+import { createIndexProgressReporter } from "./progress.js";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -18,7 +18,11 @@ export function createProgram(): Command {
     .option("--shared-ignore", "Add .codeatlas/ to the repository .gitignore", false)
     .action(async (targetPath: string, options: { sharedIgnore: boolean }) => {
       const { formatInitResult, initializeRepository } = await import("./init.js");
-      console.log(formatInitResult(await initializeRepository(targetPath, options)));
+      process.stderr.write("CodeAtlas\n\nBuilding codebase map...\n\n");
+      console.log(formatInitResult(await initializeRepository(targetPath, {
+        ...options,
+        onProgress: createIndexProgressReporter(),
+      })));
     });
 
   program
@@ -35,22 +39,7 @@ export function createProgram(): Command {
       const { formatIndexResult, indexRepository } = await import("./index-command.js");
       const onProgress = options.quiet || options.json
         ? undefined
-        : (progress: IndexProgress): void => {
-            if (progress.status === "completed" && progress.elapsedMs === 0) return;
-            const label = progress.phase.replaceAll("_", " ");
-            const count = progress.total === null || progress.total === 0
-              ? ""
-              : ` ${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()}`;
-            const elapsed = progress.status === "started"
-              ? ""
-              : ` ${(progress.elapsedMs / 1_000).toFixed(2)}s`;
-            if (process.stderr.isTTY && progress.status !== "completed") {
-              process.stderr.write(`\r${label}${count}${elapsed}`);
-            } else if (progress.status === "completed") {
-              if (process.stderr.isTTY) process.stderr.write("\r\x1b[2K");
-              process.stderr.write(`${label}${count}${elapsed}\n`);
-            }
-          };
+        : createIndexProgressReporter();
       const result = await indexRepository(
         targetPath,
         options.full,
@@ -110,6 +99,7 @@ export function createProgram(): Command {
       const result = await setupRepository(targetPath, {
         ...(targets === undefined ? {} : { targets }),
         dryRun: options.dryRun,
+        continueOnError: options.all,
       });
       console.log(formatSetupResult(result));
     });

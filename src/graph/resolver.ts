@@ -905,7 +905,7 @@ function persistEdges(
         ...reference.metadata,
       },
     };
-    upsertEdge(database, edge, timestamp);
+    upsertEdge(database, edge, timestamp, "resolved");
     upsertResolvedEdge(database, reference.evidence.file, id);
     edgeIds.add(id);
   }

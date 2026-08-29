@@ -2,6 +2,7 @@ import { performance } from "node:perf_hooks";
 
 export const INDEX_PHASES = [
   "ignore_config_loading",
+  "index_lock_wait",
   "repository_discovery",
   "fingerprinting",
   "git_status_freshness",

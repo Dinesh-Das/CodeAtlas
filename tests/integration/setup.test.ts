@@ -79,4 +79,28 @@ describe("setup and direct overview", () => {
     expect(overview).toMatchObject({ files: 1 });
     expect(formatOverview(overview)).toContain("Ask your coding agent");
   });
+
+  it("isolates unavailable and failed clients when configuring all targets", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write("src/index.ts", "export const ready = true;\n");
+    await repository.write(".cursor/mcp.json", "{ invalid json\n");
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "setup all fixture");
+    await initializeRepository(repository.root);
+
+    await expect(setupRepository(repository.root, {
+      targets: ["codex", "claude", "cursor", "antigravity"],
+      dryRun: true,
+      continueOnError: true,
+      detectedTargets: ["cursor", "antigravity"],
+    })).resolves.toMatchObject({
+      targets: [
+        { target: "codex", status: "not_installed" },
+        { target: "claude", status: "not_installed" },
+        { target: "cursor", status: "failed" },
+        { target: "antigravity", status: "planned" },
+      ],
+    });
+  });
 });

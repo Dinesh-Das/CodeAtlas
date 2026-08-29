@@ -27,6 +27,15 @@ describe("SQLite storage", () => {
       expect(
         database.pragma("index_info(idx_dependency_communities_node)") as Array<{ name: string }>,
       ).toEqual([expect.objectContaining({ name: "node_id" })]);
+      expect(
+        database.pragma("index_info(idx_edges_owner_file)") as Array<{ name: string }>,
+      ).toEqual([
+        expect.objectContaining({ name: "owner_kind" }),
+        expect.objectContaining({ name: "file_path" }),
+      ]);
+      expect(
+        database.pragma("table_info(file_semantics)") as Array<{ name: string }>,
+      ).toContainEqual(expect.objectContaining({ name: "location_fingerprint" }));
 
       const id = createNodeId("repo", "file", "src/payment.ts", "src/payment.ts");
       upsertNode(

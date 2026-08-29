@@ -122,3 +122,10 @@ export interface GraphEdge {
   line: number | null;
   metadata: Record<string, unknown>;
 }
+
+export type EdgeOwner =
+  | "extracted"
+  | "resolved"
+  | "framework_projection"
+  | "architecture_projection"
+  | "rename_history";

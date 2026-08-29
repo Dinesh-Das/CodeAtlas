@@ -1,6 +1,7 @@
 import { mkdir, open, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { CodeAtlasError } from "./errors.js";
 import { isPathInside } from "./paths.js";
 
@@ -54,6 +55,19 @@ export async function writeJsonAtomic(filePath: string, value: unknown): Promise
 interface LockContents {
   pid: number;
   acquiredAt: string;
+  token: string;
+}
+
+export interface IndexLockWait {
+  elapsedMs: number;
+  ownerPid: number;
+  acquiredAt: string | null;
+}
+
+export interface IndexLockOptions {
+  waitTimeoutMs?: number;
+  pollIntervalMs?: number;
+  onWait?: (wait: IndexLockWait) => void;
 }
 
 function isProcessRunning(pid: number): boolean {
@@ -65,13 +79,24 @@ function isProcessRunning(pid: number): boolean {
   }
 }
 
-export async function acquireIndexLock(repositoryRoot: string): Promise<() => Promise<void>> {
+export async function acquireIndexLock(
+  repositoryRoot: string,
+  options: IndexLockOptions = {},
+): Promise<() => Promise<void>> {
   const paths = await ensureWorkspaceDirectories(repositoryRoot);
+  const waitTimeoutMs = options.waitTimeoutMs ?? 60_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 500;
+  const startedAt = Date.now();
+  const token = randomUUID();
 
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  while (true) {
     try {
       const handle = await open(paths.lock, "wx");
-      const contents: LockContents = { pid: process.pid, acquiredAt: new Date().toISOString() };
+      const contents: LockContents = {
+        pid: process.pid,
+        acquiredAt: new Date().toISOString(),
+        token,
+      };
       await handle.writeFile(`${JSON.stringify(contents)}\n`, "utf8");
       await handle.close();
 
@@ -79,31 +104,45 @@ export async function acquireIndexLock(repositoryRoot: string): Promise<() => Pr
       return async () => {
         if (released) return;
         released = true;
-        await unlink(paths.lock).catch(() => undefined);
+        try {
+          const current = JSON.parse(await readFile(paths.lock, "utf8")) as Partial<LockContents>;
+          if (current.token === token) await unlink(paths.lock);
+        } catch {
+          // The lock was already removed or replaced; never remove another owner's lock.
+        }
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 
+      let contents: Partial<LockContents> = {};
       let stale = false;
       try {
-        const contents = JSON.parse(await readFile(paths.lock, "utf8")) as Partial<LockContents>;
+        contents = JSON.parse(await readFile(paths.lock, "utf8")) as Partial<LockContents>;
         stale = typeof contents.pid !== "number" || !isProcessRunning(contents.pid);
       } catch {
         stale = true;
       }
 
-      if (!stale || attempt === 1) {
+      if (stale) {
+        await unlink(paths.lock).catch(() => undefined);
+        continue;
+      }
+
+      const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs >= waitTimeoutMs) {
         throw new CodeAtlasError(
-          "Error: another CodeAtlas indexing process is active for this repository.",
+          `Error: another CodeAtlas indexing process did not complete within ${Math.ceil(waitTimeoutMs / 1_000)} seconds.`,
           { cause: error },
         );
       }
-
-      await unlink(paths.lock).catch(() => undefined);
+      options.onWait?.({
+        elapsedMs,
+        ownerPid: contents.pid!,
+        acquiredAt: typeof contents.acquiredAt === "string" ? contents.acquiredAt : null,
+      });
+      await delay(Math.min(pollIntervalMs, waitTimeoutMs - elapsedMs));
     }
   }
-
-  throw new CodeAtlasError("Error: could not acquire the CodeAtlas index lock.");
 }
 
 export async function removeWorkspace(repositoryRoot: string): Promise<void> {

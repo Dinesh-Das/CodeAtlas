@@ -30,6 +30,7 @@ export interface FileSemanticFacts {
   frameworkFingerprint: string;
   architectureFingerprint: string;
   searchFingerprint: string;
+  locationFingerprint: string;
   exportedSymbols: ExportedSemanticSymbol[];
   references: UnresolvedReference[];
 }
@@ -44,6 +45,7 @@ export interface SemanticDelta {
   outgoingChanged: boolean;
   publicContractChanged: boolean;
   frameworkChanged: boolean;
+  locationChanged: boolean;
   changedExportNodeIds: string[];
   changedExportNames: string[];
 }
@@ -106,6 +108,39 @@ function semanticEdge(edge: GraphEdge): Record<string, unknown> {
     confidence: edge.confidence,
     metadata: canonicalValue(edge.metadata),
   };
+}
+
+function locationFingerprint(
+  nodes: readonly GraphNode[],
+  edges: readonly GraphEdge[],
+  references: readonly UnresolvedReference[],
+): string {
+  const evidenceLocation = (value: unknown): unknown => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const evidence = value as Record<string, unknown>;
+    return { file: evidence.file ?? null, line: evidence.line ?? null };
+  };
+  return fingerprint([
+    ...nodes.map((node) => ({
+      kind: "node",
+      id: node.id,
+      filePath: node.filePath,
+      startLine: node.startLine,
+      evidence: evidenceLocation(node.metadata.evidence),
+    })),
+    ...edges.map((edge) => ({
+      kind: "edge",
+      id: edge.id,
+      filePath: edge.filePath,
+      line: edge.line,
+      evidence: evidenceLocation(edge.metadata.evidence),
+    })),
+    ...references.map((reference) => ({
+      kind: "reference",
+      identity: semanticReferenceIdentity(reference),
+      evidence: evidenceLocation(reference.evidence),
+    })),
+  ]);
 }
 
 export function semanticReferenceIdentity(reference: UnresolvedReference): string {
@@ -310,6 +345,7 @@ export function buildFileSemanticFacts(
         node.signature === null ? null : semanticTokenStream(node.signature, node.language),
       metadata: canonicalValue(node.metadata),
     }))),
+    locationFingerprint: locationFingerprint(nodes, edges, references),
     exportedSymbols,
     references,
   };
@@ -360,6 +396,7 @@ export function classifySemanticDelta(
       outgoingChanged: true,
       publicContractChanged: current!.exportedSymbols.length > 0,
       frameworkChanged: current!.frameworkFingerprint !== emptyFingerprint,
+      locationChanged: true,
       changedExportNodeIds: current!.exportedSymbols.map((entry) => entry.id),
       changedExportNames: current!.exportedSymbols.map((entry) => entry.name),
     };
@@ -376,6 +413,7 @@ export function classifySemanticDelta(
       outgoingChanged: true,
       publicContractChanged: previous.exportedSymbols.length > 0,
       frameworkChanged: previous.frameworkFingerprint !== emptyFingerprint,
+      locationChanged: true,
       changedExportNodeIds: previous.exportedSymbols.map((entry) => entry.id),
       changedExportNames: previous.exportedSymbols.map((entry) => entry.name),
     };
@@ -389,6 +427,7 @@ export function classifySemanticDelta(
     previous.importsFingerprint !== current.importsFingerprint ||
     previous.referencesFingerprint !== current.referencesFingerprint;
   const frameworkChanged = previous.frameworkFingerprint !== current.frameworkFingerprint;
+  const locationChanged = previous.locationFingerprint !== current.locationFingerprint;
   const graphChanged =
     previous.symbolsFingerprint !== current.symbolsFingerprint ||
     outgoingChanged ||
@@ -418,6 +457,7 @@ export function classifySemanticDelta(
     outgoingChanged,
     publicContractChanged,
     frameworkChanged,
+    locationChanged,
     changedExportNodeIds: exports.ids,
     changedExportNames: exports.names,
   };
