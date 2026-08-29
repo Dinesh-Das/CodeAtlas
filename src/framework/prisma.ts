@@ -257,7 +257,7 @@ function operationReference(
 
 export const prismaAdapter: FrameworkAdapter = {
   name: "prisma",
-  version: "prisma-framework-2",
+  version: "prisma-framework-3",
 
   supports(relativeFilePath, language) {
     return path.posix.extname(relativeFilePath).toLowerCase() === ".prisma" ||

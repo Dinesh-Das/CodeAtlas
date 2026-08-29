@@ -90,7 +90,7 @@ const DEPENDENCY_EDGE_TYPES: readonly EdgeType[] = [
   "DECORATES",
   "IMPLEMENTED_BY",
   "PROTECTED_BY",
-  "CONTINUES_TO",
+  "MAY_CONTINUE_TO",
   "ROUTE_PREFIX",
   "QUERIES",
   "UPDATES",
@@ -113,11 +113,48 @@ const TRACE_EDGE_TYPES: readonly EdgeType[] = [
   "DECORATES",
   "IMPLEMENTED_BY",
   "PROTECTED_BY",
-  "CONTINUES_TO",
+  "MAY_CONTINUE_TO",
   "ROUTE_PREFIX",
   "QUERIES",
   "UPDATES",
 ];
+
+const TRACE_EDGE_PRIORITY: Readonly<Record<EdgeType, number>> = {
+  HANDLES: 100,
+  PROTECTED_BY: 98,
+  IMPLEMENTED_BY: 96,
+  MAY_CONTINUE_TO: 94,
+  CALLS: 92,
+  QUERIES: 90,
+  UPDATES: 90,
+  PUBLISHES: 88,
+  SUBSCRIBES: 88,
+  TRIGGERS: 86,
+  USES_EXTERNAL_SERVICE: 84,
+  READS_FROM: 82,
+  WRITES_TO: 82,
+  APPLIES_HOOK: 80,
+  MOUNTS: 78,
+  DECORATES: 76,
+  DEPENDS_ON: 70,
+  REFERENCES: 50,
+  IMPORTS: 40,
+  ROUTE_PREFIX: 30,
+  CONTAINS: 0,
+  EXPORTS: 0,
+  EXTENDS: 0,
+  IMPLEMENTS: 0,
+  EXPOSES: 0,
+  TESTS: 0,
+  BELONGS_TO_FEATURE: 0,
+  BELONGS_TO_DOMAIN: 0,
+  CONFIGURES: 0,
+  RENAMED_FROM: 0,
+};
+
+const TRACE_EDGE_ORDER_SQL = `CASE edge_type ${TRACE_EDGE_TYPES
+  .map((edgeType) => `WHEN '${edgeType}' THEN ${100 - TRACE_EDGE_PRIORITY[edgeType]}`)
+  .join(" ")} ELSE 100 END`;
 
 function packet(
   value: Omit<AnswerPacket, "freshness" | "security">,
@@ -624,6 +661,7 @@ function traceTraverse(
     confidence: number;
     deterministic: boolean;
     visited: Set<string>;
+    priority: number;
   }
 
   const edgePlaceholders = TRACE_EDGE_TYPES.map(() => "?").join(", ");
@@ -633,6 +671,7 @@ function traceTraverse(
     confidence: 1,
     deterministic: true,
     visited: new Set([startNodeId]),
+    priority: Number.MAX_SAFE_INTEGER,
   }];
   const items = new Map<string, TraversalItem>();
   const visitedNodes = new Set<string>([startNodeId]);
@@ -641,6 +680,12 @@ function traceTraverse(
   let truncated = false;
 
   while (queue.length > 0 && completedPaths < maxPaths && visitedNodes.size <= maxNodes) {
+    queue.sort(
+      (left, right) =>
+        right.priority - left.priority ||
+        left.depth - right.depth ||
+        left.nodeId.localeCompare(right.nodeId),
+    );
     const current = queue.shift()!;
     if (current.depth >= maxDepth) {
       completedPaths += 1;
@@ -661,7 +706,7 @@ function traceTraverse(
                file_path AS filePath, line, metadata_json AS metadataJson,
                row_number() OVER (
                  PARTITION BY source_node_id
-                 ORDER BY edge_type, target_node_id, id
+                 ORDER BY ${TRACE_EDGE_ORDER_SQL}, confidence DESC, target_node_id, id
                ) AS edgeRank
              FROM edges
              WHERE source_node_id IN (${nodePlaceholders})
@@ -671,7 +716,7 @@ function traceTraverse(
                   confidence, filePath, line, metadataJson
            FROM ranked_edges
            WHERE edgeRank <= ?
-           ORDER BY sourceNodeId, edgeType, targetNodeId, id`,
+           ORDER BY sourceNodeId, edgeRank, targetNodeId, id`,
         )
         .all(...pendingNodeIds, ...TRACE_EDGE_TYPES, maxNodes) as StoredEdge[];
       for (const nodeId of pendingNodeIds) adjacency.set(nodeId, []);
@@ -703,6 +748,10 @@ function traceTraverse(
         confidence,
         deterministic,
         visited: new Set([...current.visited, edge.targetNodeId]),
+        priority:
+          TRACE_EDGE_PRIORITY[edge.edgeType] * 1_000 +
+          confidence * 100 -
+          item.depth,
       });
       scheduled += 1;
     }

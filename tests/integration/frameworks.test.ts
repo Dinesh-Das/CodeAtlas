@@ -223,7 +223,7 @@ describe("Phase 5 framework adapters", () => {
     await repository.write(
       "api/prisma/schema.prisma",
       [
-        "model User {",
+        "model user {",
         "  id String @id",
         "  completedChallenges String[]",
         "}",
@@ -292,7 +292,7 @@ describe("Phase 5 framework adapters", () => {
            JOIN nodes target ON target.id = edges.target_node_id
            WHERE edges.edge_type IN (
              'HANDLES', 'IMPLEMENTED_BY', 'DECORATES', 'MOUNTS', 'APPLIES_HOOK',
-             'PROTECTED_BY', 'CONTINUES_TO', 'ROUTE_PREFIX', 'QUERIES', 'UPDATES'
+             'PROTECTED_BY', 'MAY_CONTINUE_TO', 'ROUTE_PREFIX', 'QUERIES', 'UPDATES'
            )
            ORDER BY edges.edge_type, source.name, target.name`,
         )
@@ -348,7 +348,7 @@ describe("Phase 5 framework adapters", () => {
       );
       expect(edges).toContainEqual(
         expect.objectContaining({
-          edgeType: "CONTINUES_TO",
+          edgeType: "MAY_CONTINUE_TO",
           sourceName: "handleAuth",
           targetName: "DELETE deleteResetModule",
         }),
@@ -365,7 +365,7 @@ describe("Phase 5 framework adapters", () => {
           expect.objectContaining({
             edgeType,
             sourceName: "deleteResetModule",
-            targetName: "User",
+            targetName: "user",
             sourceType: "framework",
             provenance: "verified",
             confidence: 1,
@@ -381,6 +381,18 @@ describe("Phase 5 framework adapters", () => {
           .pluck()
           .get(),
       ).toBe(0);
+      const continuationMetadata = database
+        .prepare(
+          `SELECT metadata_json FROM edges
+           WHERE edge_type = 'MAY_CONTINUE_TO'
+             AND target_node_id = ?`,
+        )
+        .pluck()
+        .get(routeId) as string;
+      expect(JSON.parse(continuationMetadata)).toMatchObject({
+        conditional: true,
+        condition: "hook_completes_without_terminating_the_request",
+      });
     } finally {
       database.close();
     }
@@ -417,5 +429,95 @@ describe("Phase 5 framework adapters", () => {
       relationship.source !== undefined && relationship.target !== undefined
     )).toBe(true);
     expect(trace.source_snippets.length).toBeGreaterThan(0);
+  });
+
+  it("understands nested Fastify plugin parameters, preValidation, and inline handlers", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write(
+      "api/app.ts",
+      [
+        'import Fastify from "fastify";',
+        "async function validate(): Promise<void> { return; }",
+        "const fastify = Fastify();",
+        "fastify.register(async function(instance) {",
+        '  instance.addHook("preValidation", validate);',
+        "  instance.register(async function(child) {",
+        '    child.get("/orders", async (_request, _reply) => ({ ok: true }));',
+        '  }, { prefix: "/v1" });',
+        '}, { prefix: "/api" });',
+        "",
+      ].join("\n"),
+    );
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "nested Fastify plugins");
+    await initializeRepository(repository.root);
+
+    const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
+    try {
+      const routeId = database
+        .prepare("SELECT id FROM nodes WHERE kind = 'api_route' AND name = 'GET anonymous'")
+        .pluck()
+        .get() as string;
+      expect(routeId).toBeTypeOf("string");
+      expect(
+        database
+          .prepare(
+            `SELECT count(*) FROM edges
+             WHERE source_node_id = ? AND edge_type = 'HANDLES'
+               AND target_node_id IN (
+                 SELECT id FROM nodes
+                 WHERE json_extract(metadata_json, '$.fastify_entity') = 'inline_route_handler'
+               )`,
+          )
+          .pluck()
+          .get(routeId),
+      ).toBe(1);
+      expect(
+        database
+          .prepare(
+            `SELECT count(*) FROM edges
+             WHERE source_node_id = ? AND edge_type = 'PROTECTED_BY'
+               AND target_node_id IN (SELECT id FROM nodes WHERE name = 'validate')`,
+          )
+          .pluck()
+          .get(routeId),
+      ).toBe(1);
+      expect(
+        database
+          .prepare(
+            `SELECT count(*) FROM edges
+             WHERE target_node_id = ? AND edge_type = 'MAY_CONTINUE_TO'
+               AND source_node_id IN (SELECT id FROM nodes WHERE name = 'validate')`,
+          )
+          .pluck()
+          .get(routeId),
+      ).toBe(1);
+      expect(
+        database
+          .prepare(
+            `SELECT count(*) FROM edges
+             WHERE target_node_id = ? AND edge_type = 'ROUTE_PREFIX'`,
+          )
+          .pluck()
+          .get(routeId),
+      ).toBe(2);
+      expect(
+        database
+          .prepare(
+            `SELECT count(*) FROM nodes
+             WHERE json_extract(metadata_json, '$.fastify_entity') = 'inline_plugin'`,
+          )
+          .pluck()
+          .get(),
+      ).toBe(2);
+    } finally {
+      database.close();
+    }
+    const context = await ensureFreshIndex(repository.root);
+    const search = searchPacket(context, { query: "GET /api/v1/orders", limit: 10 });
+    expect(search.facts).toContainEqual(
+      expect.objectContaining({ statement: expect.stringContaining("GET anonymous") }),
+    );
   });
 });

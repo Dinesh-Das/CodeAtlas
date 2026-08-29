@@ -185,6 +185,96 @@ describe("Phase 7 MCP accuracy", () => {
     );
   });
 
+  it("prioritizes a handler path ahead of more than 150 noisy trace edges", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write("src/flow.ts", "export function start(): void {}\n");
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "best-first trace fixture");
+    await initializeRepository(repository.root);
+    const context = await ensureFreshIndex(repository.root);
+
+    const database = openDatabase(workspacePaths(repository.root).database);
+    let startId: string;
+    try {
+      startId = database
+        .prepare("SELECT id FROM nodes WHERE qualified_name = 'start'")
+        .pluck()
+        .get() as string;
+      const timestamp = new Date().toISOString();
+      const testNode = (id: string, name: string): GraphNode => ({
+        id,
+        kind: "function",
+        name,
+        qualifiedName: name,
+        filePath: "src/flow.ts",
+        language: "typescript",
+        startLine: 1,
+        startColumn: 0,
+        endLine: 1,
+        endColumn: 38,
+        signature: null,
+        visibility: "public",
+        contentHash: null,
+        sourceType: "ast",
+        provenance: "verified",
+        confidence: 1,
+        metadata: {
+          evidence: { source_type: "ast", file: "src/flow.ts", line: 1, column: 0 },
+        },
+      });
+      const write = database.transaction(() => {
+        upsertNode(database, testNode("important-handler", "importantHandler"), timestamp);
+        upsertEdge(database, {
+          id: "important-handles-edge",
+          sourceNodeId: startId,
+          targetNodeId: "important-handler",
+          edgeType: "HANDLES",
+          sourceType: "framework",
+          provenance: "verified",
+          confidence: 1,
+          filePath: "src/flow.ts",
+          line: 1,
+          metadata: {
+            evidence: { source_type: "framework", file: "src/flow.ts", line: 1, column: 0 },
+          },
+        }, timestamp);
+        for (let index = 0; index < 160; index += 1) {
+          const nodeId = `noisy-call-${index.toString().padStart(3, "0")}`;
+          upsertNode(database, testNode(nodeId, nodeId), timestamp);
+          upsertEdge(database, {
+            id: `noisy-call-edge-${index.toString().padStart(3, "0")}`,
+            sourceNodeId: startId,
+            targetNodeId: nodeId,
+            edgeType: "CALLS",
+            sourceType: "ast",
+            provenance: "verified",
+            confidence: 1,
+            filePath: "src/flow.ts",
+            line: 1,
+            metadata: {
+              evidence: { source_type: "ast", file: "src/flow.ts", line: 1, column: 0 },
+            },
+          }, timestamp);
+        }
+      });
+      write();
+    } finally {
+      database.close();
+    }
+
+    const response = answerPacketSchema.parse(
+      tracePacket(context, { start: startId!, max_depth: 1, limit: 50 }),
+    );
+    expect(response.relationships).toContainEqual(
+      expect.objectContaining({
+        edge_type: "HANDLES",
+        target_node_id: "important-handler",
+      }),
+    );
+    expect(response.relationships).toHaveLength(DEFAULT_CONFIG.limits.maxExecutionPaths);
+  });
+
   it("reports authoritative versus watched-cache freshness truthfully", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);

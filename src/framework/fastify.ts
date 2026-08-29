@@ -28,7 +28,13 @@ const HTTP_METHODS = new Set([
   "post",
   "put",
 ]);
-const REQUEST_HOOKS = new Set(["onRequest", "preHandler"]);
+const REQUEST_HOOKS = new Set(["onRequest", "preValidation", "preHandler"]);
+
+type ReceiverEvidence = {
+  confidence: number;
+  sourceType: "framework" | "heuristic";
+  detection: string;
+};
 
 interface FastifyRoute {
   syntaxNode: SyntaxNode;
@@ -36,7 +42,9 @@ interface FastifyRoute {
   method: string;
   path: string | null;
   handler: string | null;
+  handlerNode: SyntaxNode | null;
   hooks: string[];
+  receiver: ReceiverEvidence;
 }
 
 interface FastifyDecorator {
@@ -50,6 +58,7 @@ interface FastifyRegistration {
   syntaxNode: SyntaxNode;
   callableNode: SyntaxNode;
   plugin: string | null;
+  pluginNode: SyntaxNode | null;
   hooks: string[];
   prefix: string | null;
 }
@@ -93,6 +102,46 @@ function handlerName(node: SyntaxNode | null): string | null {
   return identifierText(node) ?? memberParts(node)?.join(".") ?? null;
 }
 
+function isInlineCallable(node: SyntaxNode | null): node is SyntaxNode {
+  return node !== null && [
+    "arrow_function",
+    "function_expression",
+    "generator_function",
+  ].includes(node.type);
+}
+
+function parameterIdentifier(node: SyntaxNode | null): string | null {
+  if (node === null) return null;
+  const direct = identifierText(node);
+  if (direct !== null) return direct;
+  for (const field of ["pattern", "name", "parameter"]) {
+    const nested = parameterIdentifier(node.childForFieldName(field));
+    if (nested !== null) return nested;
+  }
+  return null;
+}
+
+function firstParameter(node: SyntaxNode | null): string | null {
+  if (node === null) return null;
+  const parameters = node.childForFieldName("parameters");
+  if (parameters !== null) {
+    for (const parameter of parameters.namedChildren) {
+      const name = parameterIdentifier(parameter);
+      if (name !== null) return name;
+    }
+  }
+  return parameterIdentifier(node.childForFieldName("parameter"));
+}
+
+function functionName(node: SyntaxNode): string | null {
+  const declared = identifierText(node.childForFieldName("name"));
+  if (declared !== null) return declared;
+  if (node.parent?.type === "variable_declarator") {
+    return identifierText(node.parent.childForFieldName("name"));
+  }
+  return null;
+}
+
 function handlerNames(node: SyntaxNode | null): string[] {
   if (node?.type === "array") {
     return node.namedChildren
@@ -122,7 +171,10 @@ function analyze(context: RepositoryContext): FastifyAnalysis {
   const cached = analyses.get(context);
   if (cached !== undefined) return cached;
   const root = createTree(grammarFor(context.language), context.content).rootNode;
-  const receivers = new Set<string>(["fastify"]);
+  const receivers = new Map<string, ReceiverEvidence>([[
+    "fastify",
+    { confidence: 1, sourceType: "framework", detection: "conventional_receiver" },
+  ]]);
   const factories = new Set<string>(["Fastify", "fastify"]);
   let detected = false;
 
@@ -153,9 +205,71 @@ function analyze(context: RepositoryContext): FastifyAnalysis {
     const callable = memberParts(value.childForFieldName("function"))?.join(".");
     if (callable !== undefined && factories.has(callable)) {
       detected = true;
-      receivers.add(variable);
+      receivers.set(variable, {
+        confidence: 1,
+        sourceType: "framework",
+        detection: "fastify_factory_result",
+      });
     }
   });
+
+  const functionsByName = new Map<string, SyntaxNode>();
+  walkSyntax(root, (node) => {
+    if (![
+      "function_declaration",
+      "generator_function_declaration",
+      "function_expression",
+      "generator_function",
+      "arrow_function",
+    ].includes(node.type)) return;
+    const name = functionName(node);
+    if (name !== null) functionsByName.set(name, node);
+    const parameter = firstParameter(node);
+    if (parameter === null) return;
+    const declarationText = node.parent?.type === "variable_declarator"
+      ? node.parent.text
+      : node.text.slice(0, Math.max(0, node.childForFieldName("body")?.startIndex ?? node.endIndex));
+    if (/\bFastify(?:Instance|Plugin|PluginCallback|PluginAsync)\b/u.test(declarationText)) {
+      receivers.set(parameter, {
+        confidence: 1,
+        sourceType: "framework",
+        detection: "fastify_type_annotation",
+      });
+    } else if (detected && /(?:^|[_$])(routes?|plugin)(?:[_$]|$)/iu.test(name ?? "")) {
+      receivers.set(parameter, {
+        confidence: 0.8,
+        sourceType: "heuristic",
+        detection: "fastify_plugin_naming_convention",
+      });
+    }
+  });
+
+  // Registration callbacks inherit the Fastify instance through their first
+  // parameter. Iterate because nested inline registrations form a small fixed point.
+  for (let pass = 0; pass < 8; pass += 1) {
+    let added = false;
+    walkSyntax(root, (node) => {
+      if (node.type !== "call_expression") return;
+      const callable = node.childForFieldName("function");
+      if (callable?.type !== "member_expression") return;
+      const receiver = memberParts(callable.childForFieldName("object"))?.join(".");
+      const method = identifierText(callable.childForFieldName("property"))?.toLowerCase();
+      if (receiver === undefined || method !== "register" || !receivers.has(receiver)) return;
+      const pluginExpression = node.childForFieldName("arguments")?.namedChildren[0] ?? null;
+      const pluginFunction = isInlineCallable(pluginExpression)
+        ? pluginExpression
+        : functionsByName.get(handlerName(pluginExpression) ?? "") ?? null;
+      const parameter = firstParameter(pluginFunction);
+      if (parameter === null || receivers.has(parameter)) return;
+      receivers.set(parameter, {
+        confidence: 1,
+        sourceType: "framework",
+        detection: "registered_plugin_parameter",
+      });
+      added = true;
+    });
+    if (!added) break;
+  }
 
   const routes: FastifyRoute[] = [];
   const decorators: FastifyDecorator[] = [];
@@ -170,7 +284,12 @@ function analyze(context: RepositoryContext): FastifyAnalysis {
     const method = identifierText(callable.childForFieldName("property"))?.toLowerCase();
     if (receiver === undefined || method === undefined) return;
     const receiverTail = receiver.split(".").at(-1) ?? receiver;
-    if (!receivers.has(receiver) && receiverTail !== "fastify") return;
+    const receiverEvidence = receivers.get(receiver) ?? (
+      receiverTail === "fastify"
+        ? { confidence: 1, sourceType: "framework" as const, detection: "fastify_receiver_tail" }
+        : null
+    );
+    if (receiverEvidence === null) return;
     const args = node.childForFieldName("arguments")?.namedChildren ?? [];
 
     if (
@@ -194,7 +313,9 @@ function analyze(context: RepositoryContext): FastifyAnalysis {
         method: method.toUpperCase(),
         path: stringLiteralValue(args[0] ?? null),
         handler: handlerName(args.at(-1) ?? null),
+        handlerNode: isInlineCallable(args.at(-1) ?? null) ? args.at(-1)! : null,
         hooks: requestHooks(options),
+        receiver: receiverEvidence,
       });
       return;
     }
@@ -218,7 +339,9 @@ function analyze(context: RepositoryContext): FastifyAnalysis {
           method: routeMethod.toUpperCase(),
           path: stringLiteralValue(pathNode),
           handler: handlerName(handlerNode),
+          handlerNode: isInlineCallable(handlerNode) ? handlerNode : null,
           hooks: requestHooks(options),
+          receiver: receiverEvidence,
         });
       }
       return;
@@ -244,6 +367,7 @@ function analyze(context: RepositoryContext): FastifyAnalysis {
         syntaxNode: node,
         callableNode: callable,
         plugin: handlerName(args[0] ?? null),
+        pluginNode: isInlineCallable(args[0] ?? null) ? args[0]! : null,
         hooks: requestHooks(options),
         prefix: stringLiteralValue(pairValue(options, new Set(["prefix"]))),
       });
@@ -286,7 +410,8 @@ function routeNode(context: RepositoryContext, route: FastifyRoute): GraphNode {
     qualifiedName: `fastify:${route.method}:${pathHash ?? "dynamic"}:${location.line}`,
     location,
     framework: "fastify",
-    confidence: route.path === null ? 0.85 : 1,
+    sourceType: route.receiver.sourceType,
+    confidence: Math.min(route.path === null ? 0.85 : 1, route.receiver.confidence),
     signature: `${route.method} ${route.path === null ? "<dynamic>" : "<literal>"}`,
     metadata: {
       http_method: route.method,
@@ -294,6 +419,51 @@ function routeNode(context: RepositoryContext, route: FastifyRoute): GraphNode {
       path_kind: route.path === null ? "dynamic" : "static_literal",
       handler: route.handler,
       hook_count: route.hooks.length,
+      receiver_detection: route.receiver.detection,
+    },
+  });
+}
+
+function inlineRouteHandlerNode(context: RepositoryContext, route: FastifyRoute): GraphNode | null {
+  if (route.handlerNode === null) return null;
+  const location = locationFor(route.handlerNode);
+  const routeLocation = locationFor(route.syntaxNode);
+  return frameworkNode(context, {
+    kind: "function",
+    name: `${route.method} inline handler`,
+    qualifiedName: `fastify:inline-handler:${routeLocation.line}:${routeLocation.column}`,
+    location,
+    framework: "fastify",
+    sourceType: route.receiver.sourceType,
+    confidence: route.receiver.confidence,
+    signature: `${route.method} inline route handler`,
+    metadata: {
+      fastify_entity: "inline_route_handler",
+      route_line: routeLocation.line,
+      route_column: routeLocation.column,
+      receiver_detection: route.receiver.detection,
+    },
+  });
+}
+
+function inlinePluginNode(
+  context: RepositoryContext,
+  registration: FastifyRegistration,
+): GraphNode | null {
+  if (registration.pluginNode === null) return null;
+  const location = locationFor(registration.pluginNode);
+  const registrationLocation = locationFor(registration.syntaxNode);
+  return frameworkNode(context, {
+    kind: "function",
+    name: `inline Fastify plugin at line ${registrationLocation.line}`,
+    qualifiedName: `fastify:inline-plugin:${registrationLocation.line}:${registrationLocation.column}`,
+    location,
+    framework: "fastify",
+    signature: "inline Fastify plugin",
+    metadata: {
+      fastify_entity: "inline_plugin",
+      registration_line: registrationLocation.line,
+      registration_column: registrationLocation.column,
     },
   });
 }
@@ -330,6 +500,7 @@ function registrationNode(
     metadata: {
       fastify_entity: "registration",
       plugin: registration.plugin,
+      inline_plugin: registration.pluginNode !== null,
       hook_count: registration.hooks.length,
       prefix_hash:
         registration.prefix === null
@@ -365,6 +536,43 @@ function supportingNode(
   return entities.supporting.find(
     (node) => node.metadata.fastify_entity === entity && node.startLine === line,
   ) ?? null;
+}
+
+function inlineEntityNode(
+  entities: FrameworkEntities,
+  entity: "inline_route_handler" | "inline_plugin",
+  ownerLineKey: "route_line" | "registration_line",
+  syntaxNode: SyntaxNode,
+): GraphNode | null {
+  const location = locationFor(syntaxNode);
+  return entities.supporting.find(
+    (node) =>
+      node.metadata.fastify_entity === entity &&
+      node.metadata[ownerLineKey] === location.line,
+  ) ?? null;
+}
+
+function containingInlinePluginNodeId(
+  context: RepositoryContext,
+  entities: FrameworkEntities,
+  syntaxNode: SyntaxNode,
+  excludedNodeId?: string,
+): string {
+  const line = syntaxNode.startPosition.row + 1;
+  const candidates = entities.supporting.filter(
+    (node) =>
+      node.metadata.fastify_entity === "inline_plugin" &&
+      node.id !== excludedNodeId &&
+      node.startLine !== null &&
+      node.endLine !== null &&
+      node.startLine <= line &&
+      node.endLine >= line,
+  );
+  candidates.sort(
+    (left, right) =>
+      (left.endLine! - left.startLine!) - (right.endLine! - right.startLine!),
+  );
+  return candidates[0]?.id ?? enclosingCallableNodeId(context, syntaxNode);
 }
 
 function enclosingCallableNodeId(context: RepositoryContext, syntaxNode: SyntaxNode): string {
@@ -419,7 +627,7 @@ function hookTarget(expression: string): string {
 
 export const fastifyAdapter: FrameworkAdapter = {
   name: "fastify",
-  version: "fastify-framework-2",
+  version: "fastify-framework-3",
 
   supports(_relativeFilePath, language) {
     return ["typescript", "tsx", "javascript", "jsx"].includes(language ?? "");
@@ -443,6 +651,14 @@ export const fastifyAdapter: FrameworkAdapter = {
       ...analysis.decorators.map((decorator) => decoratorNode(context, decorator)),
       ...analysis.registrations.map((registration) => registrationNode(context, registration)),
       ...analysis.hookBindings.map((binding) => hookBindingNode(context, binding)),
+      ...analysis.routes.flatMap((route) => {
+        const node = inlineRouteHandlerNode(context, route);
+        return node === null ? [] : [node];
+      }),
+      ...analysis.registrations.flatMap((registration) => {
+        const node = inlinePluginNode(context, registration);
+        return node === null ? [] : [node];
+      }),
     ];
   },
 
@@ -455,12 +671,40 @@ export const fastifyAdapter: FrameworkAdapter = {
       edges.push(
         frameworkEdge(context, {
           edgeType: "EXPOSES",
-          sourceNodeId: enclosingCallableNodeId(context, route.syntaxNode),
+          sourceNodeId: containingInlinePluginNodeId(context, entities, route.syntaxNode),
           targetNodeId: node.id,
           location: locationFor(route.syntaxNode),
-          metadata: { framework: "fastify" },
+          sourceType: route.receiver.sourceType,
+          confidence: route.receiver.confidence,
+          metadata: {
+            framework: "fastify",
+            receiver_detection: route.receiver.detection,
+          },
         }),
       );
+      const inlineHandler = inlineEntityNode(
+        entities,
+        "inline_route_handler",
+        "route_line",
+        route.syntaxNode,
+      );
+      if (inlineHandler !== null) {
+        edges.push(
+          frameworkEdge(context, {
+            edgeType: "HANDLES",
+            sourceNodeId: node.id,
+            targetNodeId: inlineHandler.id,
+            location: locationFor(route.handlerNode ?? route.syntaxNode),
+            sourceType: route.receiver.sourceType,
+            confidence: route.receiver.confidence,
+            metadata: {
+              framework: "fastify",
+              relationship: "inline_route_handler",
+              receiver_detection: route.receiver.detection,
+            },
+          }),
+        );
+      }
     }
     const supportingEntities: Array<{
       type: string;
@@ -490,13 +734,50 @@ export const fastifyAdapter: FrameworkAdapter = {
         entry.syntaxNode.startPosition.row + 1,
       );
       if (node === null) continue;
+      const configuredInlinePlugin = entry.type === "registration"
+        ? inlineEntityNode(
+            entities,
+            "inline_plugin",
+            "registration_line",
+            entry.syntaxNode,
+          )
+        : null;
       edges.push(
         frameworkEdge(context, {
           edgeType: "CONFIGURES",
-          sourceNodeId: enclosingCallableNodeId(context, entry.syntaxNode),
+          sourceNodeId: containingInlinePluginNodeId(
+            context,
+            entities,
+            entry.syntaxNode,
+            configuredInlinePlugin?.id,
+          ),
           targetNodeId: node.id,
           location: locationFor(entry.syntaxNode),
           metadata: { framework: "fastify", relationship: entry.relationship },
+        }),
+      );
+    }
+    for (const registration of analysis.registrations) {
+      if (registration.pluginNode === null) continue;
+      const registrationEntity = supportingNode(
+        entities,
+        "registration",
+        registration.syntaxNode.startPosition.row + 1,
+      );
+      const pluginEntity = inlineEntityNode(
+        entities,
+        "inline_plugin",
+        "registration_line",
+        registration.syntaxNode,
+      );
+      if (registrationEntity === null || pluginEntity === null) continue;
+      edges.push(
+        frameworkEdge(context, {
+          edgeType: "MOUNTS",
+          sourceNodeId: registrationEntity.id,
+          targetNodeId: pluginEntity.id,
+          location: locationFor(registration.pluginNode),
+          metadata: { framework: "fastify", relationship: "inline_plugin_registration" },
         }),
       );
     }

@@ -23,6 +23,7 @@ interface StoredNode {
   startColumn: number | null;
   endLine: number | null;
   endColumn: number | null;
+  metadata: Record<string, unknown>;
 }
 
 interface NodeRow {
@@ -35,6 +36,7 @@ interface NodeRow {
   start_column: number | null;
   end_line: number | null;
   end_column: number | null;
+  metadata_json: string | null;
 }
 
 interface ParsedInput {
@@ -61,6 +63,7 @@ interface SymbolIndexes {
   byFileAndQualifiedName: ReadonlyMap<string, readonly StoredNode[]>;
   byFileAndStart: ReadonlyMap<string, readonly StoredNode[]>;
   byFileLineAndName: ReadonlyMap<string, readonly StoredNode[]>;
+  byPrismaClientAccessor: ReadonlyMap<string, readonly StoredNode[]>;
 }
 
 type PythonModuleIndex = ReadonlyMap<string, readonly string[]>;
@@ -108,8 +111,19 @@ const JAVASCRIPT_EXTENSIONS = [
 
 const STORED_NODE_COLUMNS = `
   id, kind, name, qualified_name, file_path,
-  start_line, start_column, end_line, end_column
+  start_line, start_column, end_line, end_column, metadata_json
 `;
+
+function storedMetadata(value: string | null): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value ?? "{}") as unknown;
+    return typeof parsed === "object" && parsed !== null
+      ? parsed as Record<string, unknown>
+      : {};
+  } catch {
+    return {};
+  }
+}
 
 function storedNodes(rows: readonly NodeRow[]): StoredNode[] {
   return rows.map((row) => ({
@@ -122,6 +136,7 @@ function storedNodes(rows: readonly NodeRow[]): StoredNode[] {
     startColumn: row.start_column,
     endLine: row.end_line,
     endColumn: row.end_column,
+    metadata: storedMetadata(row.metadata_json),
   }));
 }
 
@@ -163,6 +178,20 @@ function loadRelevantNodes(
   return storedNodes([...rows.values()]);
 }
 
+function loadPrismaModelNodes(database: AtlasDatabase): StoredNode[] {
+  return storedNodes(
+    database
+      .prepare(
+        `SELECT ${STORED_NODE_COLUMNS}
+         FROM nodes
+         WHERE kind = 'database_model'
+           AND json_extract(metadata_json, '$.framework') = 'prisma'
+         ORDER BY id`,
+      )
+      .all() as NodeRow[],
+  );
+}
+
 function uniqueNodes(nodes: readonly StoredNode[]): StoredNode[] {
   return [...new Map(nodes.map((node) => [node.id, node])).values()].sort((left, right) =>
     left.id.localeCompare(right.id),
@@ -186,8 +215,16 @@ function buildSymbolIndexes(nodes: readonly StoredNode[]): SymbolIndexes {
   const byFileAndQualifiedName = new Map<string, StoredNode[]>();
   const byFileAndStart = new Map<string, StoredNode[]>();
   const byFileLineAndName = new Map<string, StoredNode[]>();
+  const byPrismaClientAccessor = new Map<string, StoredNode[]>();
   for (const node of nodes) {
     addToIndex(byName, node.name, node);
+    if (
+      node.kind === "database_model" &&
+      node.metadata.framework === "prisma" &&
+      typeof node.metadata.client_accessor === "string"
+    ) {
+      addToIndex(byPrismaClientAccessor, node.metadata.client_accessor, node);
+    }
     if (node.filePath === null) continue;
     addToIndex(byFile, node.filePath, node);
     addToIndex(byFileAndName, `${node.filePath}\0${node.name}`, node);
@@ -206,6 +243,7 @@ function buildSymbolIndexes(nodes: readonly StoredNode[]): SymbolIndexes {
     byFileAndQualifiedName,
     byFileAndStart,
     byFileLineAndName,
+    byPrismaClientAccessor,
   };
 }
 
@@ -543,6 +581,18 @@ function symbolCandidates(
         ),
       ),
       exact: true,
+    };
+  }
+
+  if (reference.kind === "prisma_query" || reference.kind === "prisma_update") {
+    const accessor = reference.metadata.model_accessor;
+    const prismaCandidates = typeof accessor === "string"
+      ? indexes.byPrismaClientAccessor.get(accessor) ?? []
+      : [];
+    return {
+      nodes: uniqueNodes(prismaCandidates.filter((node) => kinds.has(node.kind))),
+      exact: true,
+      sourceType: "framework",
     };
   }
 
@@ -972,6 +1022,7 @@ export function resolveReferences(
   }
   const nodes = uniqueNodes([
     ...moduleNodes,
+    ...loadPrismaModelNodes(database),
     ...loadRelevantNodes(database, relevantNames, relevantFiles, sourceNodeIds),
   ]);
   const indexes = buildSymbolIndexes(nodes);

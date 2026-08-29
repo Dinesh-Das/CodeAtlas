@@ -130,14 +130,20 @@ function outgoingEdges(
     .all(sourceNodeId, edgeType) as EdgeRow[];
 }
 
-function routesMountedBy(database: AtlasDatabase, pluginNodeId: string): string[] {
-  const routes = new Set<string>();
-  const visitedPlugins = new Set<string>();
-  const queue = [pluginNodeId];
-  for (let head = 0; head < queue.length && visitedPlugins.size < 1_000; head += 1) {
-    const pluginId = queue[head]!;
-    if (visitedPlugins.has(pluginId)) continue;
-    visitedPlugins.add(pluginId);
+interface MountedRoute {
+  routeId: string;
+  registrationPath: string[];
+}
+
+function mountedRoutes(database: AtlasDatabase, pluginNodeId: string): MountedRoute[] {
+  const routes = new Map<string, MountedRoute>();
+  const visitedStates = new Set<string>();
+  const queue = [{ pluginId: pluginNodeId, registrationPath: [] as string[] }];
+  for (let head = 0; head < queue.length && visitedStates.size < 1_000; head += 1) {
+    const state = queue[head]!;
+    const stateKey = `${state.pluginId}\0${state.registrationPath.join("\0")}`;
+    if (visitedStates.has(stateKey)) continue;
+    visitedStates.add(stateKey);
     const exposed = database
       .prepare(
         `SELECT edges.target_node_id AS id, nodes.kind
@@ -146,13 +152,16 @@ function routesMountedBy(database: AtlasDatabase, pluginNodeId: string): string[
          WHERE edges.source_node_id = ? AND edges.edge_type = 'EXPOSES'
          ORDER BY edges.target_node_id`,
       )
-      .all(pluginId) as Array<{ id: string; kind: string }>;
+      .all(state.pluginId) as Array<{ id: string; kind: string }>;
     for (const row of exposed) {
-      if (row.kind === "api_route") routes.add(row.id);
+      if (row.kind === "api_route") {
+        const key = `${row.id}\0${state.registrationPath.join("\0")}`;
+        routes.set(key, { routeId: row.id, registrationPath: state.registrationPath });
+      }
     }
     const childPlugins = database
       .prepare(
-        `SELECT mounts.target_node_id AS id
+        `SELECT registration.id AS registration_id, mounts.target_node_id AS id
          FROM edges ownership
          JOIN nodes registration ON registration.id = ownership.target_node_id
          JOIN edges mounts
@@ -162,10 +171,24 @@ function routesMountedBy(database: AtlasDatabase, pluginNodeId: string): string[
            AND json_extract(registration.metadata_json, '$.fastify_entity') = 'registration'
          ORDER BY mounts.target_node_id`,
       )
-      .all(pluginId) as Array<{ id: string }>;
-    for (const child of childPlugins) queue.push(child.id);
+      .all(state.pluginId) as Array<{ registration_id: string; id: string }>;
+    for (const child of childPlugins) {
+      queue.push({
+        pluginId: child.id,
+        registrationPath: [...state.registrationPath, child.registration_id],
+      });
+    }
   }
-  return [...routes].sort((left, right) => left.localeCompare(right));
+  return [...routes.values()].sort(
+    (left, right) =>
+      left.routeId.localeCompare(right.routeId) ||
+      left.registrationPath.join("\0").localeCompare(right.registrationPath.join("\0")),
+  );
+}
+
+function routesMountedBy(database: AtlasDatabase, pluginNodeId: string): string[] {
+  return [...new Set(mountedRoutes(database, pluginNodeId).map((route) => route.routeId))]
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function hookImplementations(database: AtlasDatabase, hookNodeId: string): string[] {
@@ -238,8 +261,9 @@ export function materializeFrameworkRelationships(
     const mounts = outgoingEdges(database, registration.id, "MOUNTS");
     const hooks = outgoingEdges(database, registration.id, "APPLIES_HOOK");
     for (const mount of mounts) {
-      const routes = routesMountedBy(database, mount.target_node_id);
-      for (const routeId of routes) {
+      const routes = mountedRoutes(database, mount.target_node_id);
+      for (const mountedRoute of routes) {
+        const routeId = mountedRoute.routeId;
         if (typeof registrationMetadata.prefix_hash === "string") {
           const routeNode = database
             .prepare(
@@ -247,12 +271,18 @@ export function materializeFrameworkRelationships(
             )
             .get(routeId) as NodeRow | undefined;
           const routeMetadata = metadata(routeNode?.metadata_json ?? null);
-          const prefix = literalForHash(
-            repositoryRoot,
-            registration,
-            "fastify_route_prefix",
-            registrationMetadata.prefix_hash,
-          );
+          const registrationPath = [registration.id, ...mountedRoute.registrationPath];
+          const prefixes = registrationPath.map((registrationId) => {
+            const prefixNode = database
+              .prepare(
+                `SELECT id, file_path, start_line, metadata_json FROM nodes WHERE id = ?`,
+              )
+              .get(registrationId) as NodeRow | undefined;
+            const value = metadata(prefixNode?.metadata_json ?? null).prefix_hash;
+            return prefixNode !== undefined && typeof value === "string"
+              ? literalForHash(repositoryRoot, prefixNode, "fastify_route_prefix", value)
+              : null;
+          });
           const routePath = routeNode === undefined ||
               typeof routeMetadata.route_path_hash !== "string"
             ? null
@@ -262,9 +292,15 @@ export function materializeFrameworkRelationships(
                 "route",
                 routeMetadata.route_path_hash,
               );
-          const effectivePathHash = prefix === null || routePath === null
+          const effectivePath = routePath === null || prefixes.some((prefix) => prefix === null)
             ? null
-            : sha256(`route:${effectiveRoutePath(prefix, routePath)}`);
+            : [...prefixes as string[], routePath].reduce(
+                (current, segment) => effectiveRoutePath(current, segment),
+                "/",
+              );
+          const effectivePathHash = effectivePath === null
+            ? null
+            : sha256(`route:${effectivePath}`);
           write(
             derivedEdge(repositoryId, {
               edgeType: "ROUTE_PREFIX",
@@ -275,6 +311,7 @@ export function materializeFrameworkRelationships(
               metadata: {
                 prefix_hash: registrationMetadata.prefix_hash,
                 effective_route_path_hash: effectivePathHash,
+                inherited_prefix_count: mountedRoute.registrationPath.length,
               },
             }),
           );
@@ -293,12 +330,16 @@ export function materializeFrameworkRelationships(
           for (const implementationId of hookImplementations(database, hook.target_node_id)) {
             write(
               derivedEdge(repositoryId, {
-                edgeType: "CONTINUES_TO",
+                edgeType: "MAY_CONTINUE_TO",
                 sourceNodeId: implementationId,
                 targetNodeId: routeId,
                 evidence: hook,
                 relationship: "fastify_hook_continuation",
                 confidence: Math.min(mount.confidence, hook.confidence),
+                metadata: {
+                  conditional: true,
+                  condition: "hook_completes_without_terminating_the_request",
+                },
               }),
             );
           }
@@ -322,12 +363,16 @@ export function materializeFrameworkRelationships(
     for (const implementationId of hookImplementations(database, protection.target_node_id)) {
       write(
         derivedEdge(repositoryId, {
-          edgeType: "CONTINUES_TO",
+          edgeType: "MAY_CONTINUE_TO",
           sourceNodeId: implementationId,
           targetNodeId: protection.source_node_id,
           evidence: protection,
           relationship: "fastify_hook_continuation",
           confidence: protection.confidence,
+          metadata: {
+            conditional: true,
+            condition: "hook_completes_without_terminating_the_request",
+          },
         }),
       );
     }
@@ -362,12 +407,16 @@ export function materializeFrameworkRelationships(
         for (const implementationId of hookImplementations(database, hook.target_node_id)) {
           write(
             derivedEdge(repositoryId, {
-              edgeType: "CONTINUES_TO",
+              edgeType: "MAY_CONTINUE_TO",
               sourceNodeId: implementationId,
               targetNodeId: routeId,
               evidence: hook,
               relationship: "fastify_hook_continuation",
               confidence: hook.confidence,
+              metadata: {
+                conditional: true,
+                condition: "hook_completes_without_terminating_the_request",
+              },
             }),
           );
         }
