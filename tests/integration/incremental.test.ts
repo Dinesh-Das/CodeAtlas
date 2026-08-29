@@ -62,7 +62,10 @@ describe("Phase 4 incremental indexing", () => {
 
     const firstCachedStatus = await getFastStatus(repository.root);
     const secondCachedStatus = await getFastStatus(repository.root);
-    expect(secondCachedStatus).toStrictEqual(firstCachedStatus);
+    expect(secondCachedStatus).toStrictEqual({
+      ...firstCachedStatus,
+      freshnessMode: "watch_cache",
+    });
     expect(secondCachedStatus.freshnessMode).toBe("watch_cache");
     expect(secondCachedStatus.generations).toEqual({
       structural: 2,

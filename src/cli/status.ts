@@ -283,10 +283,15 @@ export async function getFastStatus(
   options: { forceReconcile?: boolean } = {},
 ): Promise<StatusResult> {
   await new Promise<void>((resolve) => setImmediate(resolve));
+  const forceReconcile = options.forceReconcile === true;
   const cachedRoot = fastRootByStartPath.get(path.resolve(startPath));
-  const cached = cachedRoot === undefined ? undefined : fastStatusEntries.get(cachedRoot);
+  const cachedEntry = cachedRoot === undefined ? undefined : fastStatusEntries.get(cachedRoot);
+  const cacheWasInvalidated = cachedEntry?.dirty === true;
+  if (forceReconcile && cachedRoot !== undefined) clearFastStatusCache(cachedRoot);
+  const cached = forceReconcile || cachedRoot === undefined
+    ? undefined
+    : cachedEntry;
   if (
-    options.forceReconcile !== true &&
     cached !== undefined &&
     !cached.dirty &&
     Date.now() - cached.checkedAt < FAST_RECONCILIATION_INTERVAL_MS
@@ -297,15 +302,14 @@ export async function getFastStatus(
       cacheInvalidated: false,
     };
   }
-  const cacheWasInvalidated = cached?.dirty === true;
   const repository = await initializedRepository(startPath);
   const config = await loadConfig(repository.root);
-  let ignoreRules = options.forceReconcile === true
+  let ignoreRules = forceReconcile
     ? undefined
     : fastIgnoreRules.get(repository.root);
   if (ignoreRules === undefined) {
     ignoreRules = await loadIgnoreRules(repository.root);
-    fastIgnoreRules.set(repository.root, ignoreRules);
+    if (!forceReconcile) fastIgnoreRules.set(repository.root, ignoreRules);
   }
   const worktree = await computeWorktreeSignature(repository, ignoreRules);
   const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
@@ -322,7 +326,7 @@ export async function getFastStatus(
       matches,
     );
     status.cacheInvalidated = cacheWasInvalidated;
-    cacheFastStatus(startPath, status, worktree);
+    if (!forceReconcile) cacheFastStatus(startPath, status, worktree);
     return status;
   } finally {
     database.close();

@@ -11,6 +11,10 @@ const packageMetadata = JSON.parse(
 );
 const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "codeatlas-package-"));
 
+function progress(message) {
+  process.stdout.write(`→ ${message}\n`);
+}
+
 async function run(command, args, cwd) {
   return execFile(command, args, {
     cwd,
@@ -29,6 +33,7 @@ async function runNpm(args, cwd) {
 }
 
 try {
+  progress("Packing the publishable artifact");
   const { stdout: packedOutput } = await runNpm(
     ["pack", "--json", "--silent", "--pack-destination", temporaryRoot],
     repositoryRoot,
@@ -78,12 +83,21 @@ try {
   await run("git", ["commit", "-m", "package smoke fixture"], fixtureRoot);
 
   const tarballPath = path.join(temporaryRoot, packageResult.filename);
-  await runNpm(["install", "--save-dev", tarballPath], fixtureRoot);
+  progress("Installing the tarball in a disposable consumer");
+  await runNpm([
+    "install",
+    "--save-dev",
+    "--prefer-offline",
+    "--no-audit",
+    "--no-fund",
+    tarballPath,
+  ], fixtureRoot);
   const execute = (...args) =>
     runNpm(
       ["exec", "--yes=false", "--", "codeatlas", ...args],
       fixtureRoot,
     );
+  progress("Running the installed CLI");
   const { stdout: versionOutput } = await execute("--version");
   if (versionOutput.trim() !== packageMetadata.version) {
     throw new Error(
