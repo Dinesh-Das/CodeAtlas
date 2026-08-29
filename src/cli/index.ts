@@ -15,9 +15,10 @@ export function createProgram(): Command {
     .command("init")
     .description("Initialize CodeAtlas in the current Git repository.")
     .argument("[path]", "A path inside the repository", process.cwd())
-    .action(async (targetPath: string) => {
+    .option("--shared-ignore", "Add .codeatlas/ to the repository .gitignore", false)
+    .action(async (targetPath: string, options: { sharedIgnore: boolean }) => {
       const { formatInitResult, initializeRepository } = await import("./init.js");
-      console.log(formatInitResult(await initializeRepository(targetPath)));
+      console.log(formatInitResult(await initializeRepository(targetPath, options)));
     });
 
   program
@@ -60,6 +61,17 @@ export function createProgram(): Command {
     });
 
   program
+    .command("overview")
+    .description("Print a useful architecture summary without requiring an MCP client.")
+    .argument("[path]", "A path inside the repository", process.cwd())
+    .option("--json", "Print machine-readable JSON", false)
+    .action(async (targetPath: string, options: { json: boolean }) => {
+      const { formatOverview, getOverview } = await import("./overview.js");
+      const result = await getOverview(targetPath);
+      console.log(options.json ? JSON.stringify(result, null, 2) : formatOverview(result));
+    });
+
+  program
     .command("status")
     .description("Show repository and index synchronization status.")
     .argument("[path]", "A path inside the repository", process.cwd())
@@ -68,6 +80,38 @@ export function createProgram(): Command {
       const { formatStatus, getStatus } = await import("./status.js");
       const result = await getStatus(targetPath);
       console.log(options.json ? JSON.stringify(result, null, 2) : formatStatus(result));
+    });
+
+  program
+    .command("setup")
+    .description("Configure supported coding agents to launch the CodeAtlas MCP server.")
+    .argument("[path]", "A path inside the repository", process.cwd())
+    .option("--target <clients>", "Comma-separated: codex, claude, cursor, antigravity")
+    .option("--all", "Configure all supported clients", false)
+    .option("--dry-run", "Show configuration destinations without changing them", false)
+    .action(async (
+      targetPath: string,
+      options: { target?: string; all: boolean; dryRun: boolean },
+    ) => {
+      const {
+        SETUP_TARGETS,
+        formatSetupResult,
+        parseSetupTargets,
+        setupRepository,
+      } = await import("./setup.js");
+      if (options.all && options.target !== undefined) {
+        throw new CodeAtlasError("Error: use either --all or --target, not both.");
+      }
+      const targets = options.all
+        ? SETUP_TARGETS
+        : options.target === undefined
+          ? undefined
+          : parseSetupTargets(options.target);
+      const result = await setupRepository(targetPath, {
+        ...(targets === undefined ? {} : { targets }),
+        dryRun: options.dryRun,
+      });
+      console.log(formatSetupResult(result));
     });
 
   program

@@ -47,11 +47,30 @@ describe("ignore handling", () => {
     ]);
   });
 
-  it("adds the workspace ignore exactly once", async () => {
+  it("adds the workspace ignore to the local Git exclude exactly once", async () => {
     const root = await createRoot();
     await write(root, ".gitignore", "dist/");
+    await import("node:child_process").then(({ execFile }) =>
+      new Promise<void>((resolve, reject) => {
+        execFile("git", ["init"], { cwd: root }, (error) => error ? reject(error) : resolve());
+      }),
+    );
     await expect(ensureCodeAtlasIgnored(root)).resolves.toBe(true);
     await expect(ensureCodeAtlasIgnored(root)).resolves.toBe(false);
+    const gitignore = await import("node:fs/promises").then(({ readFile }) =>
+      readFile(path.join(root, ".gitignore"), "utf8"),
+    );
+    const exclude = await import("node:fs/promises").then(({ readFile }) =>
+      readFile(path.join(root, ".git", "info", "exclude"), "utf8"),
+    );
+    expect(gitignore).toBe("dist/");
+    expect(exclude).toContain(".codeatlas/\n");
+  });
+
+  it("only edits .gitignore when shared mode is explicit", async () => {
+    const root = await createRoot();
+    await write(root, ".gitignore", "dist/");
+    await expect(ensureCodeAtlasIgnored(root, true)).resolves.toBe(true);
     const content = await import("node:fs/promises").then(({ readFile }) =>
       readFile(path.join(root, ".gitignore"), "utf8"),
     );

@@ -1,6 +1,7 @@
-import { readFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import ignore, { type Ignore } from "ignore";
+import { runGit } from "../git/repository.js";
 import { toPosixPath } from "./paths.js";
 
 const DEFAULT_IGNORES = [
@@ -93,19 +94,47 @@ export async function loadIgnoreRules(repositoryRoot: string): Promise<IgnoreRul
   return rules;
 }
 
-export async function ensureCodeAtlasIgnored(repositoryRoot: string): Promise<boolean> {
-  const filePath = path.join(repositoryRoot, ".gitignore");
-  const current = await readOptional(filePath);
-  const alreadyPresent = current
+function hasCodeAtlasRule(content: string): boolean {
+  return content
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .some((line) => line === ".codeatlas/" || line === "/.codeatlas/" || line === ".codeatlas");
+}
 
-  if (alreadyPresent) return false;
-
+async function appendCodeAtlasRule(filePath: string): Promise<void> {
+  const current = await readOptional(filePath);
   const prefix = current.length === 0 || current.endsWith("\n") ? current : `${current}\n`;
-  await import("node:fs/promises").then(({ writeFile }) =>
-    writeFile(filePath, `${prefix}.codeatlas/\n`, "utf8"),
-  );
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${prefix}.codeatlas/\n`, "utf8");
+}
+
+/**
+ * Keeps CodeAtlas state local by default. A caller must explicitly request the
+ * shared repository .gitignore because that file may be tracked.
+ */
+export async function ensureCodeAtlasIgnored(
+  repositoryRoot: string,
+  shared = false,
+): Promise<boolean> {
+  const sharedIgnorePath = path.join(repositoryRoot, ".gitignore");
+  const sharedIgnore = await readOptional(sharedIgnorePath);
+  if (hasCodeAtlasRule(sharedIgnore)) return false;
+
+  if (shared) {
+    await appendCodeAtlasRule(sharedIgnorePath);
+    return true;
+  }
+
+  const reportedExcludePath = (await runGit(
+    repositoryRoot,
+    ["rev-parse", "--git-path", "info/exclude"],
+  )).trim();
+  const excludePath = path.isAbsolute(reportedExcludePath)
+    ? reportedExcludePath
+    : path.resolve(repositoryRoot, reportedExcludePath);
+  const localExclude = await readOptional(excludePath);
+  if (hasCodeAtlasRule(localExclude)) return false;
+
+  await appendCodeAtlasRule(excludePath);
   return true;
 }

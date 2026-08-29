@@ -2,6 +2,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeRepository } from "../../src/cli/init.js";
+import { runDoctor } from "../../src/cli/doctor.js";
 import { indexRepository } from "../../src/cli/index-command.js";
 import { clearFastStatusCache, getFastStatus, getStatus } from "../../src/cli/status.js";
 import { runIndex } from "../../src/indexer/indexer.js";
@@ -113,7 +114,7 @@ describe("Phase 4 incremental indexing", () => {
       fullRebuild: true,
       invalidationTruncated: true,
       invalidationTruncationReason: "max_files",
-      changedFiles: 18,
+      changedFiles: 17,
     });
     await expect(getStatus(repository.root)).resolves.toMatchObject({ synchronized: true });
   });
@@ -131,7 +132,7 @@ describe("Phase 4 incremental indexing", () => {
     await repository.git("commit", "-m", "version two");
     await expect(getStatus(repository.root)).resolves.toMatchObject({
       synchronized: false,
-      dirty: true,
+      dirty: false,
     });
     const result = await indexRepository(repository.root);
     expect(result).toMatchObject({
@@ -200,6 +201,28 @@ describe("Phase 4 incremental indexing", () => {
     await expect(indexRepository(repository.root)).resolves.toMatchObject({
       fullRebuild: true,
     });
+  });
+
+  it("reports an outdated database schema without running incompatible diagnostics", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write("src/versioned.ts", "export const versioned = true;\n");
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "outdated doctor fixture");
+    await initializeRepository(repository.root);
+
+    const database = openDatabase(workspacePaths(repository.root).database);
+    database.prepare("DELETE FROM schema_migrations WHERE version >= 4").run();
+    database.close();
+
+    const checks = await runDoctor(repository.root);
+    expect(checks.filter((check) => check.name === "SQLite")).toEqual([
+      expect.objectContaining({
+        ok: false,
+        detail: expect.stringContaining("run `codeatlas index --full`"),
+      }),
+    ]);
+    expect(checks.some((check) => check.name === "Dynamic relationships")).toBe(false);
   });
 
   it("reindexes the reverse dependency neighborhood without touching unrelated files", async () => {

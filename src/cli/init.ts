@@ -14,18 +14,24 @@ async function fileExists(filePath: string): Promise<boolean> {
 }
 
 export interface InitResult extends IndexResult {
+  addedToIgnore: boolean;
   addedToGitignore: boolean;
   createdWorkspace: boolean;
+  ignoreScope: "local" | "shared";
 }
 
-export async function initializeRepository(startPath = process.cwd()): Promise<InitResult> {
+export async function initializeRepository(
+  startPath = process.cwd(),
+  options: { sharedIgnore?: boolean } = {},
+): Promise<InitResult> {
   const repository = await detectRepository(startPath);
   const paths = workspacePaths(repository.root);
   const createdWorkspace = !(await workspaceExists(repository.root));
   const hadDatabase = await fileExists(paths.database);
 
   await ensureWorkspaceDirectories(repository.root);
-  const addedToGitignore = await ensureCodeAtlasIgnored(repository.root);
+  const ignoreScope = options.sharedIgnore === true ? "shared" : "local";
+  const addedToIgnore = await ensureCodeAtlasIgnored(repository.root, options.sharedIgnore === true);
 
   if (!(await fileExists(paths.config))) {
     if (hadDatabase) {
@@ -41,7 +47,13 @@ export async function initializeRepository(startPath = process.cwd()): Promise<I
     full: createdWorkspace || !hadDatabase,
     precomputedRepository: repository,
   });
-  return { ...result, addedToGitignore, createdWorkspace };
+  return {
+    ...result,
+    addedToIgnore,
+    addedToGitignore: options.sharedIgnore === true && addedToIgnore,
+    createdWorkspace,
+    ignoreScope,
+  };
 }
 
 export function formatInitResult(result: InitResult): string {
@@ -53,8 +65,10 @@ export function formatInitResult(result: InitResult): string {
   return [
     "[OK] Repository detected",
     languageNames ? `[OK] Languages detected: ${languageNames}` : "[OK] No supported languages detected",
-    result.addedToGitignore
-      ? "[OK] Added .codeatlas/ to .gitignore"
+    result.addedToIgnore
+      ? result.ignoreScope === "shared"
+        ? "[OK] Added .codeatlas/ to .gitignore (--shared-ignore)"
+        : "[OK] Excluded .codeatlas/ locally via Git info/exclude"
       : "[OK] .codeatlas/ already ignored",
     `[OK] Indexed ${result.files} files`,
     `[OK] Extracted ${result.symbols} symbols`,
@@ -74,6 +88,8 @@ export function formatInitResult(result: InitResult): string {
     "[OK] CodeAtlas is ready",
     "",
     "Run:",
+    "  codeatlas overview",
+    "  codeatlas setup",
     "  codeatlas status",
     "  codeatlas mcp",
   ]

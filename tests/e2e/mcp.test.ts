@@ -78,6 +78,9 @@ describe("MCP stdio contract", () => {
       const client = new Client({ name: "codeatlas-contract-tests", version: "1.0.0" });
       await client.connect(transport);
       try {
+        expect(client.getInstructions()).toContain(
+          "Distinguish verified, inferred, dynamic, and unresolved facts",
+        );
         const listed = await client.listTools();
         const expectedNames = [
           "codeatlas_status",

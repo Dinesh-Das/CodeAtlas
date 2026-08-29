@@ -33,22 +33,23 @@ describe("repository → index → graph", () => {
     const result = await initializeRepository(repository.root);
     const paths = workspacePaths(repository.root);
 
-    expect(result.files).toBe(4); // .gitignore plus three repository files
+    expect(result.files).toBe(3);
     expect(result.symbols).toBeGreaterThanOrEqual(3);
     expect(result.languages).toMatchObject({ typescript: 1, python: 1, json: 1 });
     expect(result.phaseMetrics.map((metric) => metric.phase)).toEqual(INDEX_PHASES);
     expect(result.peakRssBytes).toBeGreaterThan(0);
     expect(
       result.phaseMetrics.find((metric) => metric.phase === "repository_discovery"),
-    ).toMatchObject({ itemsProcessed: 4 });
+    ).toMatchObject({ itemsProcessed: 3 });
     await expect(readFile(paths.config, "utf8")).resolves.toContain('"maxTraversalDepth": 10');
     await expect(readFile(paths.manifest, "utf8")).resolves.toContain(result.repository.id);
     const storedState = await readFile(paths.state, "utf8");
     expect(storedState).toContain(result.fingerprint);
     expect(storedState).toContain('"phaseMetrics"');
-    await expect(readFile(path.join(repository.root, ".gitignore"), "utf8")).resolves.toContain(
-      ".codeatlas/",
-    );
+    await expect(readFile(path.join(repository.root, ".gitignore"), "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(repository.git("status", "--short", "--", ".gitignore")).resolves.toBe("");
 
     const database = openDatabase(paths.database, { readonly: true });
     try {
@@ -56,7 +57,7 @@ describe("repository → index → graph", () => {
         .prepare("SELECT path FROM files ORDER BY path")
         .all()
         .map((row) => (row as { path: string }).path);
-      expect(indexedPaths).toEqual([".gitignore", "package.json", "src/app.py", "src/payment.ts"]);
+      expect(indexedPaths).toEqual(["package.json", "src/app.py", "src/payment.ts"]);
       expect(
         database.prepare("SELECT parse_status FROM files WHERE path = ?").pluck().get("src/payment.ts"),
       ).toBe("parsed");
@@ -194,7 +195,7 @@ describe("repository → index → graph", () => {
     await writeFile(databasePath, "not a sqlite database", "utf8");
 
     await expect(indexRepository(repository.root)).rejects.toThrow("could not be opened");
-    await expect(indexRepository(repository.root, true)).resolves.toMatchObject({ files: 2 });
+    await expect(indexRepository(repository.root, true)).resolves.toMatchObject({ files: 1 });
     await expect(getStatus(repository.root)).resolves.toMatchObject({ synchronized: true });
   });
 

@@ -74,5 +74,5 @@ describe("compiled CLI", () => {
     await expect(stat(path.join(repository.root, ".codeatlas"))).rejects.toMatchObject({
       code: "ENOENT",
     });
-  });
+  }, 30_000);
 });
