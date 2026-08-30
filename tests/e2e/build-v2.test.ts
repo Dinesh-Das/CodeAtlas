@@ -10,6 +10,7 @@ import { callersIr, evidenceIr, findSymbolIr, flowIr, impactIr } from "../../src
 import { ensureFreshIndex } from "../../src/mcp/freshness.js";
 import { statusPacket } from "../../src/mcp/repository-tools.js";
 import type { Atlas } from "../../src/ir/models.js";
+import { semanticAtlasJson } from "../../src/ir/serialization.js";
 import { validateAtlas } from "../../src/ir/validation.js";
 
 const roots: string[] = [];
@@ -174,6 +175,10 @@ describe("codeatlas build v2", () => {
     const second = await buildRepository(root);
     expect(second.parsedFiles).toBe(0);
     expect(second.reusedFiles).toBe(first.statistics.files);
+    const secondAtlas = JSON.parse(
+      await readFile(path.join(second.currentDirectory, "atlas.json"), "utf8"),
+    ) as Atlas;
+    expect(semanticAtlasJson(secondAtlas)).toBe(semanticAtlasJson(atlas));
   }, 60_000);
 
   it("supports deterministic single-file and sharded bundle output modes", async () => {
