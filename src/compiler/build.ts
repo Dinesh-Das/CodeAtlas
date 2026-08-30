@@ -6,6 +6,7 @@ import { buildImpactIndex, createImpactAnalyzer } from "../analysis/impact.js";
 import { indexRepository } from "../cli/index-command.js";
 import { initializeRepository } from "../cli/init.js";
 import { loadConfig } from "../core/config.js";
+import { CodeAtlasError } from "../core/errors.js";
 import { createEvidenceId, EvidenceExcerptReader } from "../ir/evidence.js";
 import { loadIgnoreRules } from "../core/ignore.js";
 import { workspaceExists, workspacePaths, writeJsonAtomic, writeTextAtomic } from "../core/workspace.js";
@@ -174,6 +175,7 @@ export async function buildRepository(
       repositoryRoot: index.repository.root,
       repositoryId: index.repository.id,
       repositoryName: index.repository.name,
+      gitAvailable: index.repository.gitAvailable,
       headCommit: index.repository.headCommit,
       branch: index.repository.branch,
     });
@@ -197,30 +199,41 @@ export async function buildRepository(
   const analyzeImpact = createImpactAnalyzer(atlas);
   const impactMs = performance.now() - impactStarted;
   const gitStarted = performance.now();
-  const requestedHead = options.gitHead ?? "HEAD";
-  const headCommit = (await runGit(index.repository.root, ["rev-parse", requestedHead])).trim();
-  if (headCommit !== index.repository.headCommit) {
-    throw new Error(`Git head ${requestedHead} (${headCommit}) is not the checked-out commit ${index.repository.headCommit}; check it out before building its architecture.`);
+  let headCommit = index.repository.headCommit;
+  let baseCommit = headCommit;
+  if (!index.repository.gitAvailable && (options.gitBase !== undefined || options.gitHead !== undefined)) {
+    throw new CodeAtlasError(
+      "Error: Git base/head options require a Git repository. This directory is running in filesystem mode.",
+    );
   }
-  const baseCommit = options.gitBase === undefined
-    ? headCommit
-    : (await runGit(index.repository.root, ["rev-parse", options.gitBase])).trim();
-  const gitState = await detectGitState(
-    index.repository.root,
-    baseCommit,
-    headCommit,
-  );
-  const ignoreRules = await loadIgnoreRules(index.repository.root);
-  atlas.git_changes = await mapGitChanges(
-    atlas,
-    index.repository.root,
-    baseCommit,
-    gitState.changes.filter((change) =>
-      !ignoreRules.ignores(change.path) &&
-      (change.previousPath === null || !ignoreRules.ignores(change.previousPath)),
-    ),
-    analyzeImpact,
-  );
+  if (index.repository.gitAvailable) {
+    const requestedHead = options.gitHead ?? "HEAD";
+    headCommit = (await runGit(index.repository.root, ["rev-parse", requestedHead])).trim();
+    if (headCommit !== index.repository.headCommit) {
+      throw new Error(`Git head ${requestedHead} (${headCommit}) is not the checked-out commit ${index.repository.headCommit}; check it out before building its architecture.`);
+    }
+    baseCommit = options.gitBase === undefined
+      ? headCommit
+      : (await runGit(index.repository.root, ["rev-parse", options.gitBase])).trim();
+    const gitState = await detectGitState(
+      index.repository.root,
+      baseCommit,
+      headCommit,
+    );
+    const ignoreRules = await loadIgnoreRules(index.repository.root);
+    atlas.git_changes = await mapGitChanges(
+      atlas,
+      index.repository.root,
+      baseCommit,
+      gitState.changes.filter((change) =>
+        !ignoreRules.ignores(change.path) &&
+        (change.previousPath === null || !ignoreRules.ignores(change.previousPath)),
+      ),
+      analyzeImpact,
+    );
+  } else {
+    atlas.git_changes = [];
+  }
   const gitMs = performance.now() - gitStarted;
 
   atlas.rules = v2Config.architecture.rules;
@@ -282,8 +295,9 @@ export async function buildRepository(
     current_fingerprint: index.fingerprint,
     generations: index.generations,
     v2_config_fingerprint: v2ConfigFingerprint(v2Config),
-    git_base: baseCommit,
-    git_head: headCommit,
+    git_available: index.repository.gitAvailable,
+    git_base: index.repository.gitAvailable ? baseCommit : null,
+    git_head: index.repository.gitAvailable ? headCommit : null,
     parsed_files: index.work.filesParsed,
     reused_files: Math.max(0, index.files - index.work.filesParsed),
     timings_ms: timingsMs,

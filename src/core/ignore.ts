@@ -118,6 +118,7 @@ async function appendCodeAtlasRule(filePath: string): Promise<void> {
 export async function ensureCodeAtlasIgnored(
   repositoryRoot: string,
   shared = false,
+  gitAvailable = true,
 ): Promise<boolean> {
   const sharedIgnorePath = path.join(repositoryRoot, ".gitignore");
   const sharedIgnore = await readOptional(sharedIgnorePath);
@@ -127,6 +128,8 @@ export async function ensureCodeAtlasIgnored(
     await appendCodeAtlasRule(sharedIgnorePath);
     return true;
   }
+
+  if (!gitAvailable) return false;
 
   const reportedExcludePath = (await runGit(
     repositoryRoot,

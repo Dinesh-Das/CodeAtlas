@@ -2,6 +2,7 @@ import type { RepositoryInfo } from "../git/repository.js";
 import { runGit } from "../git/repository.js";
 import { stat } from "node:fs/promises";
 import path from "node:path";
+import { discoverFiles } from "./discovery.js";
 import { hashFile, hashSortedEntries, sha256 } from "./hashing.js";
 import type { IgnoreRules } from "./ignore.js";
 import { toPosixPath } from "./paths.js";
@@ -123,6 +124,27 @@ export async function computeWorktreeSignature(
   repository: RepositoryInfo,
   ignoreRules: IgnoreRules,
 ): Promise<WorktreeSignature> {
+  if (!repository.gitAvailable) {
+    const discovered = await discoverFiles(repository.root, ignoreRules);
+    const trackedPaths = discovered.map((file) => file.relativePath);
+    const entries = await Promise.all(discovered.map(async (file) =>
+      `${file.relativePath}:${await cachedFileHash(file.absolutePath)}`,
+    ));
+    const indexHash = hashSortedEntries(trackedPaths);
+    return {
+      signature: sha256(
+        `${repository.headCommit}|${indexHash}|${hashSortedEntries(entries)}`,
+      ),
+      dirty: false,
+      changedFiles: trackedPaths.length,
+      changedPaths: trackedPaths,
+      trackedPaths,
+      untrackedPaths: [],
+      indexHash,
+      statusOutput: "",
+    };
+  }
+
   // Git for Windows can transiently reject concurrent reads while another
   // process replaces the index, so keep the complete-index reads sequential.
   const statusOutput = await runGit(repository.root, [
@@ -197,6 +219,27 @@ export async function computeRepositoryFingerprint(
   files: readonly HashedWorkingFile[],
   ignoreRules: IgnoreRules,
 ): Promise<RepositoryFingerprint> {
+  if (!repository.gitAvailable) {
+    const trackedEntries = files
+      .map((file) => `${file.relativePath}:${file.contentHash}`)
+      .sort((left, right) => left.localeCompare(right));
+    const trackedPaths = files
+      .map((file) => file.relativePath)
+      .sort((left, right) => left.localeCompare(right));
+    const trackedHash = hashSortedEntries(trackedEntries);
+    const untrackedHash = hashSortedEntries([]);
+    const indexHash = hashSortedEntries(trackedPaths);
+    return {
+      fingerprint: sha256(
+        `${repository.headCommit}|${indexHash}|${trackedHash}|${untrackedHash}`,
+      ),
+      headCommit: repository.headCommit,
+      trackedHash,
+      untrackedHash,
+      indexHash,
+    };
+  }
+
   const [trackedOutput, untrackedOutput, indexOutput] = await Promise.all([
     runGit(repository.root, ["ls-files", "--cached", "-z"]),
     runGit(repository.root, ["ls-files", "--others", "--exclude-standard", "-z"]),

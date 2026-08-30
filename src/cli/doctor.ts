@@ -68,10 +68,18 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
   let repository;
   try {
     repository = await detectRepository(startPath);
-    checks.push({ name: "Git repository", ok: true, detail: repository.root });
+    checks.push({ name: "Repository root", ok: true, detail: repository.root });
+    checks.push({
+      name: "Git integration",
+      ok: true,
+      detail: repository.gitAvailable
+        ? `${repository.branch} @ ${repository.headCommit}`
+        : "unavailable; filesystem indexing mode is active and Git-only diff/history features are disabled",
+      severity: "info",
+    });
   } catch (error) {
     checks.push({
-      name: "Git repository",
+      name: "Repository root",
       ok: false,
       detail: error instanceof Error ? error.message : String(error),
     });

@@ -257,7 +257,8 @@ export function nodeFactWithTransientRoute(
 export function freshnessFor(context: FreshContext): AnswerPacket["freshness"] {
   return {
     fingerprint: context.status.currentFingerprint,
-    head_commit: context.status.headCommit,
+    git_available: context.status.gitAvailable,
+    head_commit: context.status.gitAvailable ? context.status.headCommit : null,
     mode: context.status.freshnessMode,
     working_tree_checked: context.status.freshnessMode === "authoritative",
     checked_at: context.checkedAt,

@@ -35,7 +35,11 @@ export async function initializeRepository(
 
   await ensureWorkspaceDirectories(repository.root);
   const ignoreScope = options.sharedIgnore === true ? "shared" : "local";
-  const addedToIgnore = await ensureCodeAtlasIgnored(repository.root, options.sharedIgnore === true);
+  const addedToIgnore = await ensureCodeAtlasIgnored(
+    repository.root,
+    options.sharedIgnore === true,
+    repository.gitAvailable,
+  );
 
   if (!(await fileExists(paths.config))) {
     if (hadDatabase) {

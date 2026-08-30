@@ -70,9 +70,10 @@ The v2 compiler will reuse the following rather than replace them:
   `USER_DEFINED` contract without losing existing detail.
 - The workspace layout (`atlas.db`, `manifest.json`, `state.json`) predates `.codeatlas/current/`
   and snapshots. Compatibility files must remain readable during migration.
-- `init` and `index` are separate operations and V1 assumes Git. `build` will compose initialization,
-  incremental indexing, compilation, exports, and snapshots. Non-Git indexing remains a follow-up
-  compatibility item because repository identity and freshness currently rely on Git.
+- `init` and `index` remain separate compatibility commands while `build` composes initialization,
+  incremental indexing, compilation, exports, and snapshots. Repository discovery now supports both
+  Git worktrees and ordinary filesystem directories; Git-only history/diff capabilities remain
+  conditional on Git being available.
 - Domain configuration is JSON feature overrides, not `.codeatlas.yml` domain/rule configuration.
 - Existing MCP trace/impact tools operate on the same graph but do not yet expose every v2
   task-specific name (flows, CFG, snapshots, rules, review).
@@ -188,7 +189,11 @@ The first production compiler slice is implemented:
 - Canonical-IR MCP tools and deterministic evidence-grounded `ask` answers.
 - End-to-end Authentication/Payments/Users fixture coverage plus offline, incremental, rule, flow,
   CFG, impact, snapshot, Git mapping, MCP parity, and 5,000-symbol LOD tests.
+- Git-optional repository discovery and freshness. Ordinary directories use deterministic
+  content/stat fingerprints, incremental file reuse, deletion cleanup, worktree-style snapshot IDs,
+  null Git metadata in the canonical IR/build manifest, and filesystem-grounded MCP/status evidence.
 
-Known compatibility boundary: the current incremental front end still uses Git for repository
-identity and freshness. The portable IR and all exporters are local and service-free, but non-Git
-directory indexing requires a repository-identity adapter rather than a workaround in the exporter.
+Git history, base/head architecture diffs, rename-history assistance, and PR-oriented review remain
+Git-only by design. Core indexing, canonical IR generation, HTML/agent exports, rules, impact,
+domains, flows, CFGs, review over the current tree, and snapshots work in filesystem mode without
+fabricating Git commits or `.git` evidence.

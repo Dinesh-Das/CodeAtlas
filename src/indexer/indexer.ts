@@ -51,7 +51,7 @@ import {
 import type { GraphEdge, GraphNode } from "../graph/types.js";
 import type { RepositoryInfo } from "../git/repository.js";
 import { detectRepository } from "../git/repository.js";
-import { detectGitState } from "../git/changes.js";
+import { detectGitState, type GitState } from "../git/changes.js";
 import { collectRecentFileHistory } from "../git/history.js";
 import type { ParsedFile } from "../parser/parser.js";
 import {
@@ -443,13 +443,21 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       const storedCommit = storedState.last_indexed_commit ?? null;
       let gitFreshnessWorkMs = 0;
       let gitStartedAt = performance.now();
+      const gitStatePromise = repository.gitAvailable
+        ? detectGitState(
+            repository.root,
+            storedCommit,
+            repository.headCommit,
+            options.precomputedWorktree?.statusOutput,
+          )
+        : Promise.resolve<GitState>({
+            dirty: false,
+            historyConsistent: true,
+            changes: [],
+            renames: [],
+          });
       const [gitState, worktree] = await Promise.all([
-        detectGitState(
-          repository.root,
-          storedCommit,
-          repository.headCommit,
-          options.precomputedWorktree?.statusOutput,
-        ),
+        gitStatePromise,
         options.precomputedWorktree === undefined
           ? computeWorktreeSignature(repository, ignoreRules)
           : Promise.resolve(options.precomputedWorktree),
@@ -479,6 +487,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       );
       const storedRoot = getRepositoryState(database, "repository_root");
       const contractAllowsManifest =
+        repository.gitAvailable &&
         options.full !== true &&
         existing.size > 0 &&
         storedState.schema_version === String(SCHEMA_VERSION) &&
@@ -997,8 +1006,9 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         ? previousGenerations.architecture + 1
         : previousGenerations.architecture;
       telemetry.start("git_history_analysis");
-      const historyCacheCurrent = storedState.git_history_head === repository.headCommit;
-      const history = analysisRequired && config.analysis.gitHistory
+      const historyCacheCurrent =
+        !repository.gitAvailable || storedState.git_history_head === repository.headCommit;
+      const history = repository.gitAvailable && analysisRequired && config.analysis.gitHistory
         ? historyCacheCurrent
           ? loadGitHistoryCache(database)
           : await collectRecentFileHistory(
@@ -1008,7 +1018,9 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         : new Map();
       telemetry.end("git_history_analysis", {
         itemsProcessed: historyCacheCurrent ? 0 : history.size,
-        itemsSkipped: !analysisRequired || !config.analysis.gitHistory ? candidates.length : 0,
+        itemsSkipped: !repository.gitAvailable || !analysisRequired || !config.analysis.gitHistory
+          ? candidates.length
+          : 0,
         cacheHits: historyCacheCurrent ? history.size : 0,
       });
       const directoryPaths = getDirectoryPaths(candidates);
@@ -1425,7 +1437,12 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           rebuildNodeSearch(database);
           ftsIndexingMs = performance.now() - ftsStartedAt;
         }
-        if (analysisRequired && config.analysis.gitHistory && !historyCacheCurrent) {
+        if (
+          repository.gitAvailable &&
+          analysisRequired &&
+          config.analysis.gitHistory &&
+          !historyCacheCurrent
+        ) {
           replaceGitHistoryCache(database, history);
         }
 
@@ -1437,6 +1454,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           last_indexed_at: indexedAt,
           repository_root: repository.root,
           repository_id: repository.id,
+          git_available: String(repository.gitAvailable),
           dirty_fingerprint: fingerprint.fingerprint,
           worktree_signature: worktree.signature,
           worktree_changed_paths: JSON.stringify(worktree.changedPaths),
@@ -1453,7 +1471,9 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           semantic_status: "current",
           search_status: "current",
           architecture_status: analysisRequired ? "pending" : "current",
-          ...(config.analysis.gitHistory ? { git_history_head: repository.headCommit } : {}),
+          ...(repository.gitAvailable && config.analysis.gitHistory
+            ? { git_history_head: repository.headCommit }
+            : {}),
           last_change_summary: JSON.stringify({
             added: changes.added.map((candidate) => candidate.relativePath),
             modified: changes.modified.map((candidate) => candidate.relativePath),

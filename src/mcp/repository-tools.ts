@@ -25,6 +25,36 @@ export function statusPacket(context: FreshContext): AnswerPacket {
     .map(([language]) => language)
     .join(", ");
   const status = context.status;
+  const repositoryIdentityFact = status.gitAvailable
+    ? {
+        statement: `Current commit ${status.headCommit} matches indexed commit ${status.indexedCommit}.`,
+        confidence: 1,
+        source_type: "git" as const,
+        provenance: "git" as const,
+        evidence: { file: ".git/HEAD", line: 1 },
+      }
+    : {
+        statement: `Git is unavailable; CodeAtlas is indexing this directory in filesystem mode and the current fingerprint ${status.currentFingerprint} matches the indexed fingerprint ${status.indexedFingerprint}.`,
+        confidence: 1,
+        source_type: "config" as const,
+        provenance: "verified" as const,
+        evidence: statusEvidence,
+      };
+  const changeStateFact = status.gitAvailable
+    ? {
+        statement: `Working tree dirty state is ${String(status.dirty)}; freshness mode is ${status.freshnessMode}, the authoritative check was ${status.authoritativeCheckedAt}, and the checked fingerprint is ${status.currentFingerprint}.`,
+        confidence: 1,
+        source_type: "git" as const,
+        provenance: "git" as const,
+        evidence: statusEvidence,
+      }
+    : {
+        statement: `Filesystem change state is ${status.dirty ? "changed since index" : "unchanged since index"}; freshness mode is ${status.freshnessMode}, the authoritative check was ${status.authoritativeCheckedAt}, and the checked fingerprint is ${status.currentFingerprint}.`,
+        confidence: 1,
+        source_type: "config" as const,
+        provenance: "verified" as const,
+        evidence: statusEvidence,
+      };
   return packet(
     {
       answer_context: { topic: "repository status", tool: "codeatlas_status" },
@@ -40,20 +70,8 @@ export function statusPacket(context: FreshContext): AnswerPacket {
           provenance: "verified",
           evidence: statusEvidence,
         },
-        {
-          statement: `Current commit ${status.headCommit} matches indexed commit ${status.indexedCommit}.`,
-          confidence: 1,
-          source_type: "git",
-          provenance: "git",
-          evidence: { file: ".git/HEAD", line: 1 },
-        },
-        {
-          statement: `Working tree dirty state is ${String(status.dirty)}; freshness mode is ${status.freshnessMode}, the authoritative check was ${status.authoritativeCheckedAt}, and the checked fingerprint is ${status.currentFingerprint}.`,
-          confidence: 1,
-          source_type: "git",
-          provenance: "git",
-          evidence: statusEvidence,
-        },
+        repositoryIdentityFact,
+        changeStateFact,
         {
           statement: `Enabled languages are ${enabledLanguages || "none"}; the index contains ${status.files} files, ${status.symbols} symbols, and ${status.edges} relationships.`,
           confidence: 1,

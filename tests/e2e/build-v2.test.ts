@@ -7,6 +7,8 @@ import { runGit } from "../../src/git/repository.js";
 import { compareSnapshots } from "../../src/git/snapshots.js";
 import { workspacePaths } from "../../src/core/workspace.js";
 import { evidenceIr, findSymbolIr, flowIr, impactIr } from "../../src/mcp/ir-tools.js";
+import { ensureFreshIndex } from "../../src/mcp/freshness.js";
+import { statusPacket } from "../../src/mcp/repository-tools.js";
 import type { Atlas } from "../../src/ir/models.js";
 import { validateAtlas } from "../../src/ir/validation.js";
 
@@ -25,6 +27,13 @@ async function repositoryFixture(): Promise<string> {
   await runGit(root, ["config", "user.email", "codeatlas@example.invalid"]);
   await runGit(root, ["add", "."]);
   await runGit(root, ["commit", "-m", "fixture"]);
+  return root;
+}
+
+async function filesystemFixture(): Promise<string> {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeatlas-v2-filesystem-"));
+  roots.push(root);
+  await cp(path.resolve("tests/fixtures/v2-architecture"), root, { recursive: true });
   return root;
 }
 
@@ -82,5 +91,61 @@ describe("codeatlas build v2", () => {
       .toContain("authenticate");
     const diff = await compareSnapshots(workspacePaths(root).snapshots, first.snapshotId, second.snapshotId);
     expect(diff.symbols.modified.length).toBeGreaterThan(0);
+  }, 60_000);
+
+  it("builds and incrementally refreshes a normal directory without Git", async () => {
+    const root = await filesystemFixture();
+
+    const first = await buildRepository(root);
+    const firstAtlas = JSON.parse(
+      await readFile(path.join(first.currentDirectory, "atlas.json"), "utf8"),
+    ) as Atlas;
+    expect(validateAtlas(firstAtlas)).toEqual({ valid: true, errors: [] });
+    expect(firstAtlas.project.git_commit).toBeNull();
+    expect(firstAtlas.project.git_branch).toBeNull();
+    expect(firstAtlas.git_changes).toEqual([]);
+    expect(first.snapshotId).toMatch(/^worktree-[0-9a-f]{16}$/u);
+    const buildMetadata = JSON.parse(
+      await readFile(path.join(first.currentDirectory, "build.json"), "utf8"),
+    ) as { git_available?: boolean; git_base?: string | null; git_head?: string | null };
+    expect(buildMetadata).toMatchObject({
+      git_available: false,
+      git_base: null,
+      git_head: null,
+    });
+    const status = statusPacket(await ensureFreshIndex(root));
+    expect(status.freshness).toMatchObject({ git_available: false, head_commit: null });
+    expect(status.facts.some((fact) => fact.evidence.file === ".git/HEAD")).toBe(false);
+    expect(status.facts.some((fact) => fact.statement.includes("filesystem mode"))).toBe(true);
+
+    const unchanged = await buildRepository(root);
+    expect(unchanged.parsedFiles).toBe(0);
+    expect(unchanged.reusedFiles).toBe(first.statistics.files);
+
+    const servicePath = path.join(root, "src", "auth", "service.ts");
+    const service = await readFile(servicePath, "utf8");
+    await writeFile(
+      servicePath,
+      service.replace(
+        'return password.length > 7 ? "token" : "unauthorized";',
+        'return password.length > 10 ? "token" : "unauthorized";',
+      ),
+      "utf8",
+    );
+    const modified = await buildRepository(root);
+    expect(modified.parsedFiles).toBe(1);
+
+    const removedPath = path.join(root, "src", "admin", "service.ts");
+    await rm(removedPath, { force: true });
+    const afterDelete = await buildRepository(root);
+    const finalAtlas = JSON.parse(
+      await readFile(path.join(afterDelete.currentDirectory, "atlas.json"), "utf8"),
+    ) as Atlas;
+    expect(validateAtlas(finalAtlas)).toEqual({ valid: true, errors: [] });
+    expect(finalAtlas.symbols.some((symbol) => symbol.file === "src/admin/service.ts")).toBe(false);
+    expect(finalAtlas.relationships.every((relationship) =>
+      finalAtlas.symbols.some((symbol) => symbol.id === relationship.source) &&
+      finalAtlas.symbols.some((symbol) => symbol.id === relationship.target),
+    )).toBe(true);
   }, 60_000);
 });

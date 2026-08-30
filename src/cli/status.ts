@@ -28,6 +28,7 @@ import { INDEXER_VERSION, SCHEMA_VERSION } from "../version.js";
 export interface StatusResult {
   repository: string;
   root: string;
+  gitAvailable: boolean;
   branch: string;
   headCommit: string;
   indexedCommit: string | null;
@@ -80,7 +81,11 @@ function monitorShouldIgnore(filename: string | Buffer | null): boolean {
   return !normalized.endsWith("/config.json") && normalized !== ".codeatlas/config.json";
 }
 
-function createWatchers(repositoryRoot: string, entry: FastStatusEntry): FSWatcher[] {
+function createWatchers(
+  repositoryRoot: string,
+  gitAvailable: boolean,
+  entry: FastStatusEntry,
+): FSWatcher[] {
   const watchers: FSWatcher[] = [];
   const markDirty = (_event: string, filename: string | Buffer | null): void => {
     if (!monitorShouldIgnore(filename)) entry.dirty = true;
@@ -96,7 +101,8 @@ function createWatchers(repositoryRoot: string, entry: FastStatusEntry): FSWatch
   } catch {
     // Linux may not provide recursive fs.watch. Periodic reconciliation remains authoritative.
   }
-  for (const target of [repositoryRoot, path.join(repositoryRoot, ".git")]) {
+  const targets = gitAvailable ? [repositoryRoot, path.join(repositoryRoot, ".git")] : [repositoryRoot];
+  for (const target of targets) {
     try {
       const watcher = watch(target, markDirty);
       watcher.on("error", () => {
@@ -125,7 +131,7 @@ function cacheFastStatus(
       watchers: [],
       worktree,
     };
-    entry.watchers = createWatchers(status.root, entry);
+    entry.watchers = createWatchers(status.root, status.gitAvailable, entry);
     fastStatusEntries.set(status.root, entry);
   } else {
     existing.status = status;
@@ -243,6 +249,7 @@ function readStoredStatus(
   return {
     repository: repository.name,
     root: repository.root,
+    gitAvailable: repository.gitAvailable,
     branch: repository.branch,
     headCommit: repository.headCommit,
     indexedCommit: state.last_indexed_commit ?? null,
@@ -322,7 +329,7 @@ export async function getFastStatus(
       config,
       state,
       matches ? state.dirty_fingerprint ?? worktree.signature : worktree.signature,
-      worktree.dirty,
+      repository.gitAvailable ? worktree.dirty : !matches,
       matches,
     );
     status.cacheInvalidated = cacheWasInvalidated;
@@ -356,10 +363,10 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
         : null;
     })() ?? await hashFile(file.absolutePath),
   }));
-  const [current, dirty] = await Promise.all([
-    computeRepositoryFingerprint(repository, hashed, ignoreRules),
-    isWorkingTreeDirty(repository.root),
-  ]);
+  const current = await computeRepositoryFingerprint(repository, hashed, ignoreRules);
+  const dirty = repository.gitAvailable
+    ? await isWorkingTreeDirty(repository.root)
+    : state.dirty_fingerprint !== current.fingerprint;
   try {
     return readStoredStatus(
       database,
@@ -378,9 +385,11 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
 export function formatStatus(result: StatusResult): string {
   return [
     `Repository: ${result.repository}`,
-    `Branch: ${result.branch}`,
-    `HEAD: ${result.headCommit}`,
-    `Working tree: ${result.dirty ? "dirty" : "clean"}`,
+    result.gitAvailable ? `Branch: ${result.branch}` : "Git: unavailable (filesystem mode)",
+    result.gitAvailable ? `HEAD: ${result.headCommit}` : null,
+    result.gitAvailable
+      ? `Working tree: ${result.dirty ? "dirty" : "clean"}`
+      : `Filesystem: ${result.dirty ? "changed since index" : "matches index"}`,
     "",
     "Index:",
     `  Status: ${result.synchronized ? "up to date" : result.structuralSynchronized ? "partially current" : "out of date"}`,
@@ -401,5 +410,5 @@ export function formatStatus(result: StatusResult): string {
     `  Change hotspots: ${result.hotspots}`,
     "",
     `Last indexed: ${result.lastIndexedAt ?? "never"}`,
-  ].join("\n");
+  ].filter((line): line is string => line !== null).join("\n");
 }

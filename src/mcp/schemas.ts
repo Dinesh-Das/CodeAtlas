@@ -97,7 +97,8 @@ export const answerPacketSchema = z
     freshness: z
       .object({
         fingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
-        head_commit: z.string(),
+        git_available: z.boolean(),
+        head_commit: z.string().nullable(),
         mode: z.enum(["authoritative", "watch_cache"]),
         working_tree_checked: z.boolean(),
         checked_at: z.string().datetime(),

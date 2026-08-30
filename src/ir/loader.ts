@@ -157,13 +157,14 @@ export async function loadAtlasFromDatabase(input: {
   repositoryRoot: string;
   repositoryId: string;
   repositoryName: string;
+  gitAvailable: boolean;
   headCommit: string;
   branch: string;
 }): Promise<Atlas> {
   const state = repositoryState(input.database);
   const dirty = state.working_tree_dirty === "true";
   const fingerprint = state.dirty_fingerprint ?? sha256(input.headCommit);
-  const snapshotId = dirty || input.headCommit === "unborn"
+  const snapshotId = !input.gitAvailable || dirty || input.headCommit === "unborn"
     ? `worktree-${fingerprint.slice(0, 16)}`
     : input.headCommit;
   const createdAt = state.last_indexed_at ?? new Date(0).toISOString();
@@ -290,8 +291,8 @@ export async function loadAtlasFromDatabase(input: {
       id: `repo:${input.repositoryId}`,
       name: input.repositoryName,
       root: ".",
-      git_commit: input.headCommit === "unborn" ? null : input.headCommit,
-      git_branch: input.branch,
+      git_commit: !input.gitAvailable || input.headCommit === "unborn" ? null : input.headCommit,
+      git_branch: input.gitAvailable ? input.branch : null,
       dirty,
     },
     snapshot: { id: snapshotId, created_at: createdAt },

@@ -16,8 +16,9 @@ interface CurrentBuildMetadata {
   current_fingerprint?: string;
   generations?: RepositoryGenerations;
   v2_config_fingerprint?: string;
-  git_base?: string;
-  git_head?: string;
+  git_available?: boolean;
+  git_base?: string | null;
+  git_head?: string | null;
 }
 
 interface CachedArchitecture {
@@ -36,7 +37,7 @@ export interface ArchitectureContext {
 }
 
 function expectedSnapshotId(status: StatusResult): string {
-  return status.dirty || status.headCommit === "unborn"
+  return !status.gitAvailable || status.dirty || status.headCommit === "unborn"
     ? `worktree-${status.currentFingerprint.slice(0, 16)}`
     : status.headCommit;
 }
@@ -81,6 +82,7 @@ async function readReusableAtlas(
     const build = JSON.parse(buildText) as CurrentBuildMetadata;
     assertValidAtlas(atlas);
     const expectedSnapshot = expectedSnapshotId(status);
+    const expectedGitCommit = status.gitAvailable ? status.headCommit : null;
     if (
       atlas.snapshot.id !== expectedSnapshot ||
       atlas.generator.version !== CODEATLAS_VERSION ||
@@ -89,8 +91,9 @@ async function readReusableAtlas(
       build.current_fingerprint !== status.currentFingerprint ||
       !sameGenerations(build.generations, status.generations) ||
       build.v2_config_fingerprint !== configFingerprint ||
-      build.git_base !== status.headCommit ||
-      build.git_head !== status.headCommit
+      build.git_available !== status.gitAvailable ||
+      build.git_base !== expectedGitCommit ||
+      build.git_head !== expectedGitCommit
     ) {
       return null;
     }

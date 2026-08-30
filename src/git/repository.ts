@@ -1,7 +1,7 @@
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
-import { realpath } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { CodeAtlasError } from "../core/errors.js";
 import { sha256 } from "../core/hashing.js";
@@ -12,9 +12,13 @@ export interface RepositoryInfo {
   root: string;
   id: string;
   name: string;
+  gitAvailable: boolean;
   headCommit: string;
   branch: string;
 }
+
+export const FILESYSTEM_HEAD = "filesystem";
+export const FILESYSTEM_BRANCH = "filesystem";
 
 export async function runGit(
   repositoryRoot: string,
@@ -49,9 +53,21 @@ export async function runGit(
 }
 
 export async function detectRepository(startPath = process.cwd()): Promise<RepositoryInfo> {
+  let candidate: string;
+  try {
+    const resolved = path.resolve(startPath);
+    const metadata = await stat(resolved);
+    candidate = metadata.isDirectory() ? resolved : path.dirname(resolved);
+    candidate = await realpath(candidate);
+  } catch (error) {
+    throw new CodeAtlasError(`Error: Repository path does not exist: ${path.resolve(startPath)}`, {
+      cause: error,
+    });
+  }
+
   let combinedOutput: string;
   try {
-    combinedOutput = await runGit(startPath, [
+    combinedOutput = await runGit(candidate, [
       "rev-parse",
       "--show-toplevel",
       "HEAD",
@@ -62,18 +78,27 @@ export async function detectRepository(startPath = process.cwd()): Promise<Repos
     // An unborn repository has no HEAD, so retain the more permissive fallback.
     let rootOutput: string;
     try {
-      rootOutput = await runGit(startPath, ["rev-parse", "--show-toplevel"]);
+      rootOutput = await runGit(candidate, ["rev-parse", "--show-toplevel"]);
     } catch {
-      throw new CodeAtlasError(
-        "Error: CodeAtlas requires a Git repository. Non-Git directories are not supported in V1.",
-        { cause: error },
-      );
+      return {
+        root: candidate,
+        id: sha256(candidate),
+        name: path.basename(candidate),
+        gitAvailable: false,
+        headCommit: FILESYSTEM_HEAD,
+        branch: FILESYSTEM_BRANCH,
+      };
     }
     const reportedRoot = rootOutput.trim();
     if (!reportedRoot) {
-      throw new CodeAtlasError(
-        "Error: CodeAtlas requires a Git repository. Non-Git directories are not supported in V1.",
-      );
+      return {
+        root: candidate,
+        id: sha256(candidate),
+        name: path.basename(candidate),
+        gitAvailable: false,
+        headCommit: FILESYSTEM_HEAD,
+        branch: FILESYSTEM_BRANCH,
+      };
     }
     const root = await realpath(path.resolve(reportedRoot));
     const branch = (await runGit(root, ["branch", "--show-current"], true)).trim() || "detached";
@@ -81,6 +106,7 @@ export async function detectRepository(startPath = process.cwd()): Promise<Repos
       root,
       id: sha256(root),
       name: path.basename(root),
+      gitAvailable: true,
       headCommit: "unborn",
       branch,
     };
@@ -90,9 +116,14 @@ export async function detectRepository(startPath = process.cwd()): Promise<Repos
     .trimEnd()
     .split(/\r?\n/u);
   if (!reportedRoot) {
-    throw new CodeAtlasError(
-      "Error: CodeAtlas requires a Git repository. Non-Git directories are not supported in V1.",
-    );
+    return {
+      root: candidate,
+      id: sha256(candidate),
+      name: path.basename(candidate),
+      gitAvailable: false,
+      headCommit: FILESYSTEM_HEAD,
+      branch: FILESYSTEM_BRANCH,
+    };
   }
 
   const root = await realpath(path.resolve(reportedRoot));
@@ -102,6 +133,7 @@ export async function detectRepository(startPath = process.cwd()): Promise<Repos
     root,
     id: sha256(root),
     name: path.basename(root),
+    gitAvailable: true,
     headCommit,
     branch,
   };
