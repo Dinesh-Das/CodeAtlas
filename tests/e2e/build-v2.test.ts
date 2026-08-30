@@ -47,8 +47,18 @@ describe("codeatlas build v2", () => {
     expect(atlas.domains.some((domain) => domain.name === "authentication" && domain.label_provenance === "USER_DEFINED")).toBe(true);
     expect(atlas.flows.some((flow) => flow.steps.length > 1)).toBe(true);
     const authenticate = atlas.symbols.find((symbol) => symbol.qualified_name === "authenticate");
-    expect(atlas.control_flows.find((flow) => flow.symbol_id === authenticate?.id)?.nodes.map((node) => node.kind))
+    const authenticateCfg = atlas.control_flows.find((flow) => flow.symbol_id === authenticate?.id);
+    expect(authenticateCfg?.nodes.map((node) => node.kind))
       .toEqual(expect.arrayContaining(["START", "CONDITION", "LOOP", "TRY", "CATCH", "RETURN", "RAISE", "END"]));
+    const astCfgNodes = authenticateCfg?.nodes.filter((node) => !["START", "END"].includes(node.kind)) ?? [];
+    expect(astCfgNodes.length).toBeGreaterThan(0);
+    expect(astCfgNodes.every((node) => node.evidence_ids.length === 1)).toBe(true);
+    expect(astCfgNodes.every((node) => {
+      const evidence = atlas.evidence.find((item) => item.id === node.evidence_ids[0]);
+      return evidence?.file === authenticate?.file && evidence.start_line >= (authenticate?.location?.start_line ?? 0);
+    })).toBe(true);
+    expect(authenticateCfg?.edges.map((edge) => edge.label))
+      .toEqual(expect.arrayContaining(["true", "false", "body", "exit", "repeat", "try", "catch", "return", "raise"]));
     expect(atlas.rule_violations.some((item) => item.rule_id === "controllers-must-not-call-repositories")).toBe(true);
     expect(atlas.review_findings.every((finding) => finding.evidence_ids.length > 0)).toBe(true);
     const endpoint = atlas.symbols.find((symbol) => symbol.kind === "endpoint")!;
@@ -66,6 +76,10 @@ describe("codeatlas build v2", () => {
     expect(html).toContain('id="atlas-data"');
     expect(html).toContain("Overview");
     expect(html).toContain("Entrypoints");
+    expect(html).toContain("hierarchyCrumbs");
+    expect(html).toContain("deterministic");
+    expect(html).toContain("Edges preserve branch labels");
+    expect(html).toContain("Architecture-rule status");
     expect(html).not.toMatch(/<script[^>]+src=/iu);
     expect(html).not.toMatch(/<link[^>]+href=/iu);
     await expect(stat(path.join(root, ".codeatlas", "snapshots", first.snapshotId, "atlas.json"))).resolves.toBeDefined();

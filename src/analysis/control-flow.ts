@@ -116,11 +116,31 @@ export async function buildControlFlows(
     for (const [index, item] of selected.entries()) {
       const oneLine = source.slice(item.syntax.startIndex, item.syntax.endIndex)
         .replace(/\s+/gu, " ").trim().slice(0, 120);
+      const startLine = item.syntax.startPosition.row + 1;
+      const startColumn = item.syntax.startPosition.column + 1;
+      const endLine = item.syntax.endPosition.row + 1;
+      const endColumn = item.syntax.endPosition.column + 1;
+      const evidenceId = `evidence:${sha256(`${file}:${startLine}:${startColumn}:${endLine}:${endColumn}:cfg`)}`;
+      if (!atlas.evidence.some((evidence) => evidence.id === evidenceId)) {
+        atlas.evidence.push({
+          id: evidenceId,
+          file,
+          start_line: startLine,
+          start_column: startColumn,
+          end_line: endLine,
+          end_column: endColumn,
+          symbol_id: symbol.id,
+          relationship_id: null,
+          kind: "source",
+          excerpt: oneLine || null,
+          content_hash: sha256(source.slice(item.syntax.startIndex, item.syntax.endIndex)),
+        });
+      }
       nodes.push({
         id: `cfg-node:${sha256(`${symbol.id}:${index}:${item.syntax.startIndex}:${item.kind}`)}`,
         kind: item.kind,
         label: oneLine || item.kind,
-        evidence_ids: symbol.evidence_ids,
+        evidence_ids: [evidenceId],
       });
     }
     nodes.push({
@@ -129,22 +149,59 @@ export async function buildControlFlows(
       label: "END",
       evidence_ids: symbol.evidence_ids,
     });
-    const edges = nodes.slice(0, -1).map((node, index) => ({
-      id: `cfg-edge:${sha256(`${symbol.id}:${node.id}:${nodes[index + 1]!.id}`)}`,
-      source: node.id,
-      target: nodes[index + 1]!.id,
-      label: node.kind === "CONDITION" ? "next" : null,
-    }));
-    for (let index = 0; index < nodes.length; index += 1) {
-      const node = nodes[index]!;
-      if (node.kind !== "CONDITION" && node.kind !== "LOOP" && node.kind !== "TRY") continue;
-      const target = nodes[Math.min(nodes.length - 1, index + 2)]!;
+    const selectedNodes = nodes.slice(1, -1);
+    const edges: AtlasControlFlow["edges"] = [];
+    const addEdge = (sourceId: string, targetId: string, label: string | null): void => {
+      if (edges.some((edge) => edge.source === sourceId && edge.target === targetId && edge.label === label)) return;
       edges.push({
-        id: `cfg-edge:${sha256(`${symbol.id}:${node.id}:${target.id}:alternate`)}`,
-        source: node.id,
-        target: target.id,
-        label: node.kind === "CONDITION" ? "false" : "alternate",
+        id: `cfg-edge:${sha256(`${symbol.id}:${sourceId}:${targetId}:${label ?? "next"}`)}`,
+        source: sourceId,
+        target: targetId,
+        label,
       });
+    };
+    addEdge(startId, selectedNodes[0]?.id ?? endId, null);
+    for (const [index, item] of selected.entries()) {
+      const node = selectedNodes[index]!;
+      const next = selectedNodes[index + 1] ?? nodes[nodes.length - 1]!;
+      if (node.kind === "RETURN" || node.kind === "RAISE") {
+        addEdge(node.id, endId, node.kind === "RETURN" ? "return" : "raise");
+        continue;
+      }
+      const afterIndex = selected.findIndex((candidate, candidateIndex) =>
+        candidateIndex > index && candidate.syntax.startIndex >= item.syntax.endIndex,
+      );
+      const after = afterIndex >= 0 ? selectedNodes[afterIndex]! : nodes[nodes.length - 1]!;
+      if (node.kind === "CONDITION") {
+        addEdge(node.id, next.id, "true");
+        if (after.id !== next.id) addEdge(node.id, after.id, "false");
+        continue;
+      }
+      if (node.kind === "LOOP") {
+        addEdge(node.id, next.id, "body");
+        if (after.id !== next.id) addEdge(node.id, after.id, "exit");
+        addEdge(node.id, node.id, "repeat");
+        let lastBodyIndex = -1;
+        for (let candidateIndex = index + 1; candidateIndex < selected.length; candidateIndex += 1) {
+          const candidate = selected[candidateIndex]!;
+          if (candidate.syntax.startIndex >= item.syntax.endIndex) break;
+          if (candidate.syntax.endIndex <= item.syntax.endIndex) lastBodyIndex = candidateIndex;
+        }
+        if (lastBodyIndex >= 0) {
+          const lastBody = selectedNodes[lastBodyIndex]!;
+          if (lastBody.kind !== "RETURN" && lastBody.kind !== "RAISE") addEdge(lastBody.id, node.id, "repeat");
+        }
+        continue;
+      }
+      if (node.kind === "TRY") {
+        addEdge(node.id, next.id, "try");
+        const catchIndex = selected.findIndex((candidate, candidateIndex) =>
+          candidateIndex > index && candidate.syntax.endIndex <= item.syntax.endIndex && candidate.kind === "CATCH",
+        );
+        if (catchIndex >= 0) addEdge(node.id, selectedNodes[catchIndex]!.id, "catch");
+        continue;
+      }
+      addEdge(node.id, next.id, null);
     }
     flows.push({
       id: `cfg:${sha256(symbol.id)}`,
