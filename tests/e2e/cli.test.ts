@@ -22,6 +22,19 @@ async function runCli(...args: string[]): Promise<{ stdout: string; stderr: stri
 }
 
 describe("compiled CLI", () => {
+  it("exposes the complete v2 command surface through Commander", async () => {
+    const help = await runCli("--help");
+    for (const command of [
+      "build", "update", "watch", "search", "symbol", "impact", "diff", "check", "review", "ask", "snapshot", "mcp",
+    ]) {
+      expect(help.stdout).toMatch(new RegExp(`\\b${command}\\b`, "u"));
+    }
+    const snapshotHelp = await runCli("snapshot", "--help");
+    expect(snapshotHelp.stdout).toMatch(/\blist\b/u);
+    expect(snapshotHelp.stdout).toMatch(/\bshow\b/u);
+    expect(snapshotHelp.stdout).toMatch(/\bdiff\b/u);
+  });
+
   it("initializes, reports status, diagnoses, and safely cleans a Git repository", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);
