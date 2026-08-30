@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { sha256 } from "../core/hashing.js";
+import { CodeAtlasError } from "../core/errors.js";
 import type { ArchitectureRule, RuleSeverity } from "../ir/models.js";
 import { DEFAULT_V2_CONFIG, type CodeAtlasV2Config, type DomainOverride } from "./types.js";
 
@@ -129,30 +130,86 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function strings(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
-}
-
 function selector(value: unknown): Record<string, string> {
   return Object.fromEntries(Object.entries(record(value)).filter((entry): entry is [string, string] =>
     typeof entry[1] === "string",
   ));
 }
 
+function assertKnownKeys(value: Record<string, unknown>, pathName: string, allowed: readonly string[]): void {
+  const unexpected = Object.keys(value).filter((key) => !allowed.includes(key));
+  if (unexpected.length > 0) {
+    throw new CodeAtlasError(
+      `Error: .codeatlas.yml contains unsupported ${pathName} field(s): ${unexpected.join(", ")}. ` +
+      "Keep credentials and secrets in environment variables, never in .codeatlas.yml.",
+    );
+  }
+}
+
+function stringList(value: unknown, pathName: string, max = 500): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string" || item.trim() === "")) {
+    throw new CodeAtlasError(`Error: .codeatlas.yml ${pathName} must be a list of non-empty strings.`);
+  }
+  if (value.length > max) {
+    throw new CodeAtlasError(`Error: .codeatlas.yml ${pathName} may contain at most ${max} entries.`);
+  }
+  return value.map((item) => (item as string).trim());
+}
+
+function boundedInteger(value: unknown, pathName: string, fallback: number, minimum: number, maximum: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isInteger(value) || (value as number) < minimum || (value as number) > maximum) {
+    throw new CodeAtlasError(
+      `Error: .codeatlas.yml ${pathName} must be an integer between ${minimum} and ${maximum}.`,
+    );
+  }
+  return value as number;
+}
+
+function environmentBoolean(value: string | undefined, name: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (["1", "true", "yes", "on"].includes(value.toLowerCase())) return true;
+  if (["0", "false", "no", "off"].includes(value.toLowerCase())) return false;
+  throw new CodeAtlasError(`Error: ${name} must be true/false or 1/0.`);
+}
+
+function environmentDepth(value: string | undefined, name: string, fallback: number): number {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  return boundedInteger(parsed, name, fallback, 1, 100);
+}
+
 export function normalizeV2Config(value: unknown): CodeAtlasV2Config {
   const root = record(value);
+  assertKnownKeys(root, "root", ["version", "index", "domains", "architecture", "analysis", "html", "ai"]);
+  if (root.version !== undefined && root.version !== 1) {
+    throw new CodeAtlasError("Error: .codeatlas.yml version must be 1.");
+  }
+  const index = record(root.index);
+  assertKnownKeys(index, "index", ["exclude"]);
   const domains: Record<string, DomainOverride> = {};
   for (const [name, raw] of Object.entries(record(root.domains))) {
     const domain = record(raw);
-    domains[name] = { include: strings(domain.include), exclude: strings(domain.exclude) };
+    assertKnownKeys(domain, `domains.${name}`, ["include", "exclude"]);
+    domains[name] = {
+      include: stringList(domain.include, `domains.${name}.include`, 200),
+      exclude: stringList(domain.exclude, `domains.${name}.exclude`, 200),
+    };
   }
   const architecture = record(root.architecture);
+  assertKnownKeys(architecture, "architecture", ["rules"]);
+  if (architecture.rules !== undefined && !Array.isArray(architecture.rules)) {
+    throw new CodeAtlasError("Error: .codeatlas.yml architecture.rules must be a list.");
+  }
   const rules = (Array.isArray(architecture.rules) ? architecture.rules : []).map((raw, index): ArchitectureRule => {
     const rule = record(raw);
-    const severity = ["info", "warning", "error"].includes(String(rule.severity))
-      ? rule.severity as RuleSeverity
-      : "warning";
-    const id = typeof rule.id === "string" && rule.id !== "" ? rule.id : `rule-${index + 1}`;
+    assertKnownKeys(rule, `architecture.rules[${index}]`, ["id", "description", "severity", "source", "forbid"]);
+    if (rule.severity !== undefined && !["info", "warning", "error"].includes(String(rule.severity))) {
+      throw new CodeAtlasError(`Error: .codeatlas.yml architecture.rules[${index}].severity is invalid.`);
+    }
+    const severity = (rule.severity ?? "warning") as RuleSeverity;
+    const id = typeof rule.id === "string" && rule.id.trim() !== "" ? rule.id.trim() : `rule-${index + 1}`;
     return {
       id,
       description: typeof rule.description === "string" ? rule.description : id,
@@ -162,15 +219,37 @@ export function normalizeV2Config(value: unknown): CodeAtlasV2Config {
     };
   });
   const analysis = record(root.analysis);
+  assertKnownKeys(analysis, "analysis", ["max_call_depth", "max_impact_depth"]);
   const html = record(root.html);
+  assertKnownKeys(html, "html", ["mode"]);
+  if (html.mode !== undefined && html.mode !== "single-file" && html.mode !== "bundle") {
+    throw new CodeAtlasError("Error: .codeatlas.yml html.mode must be single-file or bundle.");
+  }
   const ai = record(root.ai);
+  assertKnownKeys(ai, "ai", ["enabled"]);
+  if (ai.enabled !== undefined && typeof ai.enabled !== "boolean") {
+    throw new CodeAtlasError("Error: .codeatlas.yml ai.enabled must be true or false.");
+  }
   return {
-    version: typeof root.version === "number" ? root.version : DEFAULT_V2_CONFIG.version,
+    version: DEFAULT_V2_CONFIG.version,
+    index: { exclude: stringList(index.exclude, "index.exclude") },
     domains,
     architecture: { rules },
     analysis: {
-      max_call_depth: typeof analysis.max_call_depth === "number" ? analysis.max_call_depth : DEFAULT_V2_CONFIG.analysis.max_call_depth,
-      max_impact_depth: typeof analysis.max_impact_depth === "number" ? analysis.max_impact_depth : DEFAULT_V2_CONFIG.analysis.max_impact_depth,
+      max_call_depth: boundedInteger(
+        analysis.max_call_depth,
+        "analysis.max_call_depth",
+        DEFAULT_V2_CONFIG.analysis.max_call_depth,
+        1,
+        100,
+      ),
+      max_impact_depth: boundedInteger(
+        analysis.max_impact_depth,
+        "analysis.max_impact_depth",
+        DEFAULT_V2_CONFIG.analysis.max_impact_depth,
+        1,
+        100,
+      ),
     },
     html: { mode: html.mode === "bundle" ? "bundle" : "single-file" },
     ai: { enabled: ai.enabled === true },
@@ -178,13 +257,36 @@ export function normalizeV2Config(value: unknown): CodeAtlasV2Config {
 }
 
 export async function loadV2Config(repositoryRoot: string): Promise<CodeAtlasV2Config> {
+  let config: CodeAtlasV2Config;
   try {
     const contents = await readFile(path.join(repositoryRoot, ".codeatlas.yml"), "utf8");
-    return normalizeV2Config(parseCodeAtlasYaml(contents));
+    config = normalizeV2Config(parseCodeAtlasYaml(contents));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return DEFAULT_V2_CONFIG;
-    throw error;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") config = DEFAULT_V2_CONFIG;
+    else throw error;
   }
+  const htmlMode = process.env.CODEATLAS_HTML_MODE;
+  if (htmlMode !== undefined && htmlMode !== "single-file" && htmlMode !== "bundle") {
+    throw new CodeAtlasError("Error: CODEATLAS_HTML_MODE must be single-file or bundle.");
+  }
+  const aiEnabled = environmentBoolean(process.env.CODEATLAS_AI_ENABLED, "CODEATLAS_AI_ENABLED");
+  return {
+    ...config,
+    analysis: {
+      max_call_depth: environmentDepth(
+        process.env.CODEATLAS_MAX_CALL_DEPTH,
+        "CODEATLAS_MAX_CALL_DEPTH",
+        config.analysis.max_call_depth,
+      ),
+      max_impact_depth: environmentDepth(
+        process.env.CODEATLAS_MAX_IMPACT_DEPTH,
+        "CODEATLAS_MAX_IMPACT_DEPTH",
+        config.analysis.max_impact_depth,
+      ),
+    },
+    html: { mode: htmlMode ?? config.html.mode },
+    ai: { enabled: aiEnabled ?? config.ai.enabled },
+  };
 }
 
 export function v2ConfigFingerprint(config: CodeAtlasV2Config): string {

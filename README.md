@@ -487,6 +487,11 @@ Portable compiler views, explicit domains, and architecture rules use an optiona
 ```yaml
 version: 1
 
+index:
+  exclude:
+    - generated/**
+    - fixtures/**
+
 domains:
   authentication:
     include:
@@ -514,13 +519,20 @@ ai:
   enabled: false
 ```
 
+`analysis.max_call_depth` and `analysis.max_impact_depth` are validated in the range 1–100.
+`html.mode` accepts only `single-file` or `bundle`. `CODEATLAS_HTML_MODE`,
+`CODEATLAS_AI_ENABLED`, `CODEATLAS_MAX_CALL_DEPTH`, and `CODEATLAS_MAX_IMPACT_DEPTH` can override
+those non-secret settings for a process. Credentials, API keys, tokens, and provider secrets are
+not supported in `.codeatlas.yml`; keep them in provider-specific environment variables.
+
 Rule selectors support `kind`, `layer`, `domain`, and `matches_path`; predicates include direct
 `depends_on`, `calls`, and `imports`, bounded `path_to` with `unless_via`, `belongs_to`, and
 `crosses_domain`.
 
 ## Ignore and secret rules
 
-CodeAtlas combines root and nested `.gitignore` files with `.codeatlasignore`. It always
+CodeAtlas combines root and nested `.gitignore` files with `.codeatlasignore` and
+`.codeatlas.yml` `index.exclude` patterns. It always
 excludes common generated/vendor directories, `.codeatlas/`, and secret-bearing paths such as
 `.env*`, private-key formats, SSH private-key names, and `credentials.*`.
 

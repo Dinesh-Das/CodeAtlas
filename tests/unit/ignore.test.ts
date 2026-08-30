@@ -29,17 +29,20 @@ describe("ignore handling", () => {
     const root = await createRoot();
     await write(root, ".gitignore", "ignored-by-git/\n");
     await write(root, ".codeatlasignore", "fixtures/\n");
+    await write(root, ".codeatlas.yml", "version: 1\nindex:\n  exclude:\n    - generated-config/**\n");
     await write(root, "src/index.ts");
     await write(root, "src/.gitignore", "generated/\n");
     await write(root, "src/generated/types.ts");
     await write(root, "ignored-by-git/file.ts");
     await write(root, "fixtures/sample.py");
+    await write(root, "generated-config/hidden.ts");
     await write(root, "node_modules/pkg/index.js");
     await write(root, ".env.production", "TOKEN=secret");
     await write(root, "certificates/client.pem", "secret");
 
     const files = await discoverFiles(root, await loadIgnoreRules(root));
     expect(files.map((file) => file.relativePath)).toEqual([
+      ".codeatlas.yml",
       ".codeatlasignore",
       ".gitignore",
       "src/.gitignore",

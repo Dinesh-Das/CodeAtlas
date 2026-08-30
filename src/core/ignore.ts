@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import ignore, { type Ignore } from "ignore";
 import { runGit } from "../git/repository.js";
+import { loadV2Config } from "../rules/config.js";
 import { toPosixPath } from "./paths.js";
 
 const DEFAULT_IGNORES = [
@@ -54,7 +55,12 @@ export async function loadIgnoreRules(repositoryRoot: string): Promise<IgnoreRul
   }
 
   const codeatlasignore = await readOptional(path.join(repositoryRoot, ".codeatlasignore"));
-  const policyMatcher = ignore().add(codeatlasignore).add(DEFAULT_IGNORES).add(SECRET_IGNORES);
+  const v2Config = await loadV2Config(repositoryRoot);
+  const policyMatcher = ignore()
+    .add(codeatlasignore)
+    .add(v2Config.index.exclude)
+    .add(DEFAULT_IGNORES)
+    .add(SECRET_IGNORES);
   const gitMatchers: ScopedMatcher[] = [];
 
   const rules: IgnoreRules = {

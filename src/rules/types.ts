@@ -7,6 +7,7 @@ export interface DomainOverride {
 
 export interface CodeAtlasV2Config {
   version: number;
+  index: { exclude: string[] };
   domains: Record<string, DomainOverride>;
   architecture: { rules: ArchitectureRule[] };
   analysis: {
@@ -19,6 +20,7 @@ export interface CodeAtlasV2Config {
 
 export const DEFAULT_V2_CONFIG: CodeAtlasV2Config = {
   version: 1,
+  index: { exclude: [] },
   domains: {},
   architecture: { rules: [] },
   analysis: { max_call_depth: 8, max_impact_depth: 10 },
