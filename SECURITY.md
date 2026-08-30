@@ -16,6 +16,15 @@ secret-file paths and never stores complete source files. Repository files, comm
 documentation are untrusted input; source snippets exposed over MCP are always
 labeled `untrusted_repository_content`.
 
+`codeatlas build` writes local architecture artifacts that may include bounded source excerpts as
+evidence. `codeatlas.html`, `.codeatlas/current/`, `.codeatlas/snapshots/`, and generated agent
+context should be protected like the source repository and must not be published for a proprietary
+codebase without review.
+
+Core indexing, IR generation, HTML generation, snapshots, rules, review, and deterministic
+`codeatlas ask` retrieval make no network request. No source is sent to an AI provider unless a
+future optional provider is explicitly enabled and documented.
+
 The source tool resolves indexed paths against the current repository root and rejects paths that
 resolve outside it. Source responses are capped by `limits.maxSourceSnippetLines` and
 `limits.maxSourceSnippetBytes`, including protection against a single oversized/minified line.

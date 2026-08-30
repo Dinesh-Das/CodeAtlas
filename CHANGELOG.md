@@ -2,6 +2,37 @@
 
 All notable changes follow semantic versioning.
 
+## Unreleased
+
+### Added
+
+- Added the versioned canonical CodeAtlas IR with deterministic JSON/JSONL exports and first-class
+  source evidence.
+- Added `build`, `update`, `watch`, `diff`, `check`, `review`, `ask`, search/symbol/impact, and
+  snapshot commands.
+- Added a self-contained offline architecture application with bounded multi-level projections,
+  full-graph search, execution flows, function CFGs, impact, Git changes, rules, and review views.
+- Added explicit `.codeatlas.yml` domains and reusable architecture rules with CI failure semantics.
+- Added persistent architecture snapshots, deterministic comparisons, Git hunk-to-symbol mapping,
+  evidence-gated review findings, and canonical-IR MCP tools.
+
+## 0.10.0-beta.3 - 2026-08-29
+
+### Fixed
+
+- Synchronized the npm package version and installed CLI version after the `0.10.0-beta.2`
+  artifact incorrectly reported `0.10.0-beta.1` from `codeatlas --version`.
+- Added prominent npm, source, release, changelog, issue, CI, runtime, and license links that render
+  consistently on both GitHub and npm.
+- Completed npm author and discovery metadata and aligned it with the public GitHub repository.
+
+## 0.10.0-beta.2 - 2026-08-29
+
+### Known issue
+
+- The published package metadata identifies this release as `0.10.0-beta.2`, but the installed
+  CLI reports `0.10.0-beta.1`. Use `0.10.0-beta.3` or newer after it is published.
+
 ## 0.10.0-beta.1 - 2026-08-28
 
 ### Added

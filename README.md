@@ -1,10 +1,35 @@
 # CodeAtlas
 
+[![npm beta version](https://img.shields.io/npm/v/@dinesh-das/codeatlas/beta?label=npm&color=cb3837)](https://www.npmjs.com/package/@dinesh-das/codeatlas)
+[![npm downloads](https://img.shields.io/npm/dm/@dinesh-das/codeatlas?color=cb3837)](https://www.npmjs.com/package/@dinesh-das/codeatlas)
+[![CI](https://github.com/Dinesh-Das/CodeAtlas/actions/workflows/ci.yml/badge.svg)](https://github.com/Dinesh-Das/CodeAtlas/actions/workflows/ci.yml)
+[![Node.js](https://img.shields.io/node/v/@dinesh-das/codeatlas)](https://www.npmjs.com/package/@dinesh-das/codeatlas)
+[![License](https://img.shields.io/github/license/Dinesh-Das/CodeAtlas)](https://github.com/Dinesh-Das/CodeAtlas/blob/main/LICENSE)
+
+[npm package](https://www.npmjs.com/package/@dinesh-das/codeatlas) ·
+[source code](https://github.com/Dinesh-Das/CodeAtlas) ·
+[releases](https://github.com/Dinesh-Das/CodeAtlas/releases) ·
+[changelog](https://github.com/Dinesh-Das/CodeAtlas/blob/main/CHANGELOG.md) ·
+[issues](https://github.com/Dinesh-Das/CodeAtlas/issues)
+
 **Give your AI coding agent a verified, continuously updated map of your codebase.**
 
 CodeAtlas traces architecture, execution, APIs, and data access—and labels every answer as
 verified, inferred, dynamic, or unresolved. It runs locally, follows the working tree, and returns
 file/line evidence instead of asking you to trust a black box.
+
+CodeAtlas also acts as a repository architecture compiler. One command creates a portable,
+self-contained architecture application for developers and a canonical evidence-linked IR for
+agents:
+
+```bash
+codeatlas build .
+```
+
+Generated outputs include `codeatlas.html`, `CODEATLAS.md`, `.codeatlas/current/atlas.json`,
+JSONL symbol/relationship/flow streams, compact agent context, and a persistent architecture
+snapshot. The HTML opens directly from disk and has no CDN or network dependency. It is a view of
+the same versioned IR queried by MCP—not a separate analysis pipeline.
 
 - Trace requests end to end.
 - Understand an unfamiliar architecture.
@@ -205,14 +230,13 @@ shown above. Stable releases will not require the `@beta` dist-tag.
 From any directory inside the Git repository you want to understand:
 
 ```bash
-codeatlas init
-codeatlas overview
-codeatlas setup
+codeatlas build .
 ```
 
-`init` creates the locally ignored `.codeatlas/` workspace and performs the first index. `setup`
-detects supported coding agents and configures their MCP client. `overview` gives an immediate
-architecture summary without an LLM.
+Open `codeatlas.html` to explore repository → domain → entrypoint/flow → file/class → function/CFG
+levels, impact paths, Git changes, rules, and evidence. Run `codeatlas setup` when you also want to
+configure a supported coding agent for MCP. The existing `init`/`index` workflow remains supported
+for compatibility.
 
 ## Development setup
 
@@ -238,6 +262,20 @@ node /absolute/path/to/CodeAtlas/dist/cli/index.js init
 ## Commands
 
 ```text
+codeatlas build [path]            Compile IR, HTML, agent context, and a snapshot
+codeatlas build --bundle          Also create codeatlas/index.html plus codeatlas/data/
+codeatlas update [path]           Incrementally regenerate all architecture artifacts
+codeatlas watch [path]            Regenerate on changes without an IDE extension or server
+codeatlas search <query>          Search the complete canonical graph
+codeatlas symbol <id>             Show one canonical symbol
+codeatlas impact <symbol>         Explain impact with paths and evidence
+codeatlas diff --base <ref>       Map Git hunks to symbols and architectural impact
+codeatlas check [path]            Evaluate rules; fail for error-severity violations
+codeatlas review --base <ref>     Produce deterministic evidence-gated review findings
+codeatlas ask "<question>"        Answer locally from graph facts and evidence
+codeatlas snapshot list           List persistent architecture states
+codeatlas snapshot show <id>      Show one canonical snapshot
+codeatlas snapshot diff <a> <b>   Compare two architecture snapshots
 codeatlas init [path]             Create the workspace and initial structural graph
 codeatlas init --shared-ignore    Deliberately add .codeatlas/ to tracked .gitignore
 codeatlas overview [path]         Print architecture, entrypoints, and hotspots directly
@@ -266,6 +304,19 @@ codeatlas mcp [path]              Start the CodeAtlas MCP server over stdio
 ├── config.json
 ├── manifest.json
 ├── state.json
+├── current/
+│   ├── atlas.json
+│   ├── symbols.jsonl
+│   ├── relationships.jsonl
+│   ├── flows.jsonl
+│   ├── domains.json
+│   ├── impact.json
+│   ├── evidence.json
+│   ├── rules.json
+│   └── review.json
+├── snapshots/<commit-or-worktree-id>/atlas.json
+├── agent/overview.md
+├── cache/
 └── logs/
 ```
 
@@ -328,6 +379,13 @@ The available tools are `codeatlas_status`, `codeatlas_overview`, `codeatlas_sea
 `codeatlas_get_node`, `codeatlas_explain_feature`, `codeatlas_trace`, `codeatlas_impact`,
 `codeatlas_dependencies`, `codeatlas_source`, and `codeatlas_health`. Search and other node facts
 include a stable `node_id` in their statement so a client can pass it to follow-up tools.
+
+The canonical-IR surface additionally provides composable tools including
+`get_repository_overview`, `find_symbol`, `search_symbols`, `get_symbol`, `get_callers`,
+`get_callees`, `get_dependencies`, `get_dependents`, `trace_path`, `analyze_impact`, `get_domain`,
+`list_domains`, `get_entrypoints`, `get_execution_flow`, `get_control_flow`, `get_git_changes`,
+`get_rules`, `get_rule_violations`, `get_evidence`, `get_snapshot`, `compare_snapshots`,
+`get_architecture_diff`, and `review_changes`.
 
 | Tool | Purpose |
 |---|---|
@@ -423,6 +481,43 @@ membership and assigned to the configured feature with explicit `config` evidenc
 }
 ```
 
+Portable compiler views, explicit domains, and architecture rules use an optional tracked
+`.codeatlas.yml`. Explicit domains win over inferred grouping:
+
+```yaml
+version: 1
+
+domains:
+  authentication:
+    include:
+      - src/auth/**
+
+architecture:
+  rules:
+    - id: controllers-must-not-call-repositories
+      severity: error
+      description: Controllers must use services.
+      source:
+        layer: controller
+      forbid:
+        calls:
+          layer: repository
+
+analysis:
+  max_call_depth: 8
+  max_impact_depth: 10
+
+html:
+  mode: single-file
+
+ai:
+  enabled: false
+```
+
+Rule selectors support `kind`, `layer`, `domain`, and `matches_path`; predicates include direct
+`depends_on`, `calls`, and `imports`, bounded `path_to` with `unless_via`, `belongs_to`, and
+`crosses_domain`.
+
 ## Ignore and secret rules
 
 CodeAtlas combines root and nested `.gitignore` files with `.codeatlasignore`. It always
@@ -495,6 +590,11 @@ MCP → Freshness gate → Graph query contracts
 - `src/framework`: optional detection and semantic extraction kept separate from language parsing
 - `src/analysis`: grouping, communities, cycles, coupling, churn, and architecture orchestration
 - `src/mcp`: provider-independent schemas, freshness gate, packets, and stdio server
+- `src/ir`: public versioned models, first-class evidence, normalization, serialization, validation,
+  and SQLite graph projection
+- `src/compiler`: one graph/multiple projections build orchestration
+- `src/export`: deterministic JSON/JSONL, compact Markdown, and self-contained offline HTML
+- `src/rules` and `src/review`: declarative architecture policy and evidence-gated findings
 
 Parser code will not depend on MCP. MCP tools will not parse source. Graph/storage entities do
 not contain Tree-sitter-specific objects.
@@ -506,7 +606,10 @@ isolated to the affected file, recorded for `codeatlas doctor`, and fall back to
 ## Privacy
 
 CodeAtlas has no cloud account, remote database, telemetry, API key, or network upload path.
-It does not call an LLM. MCP source-evidence responses may be sent elsewhere by the user's
+It does not call an LLM. `codeatlas ask` is deterministic graph/evidence retrieval unless a future
+provider is explicitly configured. Generated HTML, snapshots, and IR remain local but can contain
+bounded source excerpts used as evidence, so treat them with the same confidentiality as the
+repository. MCP source-evidence responses may be sent elsewhere by the user's
 configured MCP host/model; that is separate from CodeAtlas itself, and snippets are labeled as
 untrusted repository content.
 
@@ -523,9 +626,11 @@ are in use, then retry from a clean npm cache.
 
 ## Project status
 
-All eight revised implementation phases and the MVP acceptance contract are complete. Possible
-post-MVP distribution work includes Homebrew, standalone binaries, and Windows package-manager
-support; npm remains the primary distribution.
+CodeAtlas is in public beta and is distributed through the
+[official npm package](https://www.npmjs.com/package/@dinesh-das/codeatlas). Possible future
+distribution work includes Homebrew, standalone binaries, and Windows package-manager support.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [RELEASING.md](RELEASING.md),
-[SECURITY.md](SECURITY.md), and [CHANGELOG.md](CHANGELOG.md).
+See the [contribution guide](https://github.com/Dinesh-Das/CodeAtlas/blob/main/CONTRIBUTING.md),
+[release process](https://github.com/Dinesh-Das/CodeAtlas/blob/main/RELEASING.md),
+[security policy](https://github.com/Dinesh-Das/CodeAtlas/blob/main/SECURITY.md), and
+[changelog](https://github.com/Dinesh-Das/CodeAtlas/blob/main/CHANGELOG.md).
