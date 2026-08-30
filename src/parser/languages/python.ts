@@ -138,10 +138,14 @@ function callableAssignmentSignature(name: string, value: SyntaxNode): string {
 export const pythonAdapter: LanguageAdapter = {
   language: "python",
   version: "python-tree-sitter-2@0.23.4",
+  engine: "tree-sitter",
+
+  createSyntaxTree(content: string): SyntaxNode {
+    return createTree(PythonLanguage, content).rootNode;
+  },
 
   parseFile(input: ParseInput): ParsedFile {
-    const tree = createTree(PythonLanguage, input.content);
-    const root = tree.rootNode;
+    const root = this.createSyntaxTree(input.content);
     const builder = new ParseGraphBuilder(input, root);
     const generated = generatedSource(input);
     const moduleScope: Scope = {

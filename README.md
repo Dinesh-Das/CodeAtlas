@@ -529,6 +529,23 @@ Rule selectors support `kind`, `layer`, `domain`, and `matches_path`; predicates
 `depends_on`, `calls`, and `imports`, bounded `path_to` with `unless_via`, `belongs_to`, and
 `crosses_domain`.
 
+## Language and framework adapters
+
+Source-language analysis uses Tree-sitter as the common parser baseline. Built-in adapters cover
+TypeScript, TSX, JavaScript, JSX, and Python. Each language adapter owns both structural extraction
+and syntax-tree creation, so downstream analyses such as control-flow generation reuse the same
+language adapter instead of maintaining a second grammar switch.
+
+Language adapters are registered through `registerLanguageAdapter(...)`; framework adapters use
+`registerFrameworkAdapter(...)`. Both registries reject accidental duplicate registration, support
+explicit temporary replacement, and restore the previous adapter when the replacement is removed.
+Framework extensions can detect a supported framework and contribute routes, models, supporting
+nodes, relationships, and unresolved references without replacing the generic AST analysis.
+
+Current framework adapters prioritize the repository's existing supported surface: Express,
+Fastify, FastAPI, Prisma, and SQLAlchemy. Additional frameworks can be added through the same
+contract without changing the compiler pipeline.
+
 ## Ignore and secret rules
 
 CodeAtlas combines root and nested `.gitignore` files with `.codeatlasignore` and

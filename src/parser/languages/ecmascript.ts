@@ -244,6 +244,7 @@ function callableVariableSignature(name: string, value: SyntaxNode): string {
 export class EcmaScriptAdapter implements LanguageAdapter {
   readonly language: string;
   readonly version: string;
+  readonly engine = "tree-sitter" as const;
   private readonly grammar: unknown;
 
   constructor(options: EcmaScriptAdapterOptions) {
@@ -252,9 +253,12 @@ export class EcmaScriptAdapter implements LanguageAdapter {
     this.grammar = options.grammar;
   }
 
+  createSyntaxTree(content: string): SyntaxNode {
+    return createTree(this.grammar, content).rootNode;
+  }
+
   parseFile(input: ParseInput): ParsedFile {
-    const tree = createTree(this.grammar, input.content);
-    const root = tree.rootNode;
+    const root = this.createSyntaxTree(input.content);
     const builder = new ParseGraphBuilder(input, root);
     const generated = generatedSource(input);
     const moduleScope: Scope = {

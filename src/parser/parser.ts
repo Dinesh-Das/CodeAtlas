@@ -4,6 +4,7 @@ import type {
   ProvenanceCategory,
   SourceType,
 } from "../graph/types.js";
+import type { SyntaxNode } from "./tree-sitter.js";
 
 export interface ParseInput {
   repositoryId: string;
@@ -71,5 +72,11 @@ export interface ParseDiagnostic {
 export interface LanguageAdapter {
   readonly language: string;
   readonly version: string;
+  readonly engine: "tree-sitter";
+  /**
+   * Exposes the adapter's syntax tree so downstream analyses such as CFG generation
+   * do not need their own language/grammar switch statements.
+   */
+  createSyntaxTree(content: string): SyntaxNode;
   parseFile(input: ParseInput): ParsedFile;
 }

@@ -24,9 +24,12 @@ export function registerFrameworkAdapter(
   if (adapters.has(adapter.name) && options.replace !== true) {
     throw new Error(`Framework adapter ${adapter.name} is already registered.`);
   }
+  const previous = adapters.get(adapter.name);
   adapters.set(adapter.name, adapter);
   return () => {
-    if (adapters.get(adapter.name) === adapter) adapters.delete(adapter.name);
+    if (adapters.get(adapter.name) !== adapter) return;
+    if (previous === undefined) adapters.delete(adapter.name);
+    else adapters.set(adapter.name, previous);
   };
 }
 
@@ -146,5 +149,5 @@ export function mergeFrameworkGraph(
 }
 
 export function availableFrameworkAdapters(): readonly FrameworkAdapter[] {
-  return [...adapters.values()];
+  return [...adapters.values()].sort((left, right) => left.name.localeCompare(right.name));
 }

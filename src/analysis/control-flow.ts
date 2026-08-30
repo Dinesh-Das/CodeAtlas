@@ -1,8 +1,5 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import JavaScriptLanguage from "tree-sitter-javascript";
-import PythonLanguage from "tree-sitter-python";
-import TypeScriptLanguages from "tree-sitter-typescript";
 import { sha256 } from "../core/hashing.js";
 import type {
   Atlas,
@@ -10,17 +7,10 @@ import type {
   ControlFlowNode,
   ControlFlowNodeKind,
 } from "../ir/models.js";
-import { createTree, type SyntaxNode } from "../parser/tree-sitter.js";
+import { getLanguageAdapter } from "../parser/registry.js";
+import type { SyntaxNode } from "../parser/tree-sitter.js";
 
 const FUNCTION_KINDS = new Set(["function", "method"]);
-
-function grammar(language: string | null): unknown | null {
-  if (language === "typescript") return TypeScriptLanguages.typescript;
-  if (language === "tsx") return TypeScriptLanguages.tsx;
-  if (language === "javascript" || language === "jsx") return JavaScriptLanguage;
-  if (language === "python") return PythonLanguage;
-  return null;
-}
 
 function cfgKind(type: string): ControlFlowNodeKind | null {
   if (/^(?:if_statement|conditional_expression)$/u.test(type)) return "CONDITION";
@@ -93,9 +83,9 @@ export async function buildControlFlows(
     }
     let root = trees.get(file);
     if (root === undefined) {
-      const selectedGrammar = grammar(symbol.language);
-      if (selectedGrammar === null) continue;
-      root = createTree(selectedGrammar, source).rootNode;
+      const adapter = getLanguageAdapter(symbol.language as Parameters<typeof getLanguageAdapter>[0]);
+      if (adapter === null) continue;
+      root = adapter.createSyntaxTree(source);
       trees.set(file, root);
     }
     const syntax = containingFunction(
