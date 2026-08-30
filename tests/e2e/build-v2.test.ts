@@ -6,7 +6,7 @@ import { buildRepository } from "../../src/compiler/build.js";
 import { runGit } from "../../src/git/repository.js";
 import { compareSnapshots } from "../../src/git/snapshots.js";
 import { workspacePaths } from "../../src/core/workspace.js";
-import { evidenceIr, findSymbolIr, flowIr, impactIr } from "../../src/mcp/ir-tools.js";
+import { callersIr, evidenceIr, findSymbolIr, flowIr, impactIr } from "../../src/mcp/ir-tools.js";
 import { ensureFreshIndex } from "../../src/mcp/freshness.js";
 import { statusPacket } from "../../src/mcp/repository-tools.js";
 import type { Atlas } from "../../src/ir/models.js";
@@ -47,6 +47,26 @@ describe("codeatlas build v2", () => {
     expect(atlas.domains.some((domain) => domain.name === "authentication" && domain.label_provenance === "USER_DEFINED")).toBe(true);
     expect(atlas.flows.some((flow) => flow.steps.length > 1)).toBe(true);
     const authenticate = atlas.symbols.find((symbol) => symbol.qualified_name === "authenticate");
+    expect(authenticate).toBeDefined();
+    const authentication = atlas.domains.find((domain) => domain.name === "authentication")!;
+    const endpoint = atlas.symbols.find((symbol) =>
+      symbol.kind === "endpoint" && symbol.metadata.http_method === "POST" && symbol.name === "POST login",
+    )!;
+    const loginFlow = atlas.flows.find((flow) => flow.entrypoint_id === endpoint.id)!;
+    const loginFlowSymbols = loginFlow.steps.map((step) => atlas.symbols.find((symbol) => symbol.id === step.symbol_id)!);
+    const authFile = atlas.symbols.find((symbol) => symbol.kind === "file" && symbol.file === authenticate?.file)!;
+
+    expect(loginFlowSymbols.slice(0, 3).map((symbol) => [symbol.file, symbol.qualified_name])).toEqual([
+      ["src/app.ts", endpoint.qualified_name],
+      ["src/app.ts", "login"],
+      ["src/auth/controller.ts", "login"],
+    ]);
+    expect(loginFlowSymbols.some((symbol) => symbol.file === "src/auth/service.ts" && symbol.qualified_name === "authenticate")).toBe(true);
+    expect(loginFlowSymbols.some((symbol) => symbol.file === "src/auth/repository.ts" && symbol.qualified_name === "findUserRepository")).toBe(true);
+    expect(authentication.member_ids).toContain(authenticate!.id);
+    expect(loginFlow.steps.some((step) => step.symbol_id === authenticate!.id)).toBe(true);
+    expect(authFile.id).toBeDefined();
+
     const authenticateCfg = atlas.control_flows.find((flow) => flow.symbol_id === authenticate?.id);
     expect(authenticateCfg?.nodes.map((node) => node.kind))
       .toEqual(expect.arrayContaining(["START", "CONDITION", "LOOP", "TRY", "CATCH", "RETURN", "RAISE", "END"]));
@@ -61,14 +81,21 @@ describe("codeatlas build v2", () => {
       .toEqual(expect.arrayContaining(["true", "false", "body", "exit", "repeat", "try", "catch", "return", "raise"]));
     expect(atlas.rule_violations.some((item) => item.rule_id === "controllers-must-not-call-repositories")).toBe(true);
     expect(atlas.review_findings.every((finding) => finding.evidence_ids.length > 0)).toBe(true);
-    const endpoint = atlas.symbols.find((symbol) => symbol.kind === "endpoint")!;
-    const [found, impact, execution, evidence] = await Promise.all([
+    const [found, callers, impact, execution, evidence] = await Promise.all([
       findSymbolIr(root, "authenticate", 10),
+      callersIr(root, authenticate!.id, 100),
       impactIr(root, "authenticate", 8, 100),
       flowIr(root, endpoint.id),
       evidenceIr(root, "authenticate"),
     ]);
-    expect(found.results.some((symbol) => symbol.qualified_name === "authenticate")).toBe(true);
+    expect(found.results.find((symbol) => symbol.id === authenticate!.id)).toEqual(authenticate);
+    const canonicalCallerRelationships = atlas.relationships.filter((relationship) =>
+      relationship.target === authenticate!.id && ["CALLS", "HANDLES", "TRIGGERS", "MAY_CONTINUE_TO"].includes(relationship.type),
+    );
+    expect(callers.relationships).toEqual(canonicalCallerRelationships);
+    expect(callers.callers.map((symbol) => symbol.id).sort()).toEqual(
+      canonicalCallerRelationships.map((relationship) => relationship.source).sort(),
+    );
     expect(impact.paths.length).toBeGreaterThan(0);
     expect(impact.direct_callers.length).toBeGreaterThan(0);
     expect(impact.direct_dependencies.length).toBeGreaterThan(0);
@@ -83,8 +110,11 @@ describe("codeatlas build v2", () => {
     expect(impact.score?.components.database_schema).toBeDefined();
     expect(impact.score?.components.missing_test_coverage).toBeDefined();
     expect(impact.score?.components.architecture_rules).toBeDefined();
-    expect(execution.flow?.steps).toEqual(atlas.flows.find((flow) => flow.entrypoint_id === endpoint.id)?.steps);
-    expect(evidence.evidence.length).toBeGreaterThan(0);
+    expect(execution.flow).toEqual(loginFlow);
+    expect(evidence.symbol).toEqual(authenticate);
+    expect(evidence.evidence).toEqual(
+      atlas.evidence.filter((item) => authenticate!.evidence_ids.includes(item.id)),
+    );
     const html = await readFile(first.htmlPath, "utf8");
     expect(html).toContain('id="atlas-data"');
     expect(html).toContain('id="projection-data"');
@@ -98,6 +128,10 @@ describe("codeatlas build v2", () => {
     expect(html).toContain("Show hubs");
     expect(html).toContain("rendering budget");
     expect(html).toContain("hierarchyCrumbs");
+    expect(html).toContain(authentication.id);
+    expect(html).toContain(endpoint.id);
+    expect(html).toContain(authFile.id);
+    expect(html).toContain(authenticate!.id);
     expect(html).toContain("deterministic");
     expect(html).toContain("Edges preserve branch labels");
     expect(html).toContain("Architecture-rule status");
