@@ -1,11 +1,17 @@
-# CodeAtlas v2 implementation plan
+# CodeAtlas v2 implementation and release audit
+
+This document began as the Phase 0 implementation plan. It is now the final implementation record
+for the completed v2 architecture compiler work. The original architectural intent is preserved
+where useful, but status statements below describe the implemented repository rather than the
+pre-implementation baseline.
 
 ## 1. Current architecture
 
 CodeAtlas 0.10 is a local TypeScript/Node.js application with a mature incremental indexing core:
 
-- `src/cli` uses Commander and currently exposes `init`, `index`, `overview`, `status`, `setup`,
-  `doctor`, `mcp`, and `clean`.
+- `src/cli` uses Commander and exposes the v2 `build`, `update`, `watch`, `ask`, `search`, `symbol`,
+  `impact`, `diff`, `check`, `review`, and `snapshot` surfaces alongside compatibility commands
+  `init`, `index`, `overview`, `status`, `setup`, `doctor`, `mcp`, and `clean`.
 - `src/core` owns repository discovery support, nested Git ignore handling, safe workspace paths,
   content hashing, freshness, configuration, locking, and performance telemetry.
 - `src/parser` uses Tree-sitter adapters for TypeScript, TSX, JavaScript, JSX, and Python. Parsers
@@ -29,18 +35,22 @@ CodeAtlas 0.10 is a local TypeScript/Node.js application with a mature increment
 - Tests cover parser snapshots, framework extraction, TypeScript resolution, incremental deletion
   and rename behavior, architecture analysis, search, MCP accuracy, and compiled CLI/MCP behavior.
 
-The current data flow is:
+The production data flow is:
 
 ```text
-repository -> Tree-sitter/framework adapters -> incremental graph resolver -> SQLite
-                                                               |              |
-                                                               v              v
-                                                       architecture analysis  MCP/CLI
+repository -> Tree-sitter/framework adapters -> incremental graph resolver -> SQLite cache
+                                                               |
+                                                               v
+                                                     canonical CodeAtlas IR
+                                                       |       |       |
+                                                       v       v       v
+                                                    HTML    MCP/CLI snapshots
 ```
 
-SQLite is currently the authoritative runtime store, but there is no stable portable IR export,
-offline architecture application, snapshot contract, rule engine, structured flow/CFG model, or
-single `build` command.
+SQLite remains the local incremental compiler cache and query store. The portable product contract
+is the versioned canonical IR exported under `.codeatlas/current`; the offline HTML application,
+snapshots, architecture rules, structured flows/CFGs, impact indexes, review data, and agent/MCP
+surfaces all consume that shared architecture model.
 
 ## 2. Existing components to reuse
 
@@ -59,32 +69,32 @@ The v2 compiler will reuse the following rather than replace them:
 - SQLite as a local compiler cache/query store. It remains an implementation detail and optional
   high-performance adapter; exported CodeAtlas IR becomes the portable product contract.
 
-## 3. Technical debt and blockers
+## 3. Resolved migration risks and remaining boundaries
 
-- Graph IDs are stable hashes and therefore compatible, but not human-readable. The IR will retain
-  them as canonical compatibility IDs and expose qualified names/locations for human navigation.
-- Evidence is embedded in node/edge metadata and MCP packets rather than stored as first-class
-  canonical entities. It must be deduplicated, assigned stable IDs, and reference-validated.
-- Provenance vocabularies use lower-case source/provenance categories; the IR needs the explicit
-  compiler-facing `AST`, `STATIC_ANALYSIS`, `CONFIG`, `GIT`, `HEURISTIC`, `EMBEDDING`, `LLM`, and
-  `USER_DEFINED` contract without losing existing detail.
-- The workspace layout (`atlas.db`, `manifest.json`, `state.json`) predates `.codeatlas/current/`
-  and snapshots. Compatibility files must remain readable during migration.
-- `init` and `index` remain separate compatibility commands while `build` composes initialization,
-  incremental indexing, compilation, exports, and snapshots. Repository discovery now supports both
-  Git worktrees and ordinary filesystem directories; Git-only history/diff capabilities remain
-  conditional on Git being available.
-- Domain configuration is JSON feature overrides, not `.codeatlas.yml` domain/rule configuration.
-- Existing MCP trace/impact tools operate on the same graph but do not yet expose every v2
-  task-specific name (flows, CFG, snapshots, rules, review).
-- Control-flow graphs, architecture rules, deterministic review findings, and snapshot comparisons
-  require new canonical analysis modules.
-- Rendering thousands of raw nodes would be unusable. HTML must render bounded projections and
-  retain a complete search index rather than eagerly instantiating the full graph.
+The Phase 0 blockers were addressed incrementally without replacing the proven indexer:
 
-No Neo4j, Qdrant, cloud database, GraphRAG service, external LLM, Docker runtime, or IDE extension
-exists in this revision, so none is a migration prerequisite. Optional enrichers can be added later
-as consumers of the IR.
+- Stable graph identities are retained as canonical compatibility IDs while IR symbols also expose
+  qualified names, locations, language, signatures, and navigation metadata.
+- Evidence is first-class, deduplicated, deterministically identified, and cross-reference validated.
+  AI answers and review findings pass through the same grounding validator.
+- Canonical provenance/fact classes distinguish deterministic extraction and resolution from
+  configuration, Git, heuristic, embedding, LLM, and user-defined facts where applicable.
+- `.codeatlas/current`, snapshots, cache paths, manifests, and v1 compatibility paths coexist.
+- `build` composes repository discovery, incremental indexing, IR compilation, exports, rules, and
+  snapshots; `update` and `watch` reuse the same compiler path.
+- `.codeatlas.yml` supports explicit domain overrides, architecture rules, analysis budgets, HTML
+  output mode, and AI configuration. Explicit configuration wins over inferred grouping.
+- The canonical IR-backed MCP surface exposes symbols, callers, impact, flows, CFGs, domains,
+  evidence, rules, review findings, snapshots, and comparisons while preserving existing tools.
+- CFGs, flow analysis, impact paths, architecture rules, review findings, and snapshot comparison are
+  canonical deterministic projections rather than browser-only analysis.
+- Large repositories use shared bounded projections/aggregation with complete search coverage instead
+  of eagerly rendering every symbol.
+
+Intentional boundaries remain: Git history, base/head architecture diffs, rename-history assistance,
+and PR-oriented review require Git. Optional hosted AI/semantic enrichers are not prerequisites for
+core indexing or the generated architecture report. No IDE extension, mandatory web server, CDN,
+cloud database, Docker runtime, or external LLM is required for the core v2 workflow.
 
 ## 4. Proposed canonical IR
 
@@ -136,45 +146,50 @@ SQLite graph/cache
 | New `src/git/snapshots.ts` | Persistent architecture states and deterministic comparisons |
 | New `src/review/*` | Diff + impact + rule-derived findings and AI evidence gating |
 
-## 6. Exact files/modules to add or change
+## 6. Implemented module map
 
-Initial implementation:
+The implementation added or extended the following areas:
 
-- Add `src/ir/models.ts`, `schema.ts`, `evidence.ts`, `serialization.ts`, `validation.ts`, and
-  `loader.ts`.
-- Add `src/compiler/build.ts` as the canonical compiler pipeline.
-- Add `src/analysis/flows.ts`, `control-flow.ts`, `impact.ts`, and `simplification.ts`.
-- Add `src/export/json.ts`, `markdown.ts`, and `html.ts`.
-- Add `src/git/snapshots.ts` and `src/git/architecture-diff.ts`.
-- Add `src/rules/types.ts`, `config.ts`, and `engine.ts`.
-- Add `src/review/review.ts` and `src/review/evidence-validation.ts`.
-- Add CLI command modules for build/update/watch, diff, check, review, snapshot, search/symbol,
+- `src/ir/models.ts`, `schema.ts`, `evidence.ts`, `serialization.ts`, `validation.ts`, `loader.ts`, and
+  evidence validation provide the public canonical model and grounding contract.
+- `src/compiler/build.ts` is the canonical compiler pipeline.
+- `src/analysis/flows.ts`, `control-flow.ts`, `impact.ts`, and `simplification.ts` provide shared IR
+  projections.
+- `src/export/*` produces canonical structured exports, Markdown agent context, self-contained HTML,
+  and sharded bundle output.
+- `src/git/snapshots.ts` and `src/git/architecture-diff.ts` provide persistent states and comparisons.
+- `src/rules/*` provides declarative configuration, predicates, violations, and CI semantics.
+- `src/review/*` provides deterministic architecture review plus evidence validation.
+- CLI command modules provide build/update/watch, diff, check, review, snapshot, search/symbol,
   and impact; register them in `src/cli/index.ts`.
-- Extend `src/core/workspace.ts` with `current`, `snapshots`, `cache`, and agent export paths while
+- `src/core/workspace.ts` exposes `current`, `snapshots`, `cache`, and agent export paths while
   preserving V1 paths.
-- Extend MCP schemas/server with v2 IR-backed aliases and new flow/evidence/snapshot/rule tools.
-- Add end-to-end fixture repositories and acceptance tests for IR exports, offline HTML, flows,
+- MCP schemas/server include v2 IR-backed tools for flow/evidence/snapshot/rule/review operations.
+- End-to-end fixture repositories and acceptance tests cover IR exports, offline HTML, flows,
   CFGs, impact paths, rules, snapshots, and bounded rendering.
-- Update README/security/release documentation only after behavior is implemented and verified.
+- README, security/privacy guidance, release checks, package smoke coverage, and benchmarks describe
+  the verified behavior.
 
 ## 7. Implementation phases
 
-1. Canonical IR, first-class evidence, deterministic serialization, and validation.
-2. `build`/`update` compiler orchestration and `.codeatlas/current` exports.
-3. Offline single-file HTML and bounded multi-level projections.
-4. Deterministic domains, structured execution flows, CFGs, and impact indexes.
-5. Base/head Git overlays and persistent snapshot comparison.
-6. Architecture rule engine, CI exit semantics, and deterministic review findings.
-7. Complete IR-backed MCP surface and compact agent context exports.
-8. Large-graph budgets, performance instrumentation, fixtures, privacy documentation, and release
-   hardening.
+All planned compiler slices are complete:
+
+1. Complete — canonical IR, first-class evidence, deterministic serialization, and validation.
+2. Complete — `build`/`update`/`watch` compiler orchestration and `.codeatlas/current` exports.
+3. Complete — offline single-file HTML, bundle mode, and bounded multi-level projections.
+4. Complete — deterministic domains, structured execution flows, CFGs, and impact indexes.
+5. Complete — base/head Git overlays, changed-line symbol mapping, and snapshot comparison.
+6. Complete — architecture rule engine, CI exit semantics, and deterministic review findings.
+7. Complete — IR-backed MCP/agent surface, compact context exports, and evidence-grounded answers.
+8. Complete — large-graph budgets, phase-level performance instrumentation, fixtures, privacy
+   documentation, deterministic/reproducibility tests, and release/package hardening.
 
 Compatibility is maintained throughout: V1 `init`, `index`, SQLite, setup, and current MCP tools
 continue to work while v2 commands and artifacts are added incrementally.
 
 ## Implementation status
 
-The first production compiler slice is implemented:
+The production v2 compiler and all required public-release slices are implemented:
 
 - Versioned canonical IR, deterministic sorting, stable compatibility IDs, first-class evidence,
   provenance/fact classes, content hashes, and cross-reference validation.
@@ -217,3 +232,51 @@ Git history, base/head architecture diffs, rename-history assistance, and PR-ori
 Git-only by design. Core indexing, canonical IR generation, HTML/agent exports, rules, impact,
 domains, flows, CFGs, review over the current tree, and snapshots work in filesystem mode without
 fabricating Git commits or `.git` evidence.
+
+## Public-release Definition of Done
+
+The original task's release checklist is satisfied by the implemented command surface, canonical IR
+pipeline, fixtures, and acceptance/release tests:
+
+| Requirement | Status | Implementation / verification |
+|---|---|---|
+| One-command repository build works | Complete | `codeatlas build [path]` compiles IR, exports, HTML, and snapshot. |
+| Incremental indexing works | Complete | Content-hash reuse, semantic invalidation, deletion/rename cleanup, and incremental acceptance coverage. |
+| Portable interactive HTML works offline | Complete | Self-contained `codeatlas.html` with no required CDN/network calls. |
+| Canonical versioned IR exists | Complete | `src/ir/*` plus `.codeatlas/current/atlas.json` and JSON/JSONL projections. |
+| Multi-level architecture drill-down works | Complete | Repository/domain/entrypoint/file-symbol/function-CFG projections with bounded navigation. |
+| Domains/features are detected and overridable | Complete | Deterministic grouping plus `.codeatlas.yml` overrides. |
+| Sequence diagrams work | Complete | Structured evidence-bearing entrypoint flows rendered from canonical IR. |
+| Function CFGs work | Complete | Bounded AST-derived CFG nodes/edges with source evidence. |
+| Symbol impact analysis works with explanatory paths | Complete | Forward/reverse impact indexes, paths, reasons, affected architecture, and explainable scoring. |
+| Git base/head diff works | Complete | `codeatlas diff --base ... --head ...` builds/ref-compares canonical states and maps hunks to symbols. |
+| Change overlays appear in HTML | Complete | Changes view carries labeled changed/impacted architecture projections. |
+| Architecture rules work | Complete | Declarative `.codeatlas.yml` rules and evidence-bearing violations. |
+| CI-friendly rule failure codes work | Complete | `codeatlas check` exits non-zero for configured error violations. |
+| MCP exposes the architecture model | Complete | Canonical IR tools expose symbols, callers, impact, flows, CFG, domains, evidence, rules, review, and snapshots. |
+| AI answers contain validated evidence | Complete | `codeatlas ask` uses the shared canonical grounding validator and emits only supported claims. |
+| Code review uses diff + architecture impact | Complete | Review composes Git change mapping, impact, rules, and evidence-backed findings. |
+| Unsupported AI findings are rejected | Complete | Invalid/missing/stale evidence is rejected before answer/review publication. |
+| Snapshots persist per Git state | Complete | Commit/worktree architecture states are written under `.codeatlas/snapshots`. |
+| Snapshot comparisons work | Complete | CLI/MCP snapshot comparison uses deterministic architecture diffs. |
+| Large repositories use aggregation instead of graph spaghetti | Complete | Shared LOD budgets, domain/module aggregation, utility-hub handling, and 5,000-symbol tests. |
+| HTML search covers the complete graph | Complete | Search index includes hidden/non-rendered symbols and rich architecture metadata. |
+| No mandatory CDN/network dependency exists | Complete | Offline report is locally generated and self-contained; bundle mode also uses local assets/data. |
+| Core indexing works with AI disabled | Complete | Parsing, graph construction, IR, analysis, rules, HTML, snapshots, and MCP are deterministic/local. |
+| Tests cover the complete fixture workflow | Complete | End-to-end Authentication/Payments/Users fixture plus CLI/MCP/offline/incremental/diff/rule/CFG/impact/LOD tests. |
+| Documentation explains privacy and optional external AI usage | Complete | README/security guidance documents local-first defaults and external-AI boundaries. |
+
+## Final audit evidence
+
+- `npm run release:check` passes the full check pipeline, package creation, disposable consumer
+  installation, and installed CLI smoke test.
+- The verified suite passes 31/31 test files and 124/124 tests, including deterministic structural
+  IR, local-first privacy, evidence-gated AI, canonical workflow, CLI, package, adapter, and scale
+  acceptance coverage.
+- `npm run benchmark` smoke profile completes successfully. It exercises cold indexing, unchanged and
+  targeted incremental updates, high-fan-out invalidation, warm search, freshness-aware queries, and
+  phase-level timing/memory telemetry.
+- Structural output determinism is tested independently from timestamp-bearing manifest/snapshot
+  metadata.
+- Release verification does not require an external AI provider, hosted graph/vector database,
+  Docker, web server, IDE extension, CDN, or network connection for the generated HTML.
