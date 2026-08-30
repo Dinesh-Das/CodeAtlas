@@ -187,6 +187,10 @@ The first production compiler slice is implemented:
   snapshot evolution covering domains, dependencies, APIs, dependency cycles, centrality changes,
   and introduced/resolved rule violations. Explicit `.codeatlas.yml` domains, reusable rule
   predicates, CI exit behavior, and deterministic evidence-gated review findings are also supported.
+  `depends_on` evaluates direct architectural dependency edges such as calls/imports/references and
+  excludes structural/history projections such as containment, exports, memberships, route-prefix
+  composition, and rename history. Rule-path evaluation keeps alternate paths independent so an
+  allowed `unless_via` route cannot hide a separate violating route.
 - Canonical-IR MCP tools and deterministic evidence-grounded `ask` answers.
 - End-to-end Authentication/Payments/Users fixture coverage plus offline, incremental, rule, flow,
   CFG, impact, snapshot, Git mapping, MCP parity, and 5,000-symbol LOD tests.

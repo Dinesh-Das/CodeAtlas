@@ -1,6 +1,15 @@
 import { sha256 } from "../core/hashing.js";
 import type { ArchitectureRule, Atlas, AtlasRelationship, AtlasSymbol, RuleViolation } from "../ir/models.js";
 
+const NON_DEPENDENCY_EDGES = new Set([
+  "CONTAINS",
+  "EXPORTS",
+  "BELONGS_TO_FEATURE",
+  "BELONGS_TO_DOMAIN",
+  "RENAMED_FROM",
+  "ROUTE_PREFIX",
+]);
+
 function layer(symbol: AtlasSymbol): string | null {
   const value = `${symbol.qualified_name ?? ""} ${symbol.file ?? ""} ${symbol.name}`.toLocaleLowerCase();
   for (const candidate of ["controller", "service", "repository", "model", "api", "worker", "test"] as const) {
@@ -47,9 +56,14 @@ function violation(rule: ArchitectureRule, source: AtlasSymbol, target: AtlasSym
   };
 }
 
-function directViolations(atlas: Atlas, rule: ArchitectureRule, type: string, selector: Record<string, string>): RuleViolation[] {
+function directViolations(
+  atlas: Atlas,
+  rule: ArchitectureRule,
+  matchesRelationship: (edge: AtlasRelationship) => boolean,
+  selector: Record<string, string>,
+): RuleViolation[] {
   const symbols = new Map(atlas.symbols.map((symbol) => [symbol.id, symbol]));
-  return atlas.relationships.filter((edge) => edge.type === type).flatMap((edge) => {
+  return atlas.relationships.filter(matchesRelationship).flatMap((edge) => {
     const source = symbols.get(edge.source);
     const target = symbols.get(edge.target);
     return source !== undefined && target !== undefined &&
@@ -63,7 +77,7 @@ function pathViolations(atlas: Atlas, rule: ArchitectureRule, selector: Record<s
   const symbols = new Map(atlas.symbols.map((symbol) => [symbol.id, symbol]));
   const outgoing = new Map<string, AtlasRelationship[]>();
   for (const edge of atlas.relationships) {
-    if (["CONTAINS", "EXPORTS", "BELONGS_TO_DOMAIN", "BELONGS_TO_FEATURE"].includes(edge.type)) continue;
+    if (NON_DEPENDENCY_EDGES.has(edge.type)) continue;
     const edges = outgoing.get(edge.source) ?? [];
     edges.push(edge);
     outgoing.set(edge.source, edges);
@@ -71,14 +85,12 @@ function pathViolations(atlas: Atlas, rule: ArchitectureRule, selector: Record<s
   const unless = targetSelector(rule.forbid.unless_via);
   const results: RuleViolation[] = [];
   for (const source of atlas.symbols.filter((symbol) => matchesSelector(atlas, symbol, rule.source))) {
-    const queue = [{ id: source.id, path: [] as AtlasRelationship[] }];
-    const visited = new Set([source.id]);
+    const queue = [{ id: source.id, path: [] as AtlasRelationship[], visited: new Set([source.id]) }];
     while (queue.length > 0) {
       const current = queue.shift()!;
       if (current.path.length >= 12) continue;
       for (const edge of outgoing.get(current.id) ?? []) {
-        if (visited.has(edge.target)) continue;
-        visited.add(edge.target);
+        if (current.visited.has(edge.target)) continue;
         const target = symbols.get(edge.target);
         if (target === undefined) continue;
         const nextPath = [...current.path, edge];
@@ -90,7 +102,7 @@ function pathViolations(atlas: Atlas, rule: ArchitectureRule, selector: Record<s
           results.push(violation(rule, source, target, nextPath));
           break;
         }
-        queue.push({ id: target.id, path: nextPath });
+        queue.push({ id: target.id, path: nextPath, visited: new Set([...current.visited, target.id]) });
       }
     }
   }
@@ -105,14 +117,18 @@ export function evaluateArchitectureRules(atlas: Atlas, rules: readonly Architec
     for (const [predicate, rawSelector] of Object.entries(forbid)) {
       const selector = targetSelector(rawSelector);
       if (selector === null) continue;
-      if (predicate === "depends_on") results.push(...directViolations(atlas, rule, "DEPENDS_ON", selector));
-      else if (predicate === "calls") results.push(...directViolations(atlas, rule, "CALLS", selector));
-      else if (predicate === "imports") results.push(...directViolations(atlas, rule, "IMPORTS", selector));
+      if (predicate === "depends_on") {
+        results.push(...directViolations(atlas, rule, (edge) => !NON_DEPENDENCY_EDGES.has(edge.type), selector));
+      } else if (predicate === "calls") {
+        results.push(...directViolations(atlas, rule, (edge) => edge.type === "CALLS", selector));
+      } else if (predicate === "imports") {
+        results.push(...directViolations(atlas, rule, (edge) => edge.type === "IMPORTS", selector));
+      }
       else if (predicate === "path_to") results.push(...pathViolations(atlas, rule, selector));
     }
     if (forbid.crosses_domain === true) {
       for (const edge of atlas.relationships) {
-        if (["CONTAINS", "EXPORTS", "BELONGS_TO_DOMAIN", "BELONGS_TO_FEATURE"].includes(edge.type)) continue;
+        if (NON_DEPENDENCY_EDGES.has(edge.type)) continue;
         const source = symbols.get(edge.source);
         const target = symbols.get(edge.target);
         if (source === undefined || target === undefined || !matchesSelector(atlas, source, rule.source)) continue;

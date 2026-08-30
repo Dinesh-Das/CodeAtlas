@@ -104,4 +104,29 @@ describe("compiled CLI", () => {
 
     expect((await repository.git("rev-parse", "HEAD")).trim()).toBe(base);
   }, 90_000);
+
+  it("returns a non-zero exit code for blocking architecture rules", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write("src/index.ts", "export const ready = true;\n");
+    await repository.write(".codeatlas.yml", [
+      "version: 1",
+      "architecture:",
+      "  rules:",
+      "    - id: no-index-source",
+      "      severity: error",
+      "      source:",
+      "        matches_path: src/index.ts",
+      "      forbid:",
+      "        matches_path: src/index.ts",
+      "",
+    ].join("\n"));
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "fixture");
+
+    await expect(runCli("check", repository.root)).rejects.toMatchObject({
+      code: 1,
+      stdout: expect.stringContaining("[ERROR]"),
+    });
+  }, 30_000);
 });
