@@ -11,9 +11,11 @@ real credentials and proprietary source from the report.
 
 ## Security model
 
-CodeAtlas is local-first and performs no telemetry or source upload. It never indexes known
-secret-file paths and never stores complete source files. Repository files, comments, and
-documentation are untrusted input; source snippets exposed over MCP are always
+CodeAtlas is local-first and performs no external telemetry, analytics, or source upload. The
+internal `IndexTelemetry` component is local performance instrumentation only: timing, cache, and
+memory measurements stay in-process or in repository-local build metadata and are never transmitted.
+CodeAtlas never indexes known secret-file paths and never stores complete source files. Repository
+files, comments, and documentation are untrusted input; source snippets exposed over MCP are always
 labeled `untrusted_repository_content`.
 
 `codeatlas build` writes local architecture artifacts that may include bounded source excerpts as
@@ -22,8 +24,10 @@ context should be protected like the source repository and must not be published
 codebase without review.
 
 Core indexing, IR generation, HTML generation, snapshots, rules, review, and deterministic
-`codeatlas ask` retrieval make no network request. No source is sent to an AI provider unless a
-future optional provider is explicitly enabled and documented.
+`codeatlas ask` retrieval make no network request. The CodeAtlas MCP server uses local stdio
+transport. The current release has no built-in local or remote AI-provider transport; `ai.enabled`
+defaults to `false`, and enabling that flag alone does not send source anywhere. Any future provider
+must be explicitly enabled and document its outgoing context before it can transmit repository data.
 
 The source tool resolves indexed paths against the current repository root and rejects paths that
 resolve outside it. Source responses are capped by `limits.maxSourceSnippetLines` and

@@ -523,7 +523,9 @@ ai:
 `html.mode` accepts only `single-file` or `bundle`. `CODEATLAS_HTML_MODE`,
 `CODEATLAS_AI_ENABLED`, `CODEATLAS_MAX_CALL_DEPTH`, and `CODEATLAS_MAX_IMPACT_DEPTH` can override
 those non-secret settings for a process. Credentials, API keys, tokens, and provider secrets are
-not supported in `.codeatlas.yml`; keep them in provider-specific environment variables.
+not supported in `.codeatlas.yml`. The current release has no built-in local or remote AI-provider
+transport, so setting `ai.enabled: true` is only an explicit opt-in flag for provider functionality
+that may be added later; it does not by itself send repository content anywhere.
 
 Rule selectors support `kind`, `layer`, `domain`, and `matches_path`; predicates include direct
 `depends_on`, `calls`, and `imports`, bounded `path_to` with `unless_via`, `belongs_to`, and
@@ -634,13 +636,22 @@ isolated to the affected file, recorded for `codeatlas doctor`, and fall back to
 
 ## Privacy
 
-CodeAtlas has no cloud account, remote database, telemetry, API key, or network upload path.
-It does not call an LLM. `codeatlas ask` is deterministic graph/evidence retrieval unless a future
-provider is explicitly configured. Generated HTML, snapshots, and IR remain local but can contain
-bounded source excerpts used as evidence, so treat them with the same confidentiality as the
-repository. MCP source-evidence responses may be sent elsewhere by the user's
-configured MCP host/model; that is separate from CodeAtlas itself, and snippets are labeled as
-untrusted repository content.
+CodeAtlas has no cloud account, remote database, external telemetry/analytics, API key, or network
+upload path. The internal `IndexTelemetry` instrumentation records timing, cache, and memory metrics
+in-process and in local build metadata only; it does not transmit them. Source parsing, graph
+generation, HTML export, snapshots, review, `codeatlas ask`, and the CodeAtlas side of MCP all run
+locally. MCP uses local stdio transport.
+
+The current release does not call an LLM and has no built-in local or remote AI-provider transport.
+`ai.enabled` defaults to `false`; enabling it alone does not create a network path. Any future
+provider implementation must remain explicitly opt-in and document what context it transmits before
+source can leave CodeAtlas.
+
+Generated HTML, snapshots, IR, and agent-context exports can contain bounded source excerpts used as
+evidence, so treat them with the same confidentiality as the repository. MCP source-evidence
+responses can be sent elsewhere by the user's configured MCP host/model after CodeAtlas returns them
+over stdio; that external host/provider behavior is outside CodeAtlas itself, and snippets are
+labeled as untrusted repository content.
 
 ## Troubleshooting
 

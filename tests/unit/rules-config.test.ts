@@ -15,6 +15,16 @@ afterEach(async () => {
 });
 
 describe(".codeatlas.yml", () => {
+  it("keeps AI provider functionality disabled unless explicitly opted in", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codeatlas-v2-config-defaults-"));
+    roots.push(root);
+    expect(normalizeV2Config({}).ai.enabled).toBe(false);
+    await expect(loadV2Config(root)).resolves.toMatchObject({ ai: { enabled: false } });
+
+    process.env.CODEATLAS_AI_ENABLED = "definitely";
+    await expect(loadV2Config(root)).rejects.toThrow("CODEATLAS_AI_ENABLED must be true/false or 1/0");
+  });
+
   it("parses domain overrides and nested architecture rules", () => {
     const config = normalizeV2Config(parseCodeAtlasYaml(`
 version: 1
