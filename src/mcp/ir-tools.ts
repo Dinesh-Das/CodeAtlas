@@ -1,29 +1,11 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import { analyzeImpact } from "../analysis/impact.js";
-import { buildRepository } from "../compiler/build.js";
 import { workspacePaths } from "../core/workspace.js";
 import { compareSnapshots, loadSnapshot } from "../git/snapshots.js";
 import type { Atlas } from "../ir/models.js";
-import { assertValidAtlas } from "../ir/validation.js";
-
-const atlasLoads = new Map<string, Promise<Atlas>>();
+import { architectureService } from "../service/architecture-service.js";
 
 export async function loadFreshIr(repositoryPath: string): Promise<Atlas> {
-  const existing = atlasLoads.get(repositoryPath);
-  if (existing !== undefined) return existing;
-  const promise = (async () => {
-    const build = await buildRepository(repositoryPath, { snapshot: false });
-    const atlas = JSON.parse(await readFile(path.join(build.currentDirectory, "atlas.json"), "utf8")) as Atlas;
-    assertValidAtlas(atlas);
-    return atlas;
-  })();
-  atlasLoads.set(repositoryPath, promise);
-  try {
-    return await promise;
-  } finally {
-    atlasLoads.delete(repositoryPath);
-  }
+  return (await architectureService.load(repositoryPath)).atlas;
 }
 
 function resolve(atlas: Atlas, target: string) {
@@ -207,13 +189,13 @@ export async function reviewIr(repositoryPath: string) {
 }
 
 export async function snapshotIr(repositoryPath: string, id: string) {
-  const build = await buildRepository(repositoryPath, { snapshot: false });
-  return { snapshot: await loadSnapshot(workspacePaths(build.repositoryRoot).snapshots, id) };
+  const context = await architectureService.load(repositoryPath);
+  return { snapshot: await loadSnapshot(workspacePaths(context.repositoryRoot).snapshots, id) };
 }
 
 export async function compareSnapshotsIr(repositoryPath: string, oldId: string, newId: string) {
-  const build = await buildRepository(repositoryPath, { snapshot: false });
-  return { diff: await compareSnapshots(workspacePaths(build.repositoryRoot).snapshots, oldId, newId) };
+  const context = await architectureService.load(repositoryPath);
+  return { diff: await compareSnapshots(workspacePaths(context.repositoryRoot).snapshots, oldId, newId) };
 }
 
 export function irResult(value: Record<string, unknown>) {

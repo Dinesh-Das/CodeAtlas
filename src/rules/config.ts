@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { sha256 } from "../core/hashing.js";
 import type { ArchitectureRule, RuleSeverity } from "../ir/models.js";
 import { DEFAULT_V2_CONFIG, type CodeAtlasV2Config, type DomainOverride } from "./types.js";
 
@@ -184,4 +185,8 @@ export async function loadV2Config(repositoryRoot: string): Promise<CodeAtlasV2C
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return DEFAULT_V2_CONFIG;
     throw error;
   }
+}
+
+export function v2ConfigFingerprint(config: CodeAtlasV2Config): string {
+  return sha256(JSON.stringify(config));
 }

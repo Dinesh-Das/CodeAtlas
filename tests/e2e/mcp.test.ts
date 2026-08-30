@@ -165,6 +165,38 @@ describe("MCP stdio contract", () => {
           }
         }
 
+        const canonicalSearch = await client.callTool({
+          name: "find_symbol",
+          arguments: { query: "runCheckout", limit: 10 },
+        });
+        expect(canonicalSearch.isError).not.toBe(true);
+        expect(canonicalSearch.structuredContent).toEqual(expect.objectContaining({
+          derivation: "canonical_ir",
+          results: expect.arrayContaining([
+            expect.objectContaining({ id: runCheckoutId, qualified_name: "runCheckout" }),
+          ]),
+        }));
+
+        const canonicalImpact = await client.callTool({
+          name: "analyze_impact",
+          arguments: { target: chargeId, depth: 8, limit: 100 },
+        });
+        expect(canonicalImpact.isError).not.toBe(true);
+        expect(canonicalImpact.structuredContent).toEqual(expect.objectContaining({
+          symbol: expect.objectContaining({ id: chargeId }),
+          paths: expect.any(Array),
+        }));
+
+        const canonicalControlFlow = await client.callTool({
+          name: "get_control_flow",
+          arguments: { target: runCheckoutId },
+        });
+        expect(canonicalControlFlow.isError).not.toBe(true);
+        expect(canonicalControlFlow.structuredContent).toEqual(expect.objectContaining({
+          symbol: expect.objectContaining({ id: runCheckoutId }),
+          control_flow: expect.objectContaining({ symbol_id: runCheckoutId }),
+        }));
+
         const ambiguity = answerPacketSchema.parse(
           (
             await client.callTool({

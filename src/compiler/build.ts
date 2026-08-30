@@ -19,7 +19,7 @@ import type { AtlasGitChange } from "../ir/models.js";
 import { loadAtlasFromDatabase } from "../ir/loader.js";
 import { normalizeAtlas } from "../ir/serialization.js";
 import { assertValidAtlas } from "../ir/validation.js";
-import { loadV2Config } from "../rules/config.js";
+import { loadV2Config, v2ConfigFingerprint } from "../rules/config.js";
 import { applyDomainOverrides } from "../rules/domains.js";
 import { evaluateArchitectureRules } from "../rules/engine.js";
 import { buildDeterministicReview } from "../review/review.js";
@@ -279,6 +279,11 @@ export async function buildRepository(
   await writeJsonAtomic(path.join(paths.current, "build.json"), {
     schema_version: atlas.schema_version,
     snapshot_id: atlas.snapshot.id,
+    current_fingerprint: index.fingerprint,
+    generations: index.generations,
+    v2_config_fingerprint: v2ConfigFingerprint(v2Config),
+    git_base: baseCommit,
+    git_head: headCommit,
     parsed_files: index.work.filesParsed,
     reused_files: Math.max(0, index.files - index.work.filesParsed),
     timings_ms: timingsMs,
