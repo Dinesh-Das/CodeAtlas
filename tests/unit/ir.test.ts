@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { summarizeReviewArchitecture } from "../../src/cli/review.js";
+import { renderAtlasHtml } from "../../src/export/html.js";
 import { createEvidenceId } from "../../src/ir/evidence.js";
 import { validateEvidenceIds } from "../../src/ir/evidence-validation.js";
 import { ATLAS_SCHEMA_VERSION, type Atlas } from "../../src/ir/models.js";
@@ -67,5 +69,51 @@ describe("canonical CodeAtlas IR", () => {
     wrongRange.evidence[0]!.end_line = 20;
     expect(validateEvidenceIds(wrongRange, [wrongRange.evidence[0]!.id]).rejected[0]?.reason)
       .toContain("does not overlap its symbol");
+  });
+
+  it("summarizes architecture-aware review impact and exposes review context in HTML", () => {
+    const atlas = fixture();
+    const symbol = atlas.symbols[0]!;
+    symbol.domain_ids = ["domain:core"];
+    atlas.domains = [{
+      id: "domain:core", name: "Core", member_ids: [symbol.id], file_ids: [], entrypoint_ids: [symbol.id],
+      internal_relationship_ids: [], outgoing_relationship_ids: [], confidence: 1,
+      label_provenance: "CONFIG", evidence_ids: symbol.evidence_ids,
+    }];
+    atlas.entrypoint_ids = [symbol.id];
+    atlas.git_changes = [{
+      id: "change:a", status: "MODIFIED", file: "src/a.ts", previous_file: null,
+      line_ranges: [{ start_line: 1, end_line: 1 }], symbol_ids: [symbol.id], symbol_changes: [],
+      impacted_symbol_ids: [], impact_paths: [], source_diff: "+function a() {}", related_test_ids: [],
+      rule_violation_ids: ["violation:a"], review_finding_ids: ["finding:a"], evidence_ids: symbol.evidence_ids,
+    }];
+    atlas.rules = [{
+      id: "no-core-call", description: "Core rule", severity: "error", source: {}, forbid: {},
+    }];
+    atlas.rule_violations = [{
+      id: "violation:a", rule_id: "no-core-call", severity: "error", source_id: symbol.id,
+      target_id: null, path: [symbol.id], relationship_ids: [], evidence_ids: symbol.evidence_ids,
+      message: "Core rule violated",
+    }];
+    atlas.review_findings = [{
+      id: "finding:a", severity: "high", category: "architecture violation", title: "Core rule violated",
+      description: "The changed entrypoint violates the configured architecture rule.",
+      changed_symbol_ids: [symbol.id], impacted_symbol_ids: [], evidence_ids: symbol.evidence_ids,
+      impact_paths: [], confidence: 1, provenance: "STATIC_ANALYSIS",
+    }];
+
+    expect(summarizeReviewArchitecture(atlas)).toMatchObject({
+      changed_file_count: 1,
+      changed_symbol_ids: [symbol.id],
+      affected_entrypoint_ids: [symbol.id],
+      affected_domain_ids: ["domain:core"],
+      rule_violation_count: 1,
+      findings_by_severity: { critical: 0, high: 1, medium: 0, low: 0 },
+    });
+    const html = renderAtlasHtml(atlas);
+    expect(html).toContain("What changed");
+    expect(html).toContain("Source evidence");
+    expect(html).toContain("Architecture rule");
+    expect(html).toContain("Related tests");
   });
 });
