@@ -32,6 +32,7 @@ import type { IndexProgress } from "../core/telemetry.js";
 export interface BuildResult {
   repositoryRoot: string;
   htmlPath: string;
+  htmlMode: "single-file" | "bundle";
   markdownPath: string;
   currentDirectory: string;
   snapshotId: string;
@@ -64,6 +65,18 @@ export interface BuildTimings {
   export: number;
   snapshot: number;
   total: number;
+}
+
+function resolveHtmlMode(
+  configured: "single-file" | "bundle",
+  options: { bundle?: boolean; singleFile?: boolean },
+): "single-file" | "bundle" {
+  if (options.bundle === true && options.singleFile === true) {
+    throw new CodeAtlasError("Error: Choose either --bundle or --single-file, not both.");
+  }
+  if (options.bundle === true) return "bundle";
+  if (options.singleFile === true) return "single-file";
+  return configured;
 }
 
 function changedRanges(diff: string): {
@@ -301,6 +314,7 @@ export async function buildRepository(
     gitBase?: string;
     gitHead?: string;
     bundle?: boolean;
+    singleFile?: boolean;
     onProgress?: (progress: IndexProgress) => void;
   } = {},
 ): Promise<BuildResult> {
@@ -319,6 +333,7 @@ export async function buildRepository(
   const paths = workspacePaths(index.repository.root);
   const config = await loadConfig(index.repository.root);
   const v2Config = await loadV2Config(index.repository.root);
+  const htmlMode = resolveHtmlMode(v2Config.html.mode, options);
 
   const irStarted = performance.now();
   const database = openDatabase(paths.database, { readonly: true });
@@ -439,10 +454,12 @@ export async function buildRepository(
 
   const exportStarted = performance.now();
   await exportAtlasData(atlas, paths.current);
-  const htmlPath = path.join(index.repository.root, "codeatlas.html");
+  const bundlePath = htmlMode === "bundle" ? path.join(index.repository.root, "codeatlas") : null;
+  const htmlPath = bundlePath === null
+    ? path.join(index.repository.root, "codeatlas.html")
+    : path.join(bundlePath, "index.html");
   const markdownPath = path.join(index.repository.root, "CODEATLAS.md");
-  await Promise.all([
-    exportAtlasHtml(atlas, htmlPath),
+  const commonExports = [
     exportAtlasMarkdown(atlas, markdownPath),
     writeTextAtomic(path.join(paths.agent, "overview.md"), renderAtlasMarkdown(atlas)),
     writeJsonAtomic(path.join(paths.agent, "manifest.json"), {
@@ -452,12 +469,14 @@ export async function buildRepository(
       canonical_ir: "../current/atlas.json",
       mcp_command: "codeatlas mcp",
     }),
-  ]);
-  const bundlePath = options.bundle === true ? path.join(index.repository.root, "codeatlas") : null;
-  if (bundlePath !== null) {
+  ];
+  if (bundlePath === null) {
+    await Promise.all([exportAtlasHtml(atlas, htmlPath), ...commonExports]);
+  } else {
     await Promise.all([
       exportAtlasBundle(atlas, bundlePath),
-      exportAtlasHtml(atlas, path.join(bundlePath, "index.html")),
+      exportAtlasHtml(atlas, htmlPath),
+      ...commonExports,
     ]);
   }
   const exportMs = performance.now() - exportStarted;
@@ -492,6 +511,7 @@ export async function buildRepository(
   return {
     repositoryRoot: index.repository.root,
     htmlPath,
+    htmlMode,
     markdownPath,
     currentDirectory: paths.current,
     snapshotId: atlas.snapshot.id,

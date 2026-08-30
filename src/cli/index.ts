@@ -17,18 +17,19 @@ export function createProgram(): Command {
     .argument("[path]", "A path inside the repository", process.cwd())
     .option("--full", "Rebuild the complete structural index", false)
     .option("--no-snapshot", "Do not persist an architecture snapshot")
-    .option("--bundle", "Also generate a directory artifact with sharded data files", false)
-    .option("--single-file", "Generate the self-contained HTML artifact (default)", true)
+    .option("--bundle", "Generate a directory artifact with sharded data files")
+    .option("--single-file", "Generate the self-contained HTML artifact")
     .option("--json", "Print machine-readable JSON", false)
     .action(async (
       targetPath: string,
-      options: { full: boolean; snapshot: boolean; bundle: boolean; singleFile: boolean; json: boolean },
+      options: { full: boolean; snapshot: boolean; bundle?: boolean; singleFile?: boolean; json: boolean },
     ) => {
       const { buildRepository, formatBuildResult } = await import("./build.js");
       const result = await buildRepository(targetPath, {
         full: options.full,
         snapshot: options.snapshot,
-        bundle: options.bundle,
+        ...(options.bundle === undefined ? {} : { bundle: options.bundle }),
+        ...(options.singleFile === undefined ? {} : { singleFile: options.singleFile }),
         ...(options.json ? {} : { onProgress: createIndexProgressReporter() }),
       });
       console.log(options.json ? JSON.stringify(result, null, 2) : formatBuildResult(result));

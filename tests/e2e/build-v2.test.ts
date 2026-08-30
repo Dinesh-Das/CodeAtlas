@@ -112,6 +112,39 @@ describe("codeatlas build v2", () => {
     expect(second.reusedFiles).toBe(first.statistics.files);
   }, 60_000);
 
+  it("supports deterministic single-file and sharded bundle output modes", async () => {
+    const root = await repositoryFixture();
+    const single = await buildRepository(root, { snapshot: false });
+    expect(single.htmlMode).toBe("single-file");
+    expect(single.bundlePath).toBeNull();
+    expect(single.htmlPath).toBe(path.join(root, "codeatlas.html"));
+    const singleHtml = await readFile(single.htmlPath, "utf8");
+    expect(singleHtml).not.toMatch(/<script[^>]+src=/iu);
+    expect(singleHtml).not.toMatch(/<link[^>]+href=/iu);
+
+    await writeFile(path.join(root, ".codeatlas.yml"), "version: 1\nhtml:\n  mode: bundle\n", "utf8");
+    const configuredBundle = await buildRepository(root, { snapshot: false });
+    expect(configuredBundle.htmlMode).toBe("bundle");
+    expect(configuredBundle.bundlePath).toBe(path.join(root, "codeatlas"));
+    const manifest = JSON.parse(
+      await readFile(path.join(root, "codeatlas", "data", "manifest.json"), "utf8"),
+    ) as { files: string[]; shards: Record<string, string[]>; checksums: Record<string, string> };
+    expect(manifest.shards.symbols?.[0]).toBe("symbols-001.json");
+    expect(manifest.shards.relationships?.[0]).toBe("relationships-001.json");
+    expect(manifest.files).toContain("domains.json");
+    expect(manifest.files).toContain("symbols-001.json");
+    expect(manifest.files).toContain("relationships-001.json");
+    expect(Object.keys(manifest.checksums).sort()).toEqual([...manifest.files].sort());
+
+    const forcedSingle = await buildRepository(root, { snapshot: false, singleFile: true });
+    expect(forcedSingle.htmlMode).toBe("single-file");
+    expect(forcedSingle.htmlPath).toBe(path.join(root, "codeatlas.html"));
+    const forcedBundle = await buildRepository(root, { snapshot: false, bundle: true });
+    expect(forcedBundle.htmlMode).toBe("bundle");
+    await expect(buildRepository(root, { snapshot: false, bundle: true, singleFile: true }))
+      .rejects.toThrow("Choose either --bundle or --single-file");
+  }, 60_000);
+
   it("maps changed lines to symbols and compares persistent snapshots", async () => {
     const root = await repositoryFixture();
     const first = await buildRepository(root);
