@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { answerFromAtlas } from "../../src/ai/answering.js";
 import { summarizeReviewArchitecture } from "../../src/cli/review.js";
 import { renderAtlasHtml } from "../../src/export/html.js";
 import { createEvidenceId } from "../../src/ir/evidence.js";
@@ -6,6 +7,7 @@ import { validateEvidenceIds } from "../../src/ir/evidence-validation.js";
 import { ATLAS_SCHEMA_VERSION, type Atlas } from "../../src/ir/models.js";
 import { semanticAtlasJson } from "../../src/ir/serialization.js";
 import { validateAtlas } from "../../src/ir/validation.js";
+import { validateReviewFindings } from "../../src/review/evidence-validation.js";
 
 function fixture(): Atlas {
   const evidenceId = createEvidenceId({
@@ -69,6 +71,53 @@ describe("canonical CodeAtlas IR", () => {
     wrongRange.evidence[0]!.end_line = 20;
     expect(validateEvidenceIds(wrongRange, [wrongRange.evidence[0]!.id]).rejected[0]?.reason)
       .toContain("does not overlap its symbol");
+  });
+
+  it("returns only grounded answer claims and rejects unsupported review findings", () => {
+    const atlas = fixture();
+    const answer = answerFromAtlas(atlas, "function implementation");
+    expect(answer.provenance).toBe("STATIC_ANALYSIS");
+    expect(answer.claims.length).toBeGreaterThan(0);
+    expect(answer.evidence.length).toBeGreaterThan(0);
+    for (const claim of answer.claims) {
+      expect(claim.evidence_ids.length).toBeGreaterThan(0);
+      expect(validateEvidenceIds(atlas, claim.evidence_ids).rejected).toEqual([]);
+    }
+
+    const unsupportedAtlas = fixture();
+    unsupportedAtlas.symbols[0]!.evidence_ids = ["evidence:missing"];
+    const unsupportedAnswer = answerFromAtlas(unsupportedAtlas, "function implementation");
+    expect(unsupportedAnswer.claims).toEqual([]);
+    expect(unsupportedAnswer.evidence).toEqual([]);
+    expect(unsupportedAnswer.answer).toContain("does not have enough source evidence");
+
+    const symbol = atlas.symbols[0]!;
+    const validFinding = {
+      id: "finding:valid",
+      severity: "high" as const,
+      category: "ai review",
+      title: "Grounded finding",
+      description: "Supported by repository evidence.",
+      changed_symbol_ids: [symbol.id],
+      impacted_symbol_ids: [],
+      evidence_ids: symbol.evidence_ids,
+      impact_paths: [],
+      confidence: 0.9,
+      provenance: "LLM" as const,
+    };
+    const unsupportedFinding = {
+      ...validFinding,
+      id: "finding:unsupported",
+      evidence_ids: ["evidence:hallucinated"],
+    };
+    const validation = validateReviewFindings(atlas, [validFinding, unsupportedFinding]);
+    expect(validation.valid).toEqual([validFinding]);
+    expect(validation.rejected).toEqual([
+      expect.objectContaining({
+        finding: unsupportedFinding,
+        reason: expect.stringContaining("invalid evidence"),
+      }),
+    ]);
   });
 
   it("summarizes architecture-aware review impact and exposes review context in HTML", () => {
