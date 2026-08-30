@@ -203,6 +203,10 @@ The first production compiler slice is implemented:
   queries enforce repository-configured result/traversal budgets, expose fingerprint-bound cursors
   with explicit pagination metadata, reuse the same rich symbol search text as the HTML explorer,
   and return compact follow-up guidance rather than requiring agents to scrape the report.
+- Evidence-grounded answers and review findings share a canonical grounding validator. Evidence IDs
+  are accepted only when their indexed file, line/column range, excerpt, symbol/relationship linkage,
+  and available content hash can be resolved against the same snapshot; unsupported claims/findings
+  are discarded instead of emitting fabricated source citations.
 - End-to-end Authentication/Payments/Users fixture coverage plus offline, incremental, rule, flow,
   CFG, impact, snapshot, Git mapping, MCP parity, and 5,000-symbol LOD tests.
 - Git-optional repository discovery and freshness. Ordinary directories use deterministic

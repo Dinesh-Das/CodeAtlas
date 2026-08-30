@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createEvidenceId } from "../../src/ir/evidence.js";
+import { validateEvidenceIds } from "../../src/ir/evidence-validation.js";
 import { ATLAS_SCHEMA_VERSION, type Atlas } from "../../src/ir/models.js";
 import { semanticAtlasJson } from "../../src/ir/serialization.js";
 import { validateAtlas } from "../../src/ir/validation.js";
@@ -48,5 +49,23 @@ describe("canonical CodeAtlas IR", () => {
     const second = fixture();
     second.snapshot.created_at = "2030-01-01T00:00:00.000Z";
     expect(semanticAtlasJson(first)).toBe(semanticAtlasJson(second));
+  });
+
+  it("rejects evidence whose snapshot location cannot be grounded", () => {
+    const unresolved = fixture();
+    unresolved.evidence[0]!.excerpt = null;
+    expect(validateEvidenceIds(unresolved, [unresolved.evidence[0]!.id]).rejected[0]?.reason)
+      .toContain("could not be resolved");
+
+    const wrongFile = fixture();
+    wrongFile.evidence[0]!.file = "src/missing.ts";
+    expect(validateEvidenceIds(wrongFile, [wrongFile.evidence[0]!.id]).rejected[0]?.reason)
+      .toContain("not present in the indexed snapshot");
+
+    const wrongRange = fixture();
+    wrongRange.evidence[0]!.start_line = 20;
+    wrongRange.evidence[0]!.end_line = 20;
+    expect(validateEvidenceIds(wrongRange, [wrongRange.evidence[0]!.id]).rejected[0]?.reason)
+      .toContain("does not overlap its symbol");
   });
 });

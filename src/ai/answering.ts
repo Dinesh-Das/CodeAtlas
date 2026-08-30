@@ -1,4 +1,5 @@
 import type { Atlas, AtlasEvidence, AtlasFlow, AtlasSymbol } from "../ir/models.js";
+import { validateEvidenceIds } from "../ir/evidence-validation.js";
 
 export interface AtlasClaim {
   text: string;
@@ -59,12 +60,14 @@ export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
       });
     }
   }
-  const evidenceIds = new Set(claims.flatMap((claim) => claim.evidence_ids));
-  const evidence = atlas.evidence.filter((item) => evidenceIds.has(item.id));
-  const validIds = new Set(evidence.map((item) => item.id));
+  const evidenceIds = [...new Set(claims.flatMap((claim) => claim.evidence_ids))];
+  const grounding = validateEvidenceIds(atlas, evidenceIds);
+  const validIds = new Set(grounding.valid.map((item) => item.id));
   const validClaims = claims.filter((claim) =>
     claim.evidence_ids.length > 0 && claim.evidence_ids.every((id) => validIds.has(id)),
   );
+  const citedIds = new Set(validClaims.flatMap((claim) => claim.evidence_ids));
+  const evidence = grounding.valid.filter((item) => citedIds.has(item.id));
   return {
     question,
     answer: validClaims.length === 0
