@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { buildControlFlows } from "../analysis/control-flow.js";
@@ -16,7 +17,8 @@ import { exportAtlasMarkdown, renderAtlasMarkdown } from "../export/markdown.js"
 import { detectGitState } from "../git/changes.js";
 import { detectRepository, runGit } from "../git/repository.js";
 import { persistSnapshot } from "../git/snapshots.js";
-import type { AtlasGitChange } from "../ir/models.js";
+import { withDetachedWorktree } from "../git/worktree.js";
+import type { Atlas, AtlasGitChange, AtlasGitSymbolChange, AtlasSymbol } from "../ir/models.js";
 import { loadAtlasFromDatabase } from "../ir/loader.js";
 import { normalizeAtlas } from "../ir/serialization.js";
 import { assertValidAtlas } from "../ir/validation.js";
@@ -64,20 +66,157 @@ export interface BuildTimings {
   total: number;
 }
 
-function changedRanges(diff: string): Array<{ start_line: number; end_line: number }> {
-  const ranges: Array<{ start_line: number; end_line: number }> = [];
+function changedRanges(diff: string): {
+  old: Array<{ start_line: number; end_line: number }>;
+  current: Array<{ start_line: number; end_line: number }>;
+} {
+  const old: Array<{ start_line: number; end_line: number }> = [];
+  const current: Array<{ start_line: number; end_line: number }> = [];
   for (const line of diff.split(/\r?\n/u)) {
-    const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/u.exec(line);
+    const match = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/u.exec(line);
     if (match === null) continue;
-    const start = Number(match[1]);
-    const count = match[2] === undefined ? 1 : Number(match[2]);
-    if (count > 0) ranges.push({ start_line: start, end_line: start + count - 1 });
+    const oldStart = Number(match[1]);
+    const oldCount = match[2] === undefined ? 1 : Number(match[2]);
+    const currentStart = Number(match[3]);
+    const currentCount = match[4] === undefined ? 1 : Number(match[4]);
+    if (oldCount > 0) old.push({ start_line: oldStart, end_line: oldStart + oldCount - 1 });
+    if (currentCount > 0) {
+      current.push({ start_line: currentStart, end_line: currentStart + currentCount - 1 });
+    }
   }
-  return ranges;
+  return { old, current };
+}
+
+function symbolIdentity(symbol: AtlasSymbol): string {
+  return [
+    symbol.kind,
+    symbol.language ?? "",
+    symbol.qualified_name ?? symbol.name,
+    symbol.signature ?? "",
+  ].join("\0");
+}
+
+function touchedSymbols(
+  symbols: readonly AtlasSymbol[],
+  ranges: readonly { start_line: number; end_line: number }[],
+): AtlasSymbol[] {
+  if (ranges.length === 0) return [...symbols];
+  return symbols.filter((symbol) =>
+    symbol.kind === "file" ||
+    symbol.location === null ||
+    ranges.some((range) =>
+      symbol.location!.start_line <= range.end_line && symbol.location!.end_line >= range.start_line,
+    ),
+  );
+}
+
+function classifySymbolChanges(
+  change: Awaited<ReturnType<typeof detectGitState>>["changes"][number],
+  currentSymbols: readonly AtlasSymbol[],
+  previousSymbols: readonly AtlasSymbol[],
+): AtlasGitSymbolChange[] {
+  const previousById = new Map(previousSymbols.map((symbol) => [symbol.id, symbol]));
+  const previousByIdentity = new Map<string, AtlasSymbol[]>();
+  for (const symbol of previousSymbols) {
+    const key = symbolIdentity(symbol);
+    const bucket = previousByIdentity.get(key) ?? [];
+    bucket.push(symbol);
+    previousByIdentity.set(key, bucket);
+  }
+  const usedPrevious = new Set<string>();
+  const result: AtlasGitSymbolChange[] = [];
+  for (const symbol of currentSymbols) {
+    let previous = previousById.get(symbol.id);
+    if (previous === undefined) {
+      previous = (previousByIdentity.get(symbolIdentity(symbol)) ?? [])
+        .find((candidate) => !usedPrevious.has(candidate.id));
+    }
+    if (previous === undefined && change.kind === "renamed" && symbol.kind === "file") {
+      previous = previousSymbols.find((candidate) =>
+        candidate.kind === "file" && !usedPrevious.has(candidate.id),
+      );
+    }
+    if (previous !== undefined) usedPrevious.add(previous.id);
+    const status: AtlasGitSymbolChange["status"] = previous === undefined
+      ? "ADDED"
+      : change.kind === "renamed" || previous.file !== symbol.file
+        ? "MOVED"
+        : "MODIFIED";
+    result.push({
+      status,
+      symbol_id: symbol.id,
+      previous_symbol_id: previous?.id ?? null,
+      name: symbol.name,
+      qualified_name: symbol.qualified_name,
+      kind: symbol.kind,
+      file: symbol.file ?? change.path,
+      previous_file: previous?.file ?? change.previousPath,
+    });
+  }
+  for (const previous of previousSymbols) {
+    if (usedPrevious.has(previous.id)) continue;
+    result.push({
+      status: "DELETED",
+      symbol_id: null,
+      previous_symbol_id: previous.id,
+      name: previous.name,
+      qualified_name: previous.qualified_name,
+      kind: previous.kind,
+      file: change.path,
+      previous_file: previous.file ?? change.previousPath ?? change.path,
+    });
+  }
+  return result.sort((left, right) =>
+    `${left.status}\0${left.qualified_name ?? left.name}\0${left.symbol_id ?? left.previous_symbol_id ?? ""}`
+      .localeCompare(`${right.status}\0${right.qualified_name ?? right.name}\0${right.symbol_id ?? right.previous_symbol_id ?? ""}`),
+  );
+}
+
+async function sourceDiffForChange(
+  repositoryRoot: string,
+  baseCommit: string,
+  change: Awaited<ReturnType<typeof detectGitState>>["changes"][number],
+): Promise<string> {
+  const paths = change.previousPath !== null && change.previousPath !== change.path
+    ? [change.previousPath, change.path]
+    : [change.path];
+  let diff = await runGit(repositoryRoot, [
+    "diff", "--unified=3", "--no-color", "--find-renames=50%", baseCommit, "--", ...paths,
+  ], true);
+  if (diff.length === 0 && change.kind === "added") {
+    try {
+      const body = await readFile(path.join(repositoryRoot, change.path), "utf8");
+      const lines = body.split(/\r?\n/u);
+      diff = [
+        "diff --git a/dev/null b/" + change.path,
+        "--- /dev/null",
+        "+++ b/" + change.path,
+        `@@ -0,0 +1,${lines.length} @@`,
+        ...lines.map((line) => `+${line}`),
+      ].join("\n");
+    } catch {
+      // Binary/unreadable untracked files remain represented by their file status.
+    }
+  }
+  const maxChars = 200_000;
+  return diff.length <= maxChars ? diff : `${diff.slice(0, maxChars)}\n... [diff truncated by CodeAtlas]`;
+}
+
+async function loadAtlasAtCommit(repositoryRoot: string, commit: string): Promise<Atlas> {
+  return withDetachedWorktree(repositoryRoot, commit, async (worktreeRoot) => {
+    const build = await buildRepository(worktreeRoot, {
+      gitBase: "HEAD",
+      gitHead: "HEAD",
+      snapshot: false,
+      bundle: false,
+    });
+    return JSON.parse(await readFile(path.join(build.currentDirectory, "atlas.json"), "utf8")) as Atlas;
+  });
 }
 
 async function mapGitChanges(
   atlas: Awaited<ReturnType<typeof loadAtlasFromDatabase>>,
+  previousAtlas: Atlas,
   repositoryRoot: string,
   baseCommit: string,
   changes: Awaited<ReturnType<typeof detectGitState>>["changes"],
@@ -85,20 +224,29 @@ async function mapGitChanges(
 ): Promise<AtlasGitChange[]> {
   const excerptReader = new EvidenceExcerptReader(repositoryRoot);
   return Promise.all(changes.map(async (change, index) => {
-    const ranges = change.kind === "added"
-      ? []
-      : changedRanges(await runGit(repositoryRoot, [
-          "diff", "--unified=0", "--no-color", baseCommit, "--", change.path,
-        ], true));
-    const candidates = atlas.symbols.filter((symbol) => symbol.file === change.path);
-    const symbols = ranges.length === 0
-      ? candidates
-      : candidates.filter((symbol) => symbol.kind === "file" || symbol.location === null || ranges.some((range) =>
-          symbol.location!.start_line <= range.end_line && symbol.location!.end_line >= range.start_line,
-        ));
-    const symbolIds = symbols.map((symbol) => symbol.id);
+    const sourceDiff = await sourceDiffForChange(repositoryRoot, baseCommit, change);
+    const ranges = changedRanges(sourceDiff);
+    const previousPath = change.previousPath ?? change.path;
+    const currentCandidates = atlas.symbols.filter((symbol) => symbol.file === change.path);
+    const previousCandidates = previousAtlas.symbols.filter((symbol) => symbol.file === previousPath);
+    const currentSymbols = change.kind === "added" || (change.kind === "renamed" && ranges.current.length === 0)
+      ? currentCandidates
+      : change.kind === "deleted" || ranges.current.length === 0
+        ? []
+        : touchedSymbols(currentCandidates, ranges.current);
+    const previousSymbols = change.kind === "deleted" || (change.kind === "renamed" && ranges.old.length === 0)
+      ? previousCandidates
+      : change.kind === "added" || ranges.old.length === 0
+        ? []
+        : touchedSymbols(previousCandidates, ranges.old);
+    const symbolChanges = classifySymbolChanges(change, currentSymbols, previousSymbols);
+    const symbolIds = symbolChanges.flatMap((symbol) => symbol.symbol_id === null ? [] : [symbol.symbol_id]);
+    const impactPaths = symbolIds.flatMap((id) => impact(id, { depth: 8, limit: 25 })).slice(0, 200);
+    const impactedSymbolIds = [...new Set(impactPaths.map((item) => item.impacted))]
+      .sort((left, right) => left.localeCompare(right));
     const evidenceIds: string[] = [];
-    for (const range of ranges) {
+    const evidenceRanges = change.kind === "deleted" ? [] : ranges.current;
+    for (const range of evidenceRanges) {
       const id = createEvidenceId({
         file: change.path,
         startLine: range.start_line,
@@ -131,9 +279,15 @@ async function mapGitChanges(
         : "MODIFIED" as const,
       file: change.path,
       previous_file: change.previousPath,
-      line_ranges: ranges,
+      line_ranges: change.kind === "deleted" ? ranges.old : ranges.current,
       symbol_ids: symbolIds,
-      impact_paths: symbolIds.flatMap((id) => impact(id, { depth: 8, limit: 25 })).slice(0, 200),
+      symbol_changes: symbolChanges,
+      impacted_symbol_ids: impactedSymbolIds,
+      impact_paths: impactPaths,
+      source_diff: sourceDiff,
+      related_test_ids: [],
+      rule_violation_ids: [],
+      review_finding_ids: [],
       evidence_ids: evidenceIds,
     };
   }));
@@ -218,14 +372,19 @@ export async function buildRepository(
       headCommit,
     );
     const ignoreRules = await loadIgnoreRules(index.repository.root);
+    const relevantChanges = gitState.changes.filter((change) =>
+      !ignoreRules.ignores(change.path) &&
+      (change.previousPath === null || !ignoreRules.ignores(change.previousPath)),
+    );
+    const previousAtlas = relevantChanges.length === 0
+      ? atlas
+      : await loadAtlasAtCommit(index.repository.root, baseCommit);
     atlas.git_changes = await mapGitChanges(
       atlas,
+      previousAtlas,
       index.repository.root,
       baseCommit,
-      gitState.changes.filter((change) =>
-        !ignoreRules.ignores(change.path) &&
-        (change.previousPath === null || !ignoreRules.ignores(change.previousPath)),
-      ),
+      relevantChanges,
       analyzeImpact,
     );
   } else {
@@ -239,6 +398,34 @@ export async function buildRepository(
   atlas.impact = buildImpactIndex(atlas);
   const impactMs = performance.now() - impactStarted;
   atlas.review_findings = buildDeterministicReview(atlas);
+  const symbolById = new Map(atlas.symbols.map((symbol) => [symbol.id, symbol]));
+  for (const change of atlas.git_changes) {
+    const impacted = new Set([...change.symbol_ids, ...change.impacted_symbol_ids]);
+    change.related_test_ids = [...impacted]
+      .filter((id) => {
+        const symbol = symbolById.get(id);
+        return symbol !== undefined && (
+          symbol.kind === "test" ||
+          /(?:^|\/)(?:tests?|__tests__)(?:\/|$)|\.(?:spec|test)\.[^/]+$/iu.test(symbol.file ?? "")
+        );
+      })
+      .sort((left, right) => left.localeCompare(right));
+    change.rule_violation_ids = atlas.rule_violations
+      .filter((violation) =>
+        impacted.has(violation.source_id) ||
+        (violation.target_id !== null && impacted.has(violation.target_id)) ||
+        violation.path.some((id) => impacted.has(id)),
+      )
+      .map((violation) => violation.id)
+      .sort((left, right) => left.localeCompare(right));
+    change.review_finding_ids = atlas.review_findings
+      .filter((finding) =>
+        finding.changed_symbol_ids.some((id) => change.symbol_ids.includes(id)) ||
+        finding.impacted_symbol_ids.some((id) => impacted.has(id)),
+      )
+      .map((finding) => finding.id)
+      .sort((left, right) => left.localeCompare(right));
+  }
 
   atlas.statistics = {
     ...atlas.statistics,

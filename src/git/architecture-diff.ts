@@ -8,6 +8,7 @@ export interface ArchitectureDiff {
     removed: string[];
     modified: string[];
     moved: string[];
+    moved_pairs: Array<{ previous_id: string; current_id: string }>;
   };
   relationships: {
     added: string[];
@@ -22,6 +23,15 @@ export interface ArchitectureDiff {
     added: string[];
     removed: string[];
   };
+}
+
+function movementKey(symbol: Atlas["symbols"][number]): string {
+  return [
+    symbol.kind,
+    symbol.language ?? "",
+    symbol.qualified_name ?? symbol.name,
+    symbol.signature ?? "",
+  ].join("\0");
 }
 
 function difference(left: ReadonlySet<string>, right: ReadonlySet<string>): string[] {
@@ -53,14 +63,43 @@ export function compareArchitecture(oldAtlas: Atlas, newAtlas: Atlas): Architect
     const next = newDomains.get(id);
     return next !== undefined && JSON.stringify(oldDomains.get(id)!.member_ids) !== JSON.stringify(next.member_ids);
   }).sort((a, b) => a.localeCompare(b));
+  const rawAdded = difference(newIds, oldIds);
+  const rawRemoved = difference(oldIds, newIds);
+  const removedByKey = new Map<string, string[]>();
+  for (const id of rawRemoved) {
+    const key = movementKey(oldSymbols.get(id)!);
+    const bucket = removedByKey.get(key) ?? [];
+    bucket.push(id);
+    removedByKey.set(key, bucket);
+  }
+  const movedPairs: Array<{ previous_id: string; current_id: string }> = [];
+  const matchedAdded = new Set<string>();
+  const matchedRemoved = new Set<string>();
+  for (const id of rawAdded) {
+    const symbol = newSymbols.get(id)!;
+    const candidates = removedByKey.get(movementKey(symbol)) ?? [];
+    const previousId = candidates.find((candidate) =>
+      !matchedRemoved.has(candidate) && oldSymbols.get(candidate)!.file !== symbol.file,
+    );
+    if (previousId === undefined) continue;
+    matchedAdded.add(id);
+    matchedRemoved.add(previousId);
+    movedPairs.push({ previous_id: previousId, current_id: id });
+  }
+  for (const id of moved) movedPairs.push({ previous_id: id, current_id: id });
+  movedPairs.sort((left, right) =>
+    `${left.previous_id}\0${left.current_id}`.localeCompare(`${right.previous_id}\0${right.current_id}`),
+  );
   return {
     old_snapshot: oldAtlas.snapshot.id,
     new_snapshot: newAtlas.snapshot.id,
     symbols: {
-      added: difference(newIds, oldIds),
-      removed: difference(oldIds, newIds),
+      added: rawAdded.filter((id) => !matchedAdded.has(id)),
+      removed: rawRemoved.filter((id) => !matchedRemoved.has(id)),
       modified: modified.sort((a, b) => a.localeCompare(b)),
-      moved: moved.sort((a, b) => a.localeCompare(b)),
+      moved: [...new Set([...moved, ...movedPairs.map((pair) => pair.current_id)])]
+        .sort((a, b) => a.localeCompare(b)),
+      moved_pairs: movedPairs,
     },
     relationships: {
       added: difference(newRelationships, oldRelationships),

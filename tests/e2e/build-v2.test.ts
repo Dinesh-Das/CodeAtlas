@@ -1,4 +1,4 @@
-import { cp, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -120,6 +120,62 @@ describe("codeatlas build v2", () => {
       .toContain("authenticate");
     const diff = await compareSnapshots(workspacePaths(root).snapshots, first.snapshotId, second.snapshotId);
     expect(diff.symbols.modified.length).toBeGreaterThan(0);
+  }, 60_000);
+
+  it("classifies added, deleted, modified, and moved symbols with PR-aware detail", async () => {
+    const root = await repositoryFixture();
+    const baseCommit = (await runGit(root, ["rev-parse", "HEAD"])).trim();
+    const servicePath = path.join(root, "src", "auth", "service.ts");
+    const source = await readFile(servicePath, "utf8");
+    await writeFile(
+      servicePath,
+      source.replace(
+        'return password.length > 7 ? "token" : "unauthorized";',
+        'return password.length > 9 ? "token" : "unauthorized";',
+      ) + '\nexport function issueToken(): string { return "token"; }\n',
+      "utf8",
+    );
+    await rm(path.join(root, "src", "admin", "service.ts"));
+    await mkdir(path.join(root, "src", "billing"), { recursive: true });
+    await runGit(root, ["mv", "src/payments/service.ts", "src/billing/service.ts"]);
+
+    const result = await buildRepository(root, { gitBase: baseCommit, snapshot: false });
+    const atlas = JSON.parse(await readFile(path.join(result.currentDirectory, "atlas.json"), "utf8")) as Atlas;
+    const authChange = atlas.git_changes.find((item) => item.file === "src/auth/service.ts");
+    const deletedChange = atlas.git_changes.find((item) => item.file === "src/admin/service.ts");
+    const movedChange = atlas.git_changes.find((item) => item.file === "src/billing/service.ts");
+
+    expect(authChange?.status).toBe("MODIFIED");
+    expect(authChange?.symbol_changes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "MODIFIED", qualified_name: "authenticate" }),
+      expect.objectContaining({ status: "ADDED", qualified_name: "issueToken" }),
+    ]));
+    expect(authChange?.source_diff).toContain("password.length > 9");
+    expect(authChange?.impacted_symbol_ids.length).toBeGreaterThan(0);
+    expect(authChange?.related_test_ids.every((id) => atlas.symbols.some((symbol) => symbol.id === id))).toBe(true);
+    expect(authChange?.rule_violation_ids.every((id) => atlas.rule_violations.some((violation) => violation.id === id))).toBe(true);
+    expect(authChange?.review_finding_ids.every((id) => atlas.review_findings.some((finding) => finding.id === id))).toBe(true);
+
+    expect(deletedChange?.status).toBe("DELETED");
+    expect(deletedChange?.symbol_changes.some((symbol) => symbol.status === "DELETED")).toBe(true);
+    expect(deletedChange?.source_diff).toContain("deleted file mode");
+
+    expect(movedChange?.status).toBe("MOVED");
+    expect(movedChange?.previous_file).toBe("src/payments/service.ts");
+    expect(movedChange?.symbol_changes.some((symbol) =>
+      symbol.status === "MOVED" && symbol.previous_file === "src/payments/service.ts" && symbol.file === "src/billing/service.ts",
+    )).toBe(true);
+
+    const html = await readFile(result.htmlPath, "utf8");
+    expect(html).toContain("Show changed only");
+    expect(html).toContain("Show changed + impacted");
+    expect(html).toContain("Show full architecture");
+    expect(html).toContain("Source diff");
+    expect(html).toContain("Structural diff");
+    expect(html).toContain("Related tests");
+    expect(html).toContain("Review findings");
+    expect(html).toContain("UNCHANGED");
+    expect(html).toContain("IMPACTED");
   }, 60_000);
 
   it("builds and incrementally refreshes a normal directory without Git", async () => {

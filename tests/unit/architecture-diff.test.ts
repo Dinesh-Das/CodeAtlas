@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import { compareArchitecture } from "../../src/git/architecture-diff.js";
 import { ATLAS_SCHEMA_VERSION, type Atlas, type AtlasSymbol } from "../../src/ir/models.js";
 
-function symbol(id: string): AtlasSymbol {
+function symbol(id: string, file = "src/app.ts", name = id): AtlasSymbol {
   return {
     id,
     kind: "endpoint",
-    name: id,
-    qualified_name: id,
-    file: "src/app.ts",
+    name,
+    qualified_name: name,
+    file,
     language: "typescript",
     location: { start_line: 1, start_column: 0, end_line: 1, end_column: 1 },
     domain_ids: [],
@@ -74,5 +74,21 @@ describe("architecture snapshot diff", () => {
       added: ["endpoint:added"],
       removed: ["endpoint:removed"],
     });
+  });
+
+  it("pairs moved symbols when path-based IDs change", () => {
+    const oldAtlas = atlas("old", []);
+    const newAtlas = atlas("new", []);
+    oldAtlas.symbols = [symbol("endpoint:old-path", "src/auth/controller.ts", "login")];
+    newAtlas.symbols = [symbol("endpoint:new-path", "src/api/auth-controller.ts", "login")];
+
+    const result = compareArchitecture(oldAtlas, newAtlas);
+
+    expect(result.symbols.added).toEqual([]);
+    expect(result.symbols.removed).toEqual([]);
+    expect(result.symbols.moved).toEqual(["endpoint:new-path"]);
+    expect(result.symbols.moved_pairs).toEqual([
+      { previous_id: "endpoint:old-path", current_id: "endpoint:new-path" },
+    ]);
   });
 });

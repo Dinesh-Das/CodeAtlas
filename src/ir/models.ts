@@ -217,6 +217,17 @@ export type GitChangeStatus =
   | "IMPACTED"
   | "UNCHANGED";
 
+export interface AtlasGitSymbolChange {
+  status: Exclude<GitChangeStatus, "IMPACTED" | "UNCHANGED">;
+  symbol_id: string | null;
+  previous_symbol_id: string | null;
+  name: string;
+  qualified_name: string | null;
+  kind: string;
+  file: string;
+  previous_file: string | null;
+}
+
 export interface AtlasGitChange {
   id: string;
   status: GitChangeStatus;
@@ -224,7 +235,13 @@ export interface AtlasGitChange {
   previous_file: string | null;
   line_ranges: Array<{ start_line: number; end_line: number }>;
   symbol_ids: string[];
+  symbol_changes: AtlasGitSymbolChange[];
+  impacted_symbol_ids: string[];
   impact_paths: ImpactPath[];
+  source_diff: string;
+  related_test_ids: string[];
+  rule_violation_ids: string[];
+  review_finding_ids: string[];
   evidence_ids: string[];
 }
 

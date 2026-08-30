@@ -77,4 +77,31 @@ describe("compiled CLI", () => {
       code: "ENOENT",
     });
   }, 30_000);
+
+  it("diffs an arbitrary head without changing the checked-out commit", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write("src/index.ts", "export function value(): number { return 1; }\n");
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "base");
+    const base = (await repository.git("rev-parse", "HEAD")).trim();
+    await repository.write("src/index.ts", "export function value(): number { return 2; }\nexport function added(): number { return value(); }\n");
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "head");
+    const head = (await repository.git("rev-parse", "HEAD")).trim();
+    await repository.git("checkout", "--detach", base);
+
+    const diffResult = await runCli("diff", repository.root, "--base", base, "--head", head, "--json");
+    const diff = JSON.parse(diffResult.stdout) as {
+      changes: Array<{ symbol_changes: Array<{ status: string; qualified_name: string | null }> }>;
+      changedSymbols: string[];
+    };
+    expect(diff.changedSymbols.length).toBeGreaterThan(0);
+    expect(diff.changes.flatMap((change) => change.symbol_changes)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "MODIFIED", qualified_name: "value" }),
+      expect.objectContaining({ status: "ADDED", qualified_name: "added" }),
+    ]));
+
+    expect((await repository.git("rev-parse", "HEAD")).trim()).toBe(base);
+  }, 90_000);
 });

@@ -39,7 +39,7 @@ export async function runGit(
       lastError = error;
       const stderr = String((error as { stderr?: unknown }).stderr ?? "");
       const transientWindowsIndexRead = process.platform === "win32" &&
-        /\.git\/index: index file open failed: Permission denied/iu.test(stderr);
+        /\.git(?:\/worktrees\/[^/]+)?\/index: index file open failed: Permission denied/iu.test(stderr);
       if (transientWindowsIndexRead && attempt < 2) {
         await delay(20 * (attempt + 1));
         continue;

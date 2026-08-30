@@ -1,13 +1,11 @@
-import { buildRepository } from "../compiler/build.js";
-import { loadCurrentAtlas } from "./v2-query.js";
+import { buildAtlasAtGitHead } from "../git/ref-atlas.js";
 
 export async function reviewRepository(
   startPath = process.cwd(),
   base = "HEAD",
   head = "HEAD",
 ) {
-  await buildRepository(startPath, { gitBase: base, gitHead: head });
-  const atlas = await loadCurrentAtlas(startPath);
+  const atlas = await buildAtlasAtGitHead(startPath, base, head, { snapshot: false });
   return {
     base,
     head,
