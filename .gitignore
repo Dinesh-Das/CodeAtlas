@@ -3,3 +3,6 @@ dist/
 coverage/
 *.log
 .codeatlas/
+codeatlas.html
+CODEATLAS.md
+codeatlas/

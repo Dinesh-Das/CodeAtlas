@@ -158,7 +158,7 @@ export async function computeWorktreeSignature(
     signature: sha256(
       `${repository.headCommit}|${indexHash}|${hashSortedEntries(entries)}`,
     ),
-    dirty: status.changedPaths.length > 0,
+    dirty: changedPaths.length > 0,
     changedFiles: changedPaths.length,
     changedPaths,
     trackedPaths,

@@ -14,6 +14,10 @@ export interface WorkspacePaths {
   state: string;
   logs: string;
   lock: string;
+  current: string;
+  snapshots: string;
+  cache: string;
+  agent: string;
 }
 
 export function workspacePaths(repositoryRoot: string): WorkspacePaths {
@@ -28,12 +32,22 @@ export function workspacePaths(repositoryRoot: string): WorkspacePaths {
     state: path.join(directory, "state.json"),
     logs: path.join(directory, "logs"),
     lock: path.join(directory, "lock"),
+    current: path.join(directory, "current"),
+    snapshots: path.join(directory, "snapshots"),
+    cache: path.join(directory, "cache"),
+    agent: path.join(directory, "agent"),
   };
 }
 
 export async function ensureWorkspaceDirectories(repositoryRoot: string): Promise<WorkspacePaths> {
   const paths = workspacePaths(repositoryRoot);
-  await mkdir(paths.logs, { recursive: true });
+  await Promise.all([
+    mkdir(paths.logs, { recursive: true }),
+    mkdir(paths.current, { recursive: true }),
+    mkdir(paths.snapshots, { recursive: true }),
+    mkdir(paths.cache, { recursive: true }),
+    mkdir(paths.agent, { recursive: true }),
+  ]);
   return paths;
 }
 
@@ -46,9 +60,13 @@ export async function workspaceExists(repositoryRoot: string): Promise<boolean> 
 }
 
 export async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> {
+  await writeTextAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+export async function writeTextAtomic(filePath: string, value: string): Promise<void> {
   const temporaryPath = `${filePath}.${randomUUID()}.tmp`;
   await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await writeFile(temporaryPath, value, "utf8");
   await rename(temporaryPath, filePath);
 }
 

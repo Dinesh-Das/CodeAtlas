@@ -17,6 +17,9 @@ const DEFAULT_IGNORES = [
   "__pycache__/",
   "vendor/",
   "target/",
+  "codeatlas.html",
+  "CODEATLAS.md",
+  "codeatlas/",
 ];
 
 const SECRET_IGNORES = [

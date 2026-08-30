@@ -1,0 +1,33 @@
+version: 1
+
+domains:
+  authentication:
+    include:
+      - src/auth/**
+  payments:
+    include:
+      - src/payments/**
+  users:
+    include:
+      - src/users/**
+
+architecture:
+  rules:
+    - id: controllers-must-not-call-repositories
+      description: Controllers must delegate persistence to services.
+      severity: error
+      source:
+        layer: controller
+      forbid:
+        calls:
+          layer: repository
+
+analysis:
+  max_call_depth: 8
+  max_impact_depth: 10
+
+html:
+  mode: single-file
+
+ai:
+  enabled: false
