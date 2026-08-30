@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import type { z } from "zod";
+import { z } from "zod";
 import { CodeAtlasError } from "../core/errors.js";
 import { CODEATLAS_VERSION } from "../version.js";
 import { ensureFreshIndex, type FreshContext } from "./freshness.js";
@@ -14,6 +14,27 @@ import {
   tracePacket,
 } from "./graph-tools.js";
 import { sourcePacket, statusPacket } from "./repository-tools.js";
+import {
+  callersIr,
+  changesIr,
+  compareSnapshotsIr,
+  controlFlowIr,
+  domainIr,
+  domainsIr,
+  entrypointsIr,
+  evidenceIr,
+  findSymbolIr,
+  flowIr,
+  impactIr,
+  irResult,
+  neighborhoodIr,
+  repositoryOverviewIr,
+  reviewIr,
+  rulesIr,
+  snapshotIr,
+  symbolIr,
+  tracePathIr,
+} from "./ir-tools.js";
 import {
   answerPacketSchema,
   dependenciesInputSchema,
@@ -148,6 +169,127 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
       validateConfiguredLimits(input, context);
       return resultFromPacket(architectureHealthPacket(context, input));
     },
+  );
+
+  const targetSchema = z.object({ target: z.string().min(1) }).strict();
+  const limitedTargetSchema = z.object({
+    target: z.string().min(1),
+    limit: z.number().int().positive().max(1_000).optional().default(100),
+  }).strict();
+  server.registerTool(
+    "find_symbol",
+    { description: "Find symbols in the canonical CodeAtlas IR.", inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().positive().max(1_000).optional().default(50) }).strict() },
+    async (input: { query: string; limit: number }) => irResult(await findSymbolIr(repositoryPath, input.query, input.limit)),
+  );
+  server.registerTool(
+    "search_symbols",
+    { description: "Search symbols in the canonical CodeAtlas IR.", inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().positive().max(1_000).optional().default(50) }).strict() },
+    async (input: { query: string; limit: number }) => irResult(await findSymbolIr(repositoryPath, input.query, input.limit)),
+  );
+  server.registerTool(
+    "get_repository_overview",
+    { description: "Return compact repository, domain, and entrypoint statistics from the canonical IR.", inputSchema: emptyInputSchema },
+    async () => irResult(await repositoryOverviewIr(repositoryPath)),
+  );
+  server.registerTool(
+    "get_symbol",
+    { description: "Return a symbol with relationships and evidence from the canonical IR.", inputSchema: targetSchema },
+    async (input: { target: string }) => irResult(await symbolIr(repositoryPath, input.target)),
+  );
+  server.registerTool(
+    "get_callers",
+    { description: "Return direct callers with canonical relationships and evidence.", inputSchema: limitedTargetSchema },
+    async (input: { target: string; limit: number }) => irResult(await callersIr(repositoryPath, input.target, input.limit)),
+  );
+  server.registerTool(
+    "get_callees",
+    { description: "Return direct callees and outgoing execution relationships.", inputSchema: limitedTargetSchema },
+    async (input: { target: string; limit: number }) => irResult(await neighborhoodIr(repositoryPath, input.target, "outgoing", input.limit)),
+  );
+  server.registerTool(
+    "get_dependencies",
+    { description: "Return outgoing canonical dependencies.", inputSchema: limitedTargetSchema },
+    async (input: { target: string; limit: number }) => irResult(await neighborhoodIr(repositoryPath, input.target, "outgoing", input.limit)),
+  );
+  server.registerTool(
+    "get_dependents",
+    { description: "Return incoming canonical dependents.", inputSchema: limitedTargetSchema },
+    async (input: { target: string; limit: number }) => irResult(await neighborhoodIr(repositoryPath, input.target, "incoming", input.limit)),
+  );
+  server.registerTool(
+    "trace_path",
+    { description: "Trace a bounded directed path between two symbols.", inputSchema: z.object({ from: z.string().min(1), to: z.string().min(1), depth: z.number().int().positive().max(30).optional().default(8) }).strict() },
+    async (input: { from: string; to: string; depth: number }) => irResult(await tracePathIr(repositoryPath, input.from, input.to, input.depth)),
+  );
+  server.registerTool(
+    "analyze_impact",
+    { description: "Return bounded impact paths and a transparent risk score.", inputSchema: z.object({ target: z.string().min(1), depth: z.number().int().positive().max(30).optional().default(8), limit: z.number().int().positive().max(2_000).optional().default(100) }).strict() },
+    async (input: { target: string; depth: number; limit: number }) => irResult(await impactIr(repositoryPath, input.target, input.depth, input.limit)),
+  );
+  server.registerTool(
+    "get_execution_flow",
+    { description: "Return a structured entrypoint execution flow from the canonical IR.", inputSchema: targetSchema },
+    async (input: { target: string }) => irResult(await flowIr(repositoryPath, input.target)),
+  );
+  server.registerTool(
+    "get_control_flow",
+    { description: "Return a function or method control-flow graph.", inputSchema: targetSchema },
+    async (input: { target: string }) => irResult(await controlFlowIr(repositoryPath, input.target)),
+  );
+  server.registerTool(
+    "get_evidence",
+    { description: "Resolve an evidence ID or a symbol's source evidence.", inputSchema: targetSchema },
+    async (input: { target: string }) => irResult(await evidenceIr(repositoryPath, input.target)),
+  );
+  server.registerTool(
+    "list_domains",
+    { description: "List architecture domains and their bounded memberships.", inputSchema: emptyInputSchema },
+    async () => irResult(await domainsIr(repositoryPath)),
+  );
+  server.registerTool(
+    "get_domain",
+    { description: "Return a domain and its bounded canonical membership.", inputSchema: targetSchema },
+    async (input: { target: string }) => irResult(await domainIr(repositoryPath, input.target)),
+  );
+  server.registerTool(
+    "get_entrypoints",
+    { description: "Return detected entrypoints and their structured flows.", inputSchema: emptyInputSchema },
+    async () => irResult(await entrypointsIr(repositoryPath)),
+  );
+  server.registerTool(
+    "get_git_changes",
+    { description: "Return Git changes mapped to symbols and impact paths.", inputSchema: emptyInputSchema },
+    async () => irResult(await changesIr(repositoryPath)),
+  );
+  server.registerTool(
+    "get_rules",
+    { description: "Return architecture rules and evidence-linked violations.", inputSchema: emptyInputSchema },
+    async () => irResult(await rulesIr(repositoryPath)),
+  );
+  server.registerTool(
+    "get_rule_violations",
+    { description: "Return evidence-linked architecture-rule violations.", inputSchema: emptyInputSchema },
+    async () => irResult(await rulesIr(repositoryPath)),
+  );
+  server.registerTool(
+    "review_changes",
+    { description: "Return deterministic, evidence-gated architecture review findings.", inputSchema: emptyInputSchema },
+    async () => irResult(await reviewIr(repositoryPath)),
+  );
+  server.registerTool(
+    "get_snapshot",
+    { description: "Return a persistent canonical architecture snapshot.", inputSchema: z.object({ id: z.string().min(1) }).strict() },
+    async (input: { id: string }) => irResult(await snapshotIr(repositoryPath, input.id)),
+  );
+  server.registerTool(
+    "compare_snapshots",
+    { description: "Compare two deterministic architecture snapshots.", inputSchema: z.object({ old_id: z.string().min(1), new_id: z.string().min(1) }).strict() },
+    async (input: { old_id: string; new_id: string }) => irResult(await compareSnapshotsIr(repositoryPath, input.old_id, input.new_id)),
+  );
+  server.registerTool(
+    "get_architecture_diff",
+    { description: "Compare two canonical architecture snapshots.", inputSchema: z.object({ old_id: z.string().min(1), new_id: z.string().min(1) }).strict() },
+    async (input: { old_id: string; new_id: string }) => irResult(await compareSnapshotsIr(repositoryPath, input.old_id, input.new_id)),
   );
 
   return server;
