@@ -1,7 +1,11 @@
 {
   "name": "@dinesh-das/codeatlas",
-  "version": "0.10.0-beta.2",
+  "version": "0.10.0-beta.3",
   "description": "Evidence-first code intelligence for AI coding agents, with verified and inferred repository relationships through MCP.",
+  "author": {
+    "name": "Dinesh Das",
+    "url": "https://github.com/Dinesh-Das"
+  },
   "type": "module",
   "bin": {
     "codeatlas": "dist/cli/index.js"
@@ -42,7 +46,11 @@
     "developer-tools",
     "static-analysis",
     "call-graph",
-    "typescript"
+    "typescript",
+    "model-context-protocol",
+    "ai-coding-agent",
+    "repository-analysis",
+    "cli"
   ],
   "repository": {
     "type": "git",

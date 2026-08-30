@@ -4,6 +4,9 @@ CodeAtlas publishes the public npm package `@dinesh-das/codeatlas` from
 `.github/workflows/release.yml`. The package is scoped because the unscoped `codeatlas` name is
 owned by an unrelated project. The installed executable is still `codeatlas`.
 
+- npm: <https://www.npmjs.com/package/@dinesh-das/codeatlas>
+- GitHub: <https://github.com/Dinesh-Das/CodeAtlas>
+
 ## One-time npm setup
 
 1. Create or obtain publish access to the npm scope `@dinesh-das`.
@@ -21,6 +24,11 @@ owned by an unrelated project. The installed executable is still `codeatlas`.
 4. Create and push a tag named exactly `v<package version>`, such as `v0.10.0-beta.1`.
 5. Confirm the `npm Release` workflow succeeds and verify the published package metadata and
    provenance on npm.
+6. Verify the public artifact directly with
+   `npx --yes --package=@dinesh-das/codeatlas@<version> codeatlas --version`.
+
+Published npm versions are immutable. Never reuse a version after `npm publish` succeeds; correct
+the issue in a new semantic version and update all four version sources before tagging it.
 
 The workflow refuses to publish when the Git tag and package version differ. The release check
 also builds from a clean `dist/`, packs the exact npm tarball, installs it into a disposable Git
