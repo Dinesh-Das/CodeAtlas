@@ -141,6 +141,36 @@ describe("codeatlas build v2", () => {
     expect(html).not.toMatch(/<link[^>]+href=/iu);
     await expect(stat(path.join(root, ".codeatlas", "snapshots", first.snapshotId, "atlas.json"))).resolves.toBeDefined();
 
+    const requiredTimingKeys = [
+      "fileCollection",
+      "parsing",
+      "symbolExtraction",
+      "relationshipResolution",
+      "domainAnalysis",
+      "flowGeneration",
+      "cfgGeneration",
+      "impactIndexing",
+      "gitAnalysis",
+      "htmlExport",
+      "snapshotPersistence",
+    ] as const;
+    for (const key of requiredTimingKeys) {
+      expect(Number.isFinite(first.timingsMs[key])).toBe(true);
+      expect(first.timingsMs[key]).toBeGreaterThanOrEqual(0);
+    }
+    const buildMetadata = JSON.parse(
+      await readFile(path.join(first.currentDirectory, "build.json"), "utf8"),
+    ) as {
+      parsed_files?: number;
+      reused_files?: number;
+      timings_ms?: Record<string, number>;
+    };
+    expect(buildMetadata.parsed_files).toBe(first.parsedFiles);
+    expect(buildMetadata.reused_files).toBe(first.reusedFiles);
+    for (const key of requiredTimingKeys) {
+      expect(buildMetadata.timings_ms?.[key]).toBe(first.timingsMs[key]);
+    }
+
     const second = await buildRepository(root);
     expect(second.parsedFiles).toBe(0);
     expect(second.reusedFiles).toBe(first.statistics.files);

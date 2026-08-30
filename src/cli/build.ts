@@ -22,7 +22,8 @@ export function formatBuildResult(result: BuildResult): string {
     `  ${result.currentDirectory}`,
     result.bundlePath === null ? null : `  ${result.bundlePath}`,
     "",
-    `Total ${result.timingsMs.total.toFixed(0)} ms (index ${result.timingsMs.indexing.toFixed(0)}, IR ${result.timingsMs.ir.toFixed(0)}, flows ${result.timingsMs.flows.toFixed(0)}, CFG ${result.timingsMs.controlFlow.toFixed(0)}, impact ${result.timingsMs.impact.toFixed(0)}, export ${result.timingsMs.export.toFixed(0)})`,
+    `Performance (ms): collect ${result.timingsMs.fileCollection.toFixed(0)}, parse ${result.timingsMs.parsing.toFixed(0)}, symbols ${result.timingsMs.symbolExtraction.toFixed(0)}, resolve ${result.timingsMs.relationshipResolution.toFixed(0)}, domains ${result.timingsMs.domainAnalysis.toFixed(0)}, flows ${result.timingsMs.flowGeneration.toFixed(0)}, CFG ${result.timingsMs.cfgGeneration.toFixed(0)}, impact ${result.timingsMs.impactIndexing.toFixed(0)}, Git ${result.timingsMs.gitAnalysis.toFixed(0)}, HTML ${result.timingsMs.htmlExport.toFixed(0)}, snapshot ${result.timingsMs.snapshotPersistence.toFixed(0)}`,
+    `Total ${result.timingsMs.total.toFixed(0)} ms; parsed ${result.parsedFiles} files; reused ${result.reusedFiles} files`,
   ].filter((line): line is string => line !== null).join("\n");
 }
 

@@ -27,7 +27,7 @@ import { applyDomainOverrides } from "../rules/domains.js";
 import { evaluateArchitectureRules } from "../rules/engine.js";
 import { buildDeterministicReview } from "../review/review.js";
 import { openDatabase } from "../storage/database.js";
-import type { IndexProgress } from "../core/telemetry.js";
+import type { IndexPhaseName, IndexProgress } from "../core/telemetry.js";
 
 export interface BuildResult {
   repositoryRoot: string;
@@ -56,6 +56,17 @@ export interface BuildResult {
 }
 
 export interface BuildTimings {
+  fileCollection: number;
+  parsing: number;
+  symbolExtraction: number;
+  relationshipResolution: number;
+  domainAnalysis: number;
+  flowGeneration: number;
+  cfgGeneration: number;
+  impactIndexing: number;
+  gitAnalysis: number;
+  htmlExport: number;
+  snapshotPersistence: number;
   indexing: number;
   ir: number;
   flows: number;
@@ -65,6 +76,17 @@ export interface BuildTimings {
   export: number;
   snapshot: number;
   total: number;
+}
+
+function indexPhaseElapsedMs(
+  phaseMetrics: readonly { phase: IndexPhaseName; elapsedMs: number }[],
+  phase: IndexPhaseName,
+): number {
+  return phaseMetrics.find((metric) => metric.phase === phase)?.elapsedMs ?? 0;
+}
+
+function roundedMs(value: number): number {
+  return Number(value.toFixed(2));
 }
 
 function resolveHtmlMode(
@@ -470,12 +492,18 @@ export async function buildRepository(
       mcp_command: "codeatlas mcp",
     }),
   ];
+  let htmlExportMs = 0;
+  const htmlExportTask = (async () => {
+    const htmlExportStarted = performance.now();
+    await exportAtlasHtml(atlas, htmlPath);
+    htmlExportMs = performance.now() - htmlExportStarted;
+  })();
   if (bundlePath === null) {
-    await Promise.all([exportAtlasHtml(atlas, htmlPath), ...commonExports]);
+    await Promise.all([htmlExportTask, ...commonExports]);
   } else {
     await Promise.all([
       exportAtlasBundle(atlas, bundlePath),
-      exportAtlasHtml(atlas, htmlPath),
+      htmlExportTask,
       ...commonExports,
     ]);
   }
@@ -485,15 +513,26 @@ export async function buildRepository(
   if (snapshotCreated) await persistSnapshot(atlas, paths.snapshots);
   const snapshotMs = performance.now() - snapshotStarted;
   const timingsMs = {
-    indexing: Number(indexMs.toFixed(2)),
-    ir: Number(irMs.toFixed(2)),
-    flows: Number(flowsMs.toFixed(2)),
-    controlFlow: Number(cfgMs.toFixed(2)),
-    impact: Number(impactMs.toFixed(2)),
-    git: Number(gitMs.toFixed(2)),
-    export: Number(exportMs.toFixed(2)),
-    snapshot: Number(snapshotMs.toFixed(2)),
-    total: Number((performance.now() - totalStarted).toFixed(2)),
+    fileCollection: roundedMs(indexPhaseElapsedMs(index.phaseMetrics, "repository_discovery")),
+    parsing: roundedMs(indexPhaseElapsedMs(index.phaseMetrics, "tree_sitter_parsing")),
+    symbolExtraction: roundedMs(indexPhaseElapsedMs(index.phaseMetrics, "symbol_extraction")),
+    relationshipResolution: roundedMs(indexPhaseElapsedMs(index.phaseMetrics, "graph_resolution")),
+    domainAnalysis: roundedMs(indexPhaseElapsedMs(index.phaseMetrics, "architecture_domain_feature_analysis")),
+    flowGeneration: roundedMs(flowsMs),
+    cfgGeneration: roundedMs(cfgMs),
+    impactIndexing: roundedMs(impactMs),
+    gitAnalysis: roundedMs(gitMs),
+    htmlExport: roundedMs(htmlExportMs),
+    snapshotPersistence: snapshotCreated ? roundedMs(snapshotMs) : 0,
+    indexing: roundedMs(indexMs),
+    ir: roundedMs(irMs),
+    flows: roundedMs(flowsMs),
+    controlFlow: roundedMs(cfgMs),
+    impact: roundedMs(impactMs),
+    git: roundedMs(gitMs),
+    export: roundedMs(exportMs),
+    snapshot: roundedMs(snapshotMs),
+    total: roundedMs(performance.now() - totalStarted),
   };
   await writeJsonAtomic(path.join(paths.current, "build.json"), {
     schema_version: atlas.schema_version,
