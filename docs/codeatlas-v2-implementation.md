@@ -183,9 +183,10 @@ The first production compiler slice is implemented:
   bundle output, and persistent commit/worktree snapshots.
 - Bounded multi-level HTML navigation, complete hidden-node search, structured entrypoint flows,
   bounded AST-derived CFGs, interactive impact traversal, Git/rule/review views, and source details.
-- Explainable impact scores and paths, Git hunk-to-symbol mapping, architecture snapshot comparison,
-  explicit `.codeatlas.yml` domains, reusable rule predicates, CI exit behavior, and deterministic
-  evidence-gated review findings.
+- Explainable impact scores and paths, Git hunk-to-symbol mapping, and deterministic architecture
+  snapshot evolution covering domains, dependencies, APIs, dependency cycles, centrality changes,
+  and introduced/resolved rule violations. Explicit `.codeatlas.yml` domains, reusable rule
+  predicates, CI exit behavior, and deterministic evidence-gated review findings are also supported.
 - Canonical-IR MCP tools and deterministic evidence-grounded `ask` answers.
 - End-to-end Authentication/Payments/Users fixture coverage plus offline, incremental, rule, flow,
   CFG, impact, snapshot, Git mapping, MCP parity, and 5,000-symbol LOD tests.
