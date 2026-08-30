@@ -150,6 +150,41 @@ export interface ImpactPath {
   evidence_ids: string[];
 }
 
+export interface ImpactFactor {
+  value: number;
+  weight: number;
+  contribution: number;
+}
+
+export interface ImpactScoreComponents {
+  direct_callers: ImpactFactor;
+  transitive_reach: ImpactFactor;
+  affected_entrypoints: ImpactFactor;
+  cross_domain: ImpactFactor;
+  public_api: ImpactFactor;
+  database_schema: ImpactFactor;
+  missing_test_coverage: ImpactFactor;
+  centrality: ImpactFactor;
+  architecture_rules: ImpactFactor;
+}
+
+export interface ImpactResult {
+  changed: string;
+  direct_callers: string[];
+  direct_dependencies: string[];
+  transitive_callers: string[];
+  transitive_dependencies: string[];
+  affected_files: string[];
+  affected_domains: string[];
+  affected_entrypoints: string[];
+  affected_apis: string[];
+  affected_tests: string[];
+  affected_rules: string[];
+  paths: ImpactPath[];
+  dependency_paths: ImpactPath[];
+  score: ImpactScore | null;
+}
+
 export interface ImpactScore {
   symbol_id: string;
   score: number;
@@ -159,6 +194,12 @@ export interface ImpactScore {
   affected_entrypoints: number;
   affected_domains: number;
   cross_domain: boolean;
+  affected_apis: number;
+  affected_tests: number;
+  affected_rules: number;
+  database_schema_impact: boolean;
+  centrality: number;
+  components: ImpactScoreComponents;
   reasons: string[];
 }
 

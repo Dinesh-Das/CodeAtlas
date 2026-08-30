@@ -1,4 +1,4 @@
-import { analyzeImpact } from "../analysis/impact.js";
+import { describeImpact } from "../analysis/impact.js";
 import { workspacePaths } from "../core/workspace.js";
 import { compareSnapshots, loadSnapshot } from "../git/snapshots.js";
 import type { Atlas } from "../ir/models.js";
@@ -127,8 +127,7 @@ export async function impactIr(repositoryPath: string, target: string, depth: nu
   const symbol = resolve(atlas, target);
   return {
     symbol,
-    score: atlas.impact.scores.find((score) => score.symbol_id === symbol.id) ?? null,
-    paths: analyzeImpact(atlas, symbol.id, { depth, limit }),
+    ...describeImpact(atlas, symbol.id, { depth, limit }),
   };
 }
 

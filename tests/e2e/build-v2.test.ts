@@ -70,6 +70,19 @@ describe("codeatlas build v2", () => {
     ]);
     expect(found.results.some((symbol) => symbol.qualified_name === "authenticate")).toBe(true);
     expect(impact.paths.length).toBeGreaterThan(0);
+    expect(impact.direct_callers.length).toBeGreaterThan(0);
+    expect(impact.direct_dependencies.length).toBeGreaterThan(0);
+    expect(impact.transitive_callers.length).toBeGreaterThan(impact.direct_callers.length);
+    expect(impact.affected_files).toContain("src/auth/service.ts");
+    expect(impact.affected_domains.length).toBeGreaterThan(0);
+    expect(impact.affected_entrypoints.length).toBeGreaterThan(0);
+    expect(impact.affected_apis.length).toBeGreaterThan(0);
+    expect(impact.affected_tests.length).toBeGreaterThan(0);
+    expect(impact.score?.components.centrality).toBeDefined();
+    expect(impact.score?.components.public_api).toBeDefined();
+    expect(impact.score?.components.database_schema).toBeDefined();
+    expect(impact.score?.components.missing_test_coverage).toBeDefined();
+    expect(impact.score?.components.architecture_rules).toBeDefined();
     expect(execution.flow?.steps).toEqual(atlas.flows.find((flow) => flow.entrypoint_id === endpoint.id)?.steps);
     expect(evidence.evidence.length).toBeGreaterThan(0);
     const html = await readFile(first.htmlPath, "utf8");
@@ -80,6 +93,8 @@ describe("codeatlas build v2", () => {
     expect(html).toContain("deterministic");
     expect(html).toContain("Edges preserve branch labels");
     expect(html).toContain("Architecture-rule status");
+    expect(html).toContain("Affected APIs");
+    expect(html).toContain("Direct dependencies");
     expect(html).not.toMatch(/<script[^>]+src=/iu);
     expect(html).not.toMatch(/<link[^>]+href=/iu);
     await expect(stat(path.join(root, ".codeatlas", "snapshots", first.snapshotId, "atlas.json"))).resolves.toBeDefined();

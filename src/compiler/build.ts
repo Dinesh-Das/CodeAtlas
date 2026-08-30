@@ -194,10 +194,7 @@ export async function buildRepository(
   const cfgStarted = performance.now();
   atlas.control_flows = await buildControlFlows(atlas, index.repository.root);
   const cfgMs = performance.now() - cfgStarted;
-  const impactStarted = performance.now();
-  atlas.impact = buildImpactIndex(atlas);
   const analyzeImpact = createImpactAnalyzer(atlas);
-  const impactMs = performance.now() - impactStarted;
   const gitStarted = performance.now();
   let headCommit = index.repository.headCommit;
   let baseCommit = headCommit;
@@ -238,6 +235,9 @@ export async function buildRepository(
 
   atlas.rules = v2Config.architecture.rules;
   atlas.rule_violations = evaluateArchitectureRules(atlas, atlas.rules);
+  const impactStarted = performance.now();
+  atlas.impact = buildImpactIndex(atlas);
+  const impactMs = performance.now() - impactStarted;
   atlas.review_findings = buildDeterministicReview(atlas);
 
   atlas.statistics = {

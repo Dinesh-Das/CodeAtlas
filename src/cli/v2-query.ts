@@ -1,4 +1,4 @@
-import { analyzeImpact } from "../analysis/impact.js";
+import { describeImpact } from "../analysis/impact.js";
 import type { Atlas } from "../ir/models.js";
 import { architectureService } from "../service/architecture-service.js";
 
@@ -28,5 +28,5 @@ export function resolveSymbol(atlas: Atlas, target: string): Atlas["symbols"][nu
 
 export function impactFor(atlas: Atlas, target: string, depth = 8, limit = 100) {
   const symbol = resolveSymbol(atlas, target);
-  return { symbol, paths: analyzeImpact(atlas, symbol.id, { depth, limit }) };
+  return { symbol, ...describeImpact(atlas, symbol.id, { depth, limit }) };
 }
