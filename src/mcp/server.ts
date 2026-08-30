@@ -175,16 +175,21 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
   const limitedTargetSchema = z.object({
     target: z.string().min(1),
     limit: z.number().int().positive().max(1_000).optional().default(100),
+    cursor: z.string().min(1).optional(),
+  }).strict();
+  const paginatedSchema = z.object({
+    limit: z.number().int().positive().max(1_000).optional().default(100),
+    cursor: z.string().min(1).optional(),
   }).strict();
   server.registerTool(
     "find_symbol",
-    { description: "Find symbols in the canonical CodeAtlas IR.", inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().positive().max(1_000).optional().default(50) }).strict() },
-    async (input: { query: string; limit: number }) => irResult(await findSymbolIr(repositoryPath, input.query, input.limit)),
+    { description: "Find symbols in the canonical CodeAtlas IR.", inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().positive().max(1_000).optional().default(50), cursor: z.string().min(1).optional() }).strict() },
+    async (input: { query: string; limit: number; cursor?: string | undefined }) => irResult(await findSymbolIr(repositoryPath, input.query, input.limit, input.cursor)),
   );
   server.registerTool(
     "search_symbols",
-    { description: "Search symbols in the canonical CodeAtlas IR.", inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().positive().max(1_000).optional().default(50) }).strict() },
-    async (input: { query: string; limit: number }) => irResult(await findSymbolIr(repositoryPath, input.query, input.limit)),
+    { description: "Search symbols in the canonical CodeAtlas IR.", inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().positive().max(1_000).optional().default(50), cursor: z.string().min(1).optional() }).strict() },
+    async (input: { query: string; limit: number; cursor?: string | undefined }) => irResult(await findSymbolIr(repositoryPath, input.query, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_repository_overview",
@@ -199,22 +204,22 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
   server.registerTool(
     "get_callers",
     { description: "Return direct callers with canonical relationships and evidence.", inputSchema: limitedTargetSchema },
-    async (input: { target: string; limit: number }) => irResult(await callersIr(repositoryPath, input.target, input.limit)),
+    async (input: { target: string; limit: number; cursor?: string | undefined }) => irResult(await callersIr(repositoryPath, input.target, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_callees",
     { description: "Return direct callees and outgoing execution relationships.", inputSchema: limitedTargetSchema },
-    async (input: { target: string; limit: number }) => irResult(await neighborhoodIr(repositoryPath, input.target, "outgoing", input.limit)),
+    async (input: { target: string; limit: number; cursor?: string | undefined }) => irResult(await neighborhoodIr(repositoryPath, input.target, "outgoing", input.limit, input.cursor)),
   );
   server.registerTool(
     "get_dependencies",
     { description: "Return outgoing canonical dependencies.", inputSchema: limitedTargetSchema },
-    async (input: { target: string; limit: number }) => irResult(await neighborhoodIr(repositoryPath, input.target, "outgoing", input.limit)),
+    async (input: { target: string; limit: number; cursor?: string | undefined }) => irResult(await neighborhoodIr(repositoryPath, input.target, "outgoing", input.limit, input.cursor)),
   );
   server.registerTool(
     "get_dependents",
     { description: "Return incoming canonical dependents.", inputSchema: limitedTargetSchema },
-    async (input: { target: string; limit: number }) => irResult(await neighborhoodIr(repositoryPath, input.target, "incoming", input.limit)),
+    async (input: { target: string; limit: number; cursor?: string | undefined }) => irResult(await neighborhoodIr(repositoryPath, input.target, "incoming", input.limit, input.cursor)),
   );
   server.registerTool(
     "trace_path",
@@ -243,38 +248,38 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
   );
   server.registerTool(
     "list_domains",
-    { description: "List architecture domains and their bounded memberships.", inputSchema: emptyInputSchema },
-    async () => irResult(await domainsIr(repositoryPath)),
+    { description: "List architecture domains and their bounded memberships.", inputSchema: paginatedSchema },
+    async (input: { limit: number; cursor?: string | undefined }) => irResult(await domainsIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_domain",
-    { description: "Return a domain and its bounded canonical membership.", inputSchema: targetSchema },
-    async (input: { target: string }) => irResult(await domainIr(repositoryPath, input.target)),
+    { description: "Return a domain and its bounded canonical membership.", inputSchema: limitedTargetSchema },
+    async (input: { target: string; limit: number; cursor?: string | undefined }) => irResult(await domainIr(repositoryPath, input.target, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_entrypoints",
-    { description: "Return detected entrypoints and their structured flows.", inputSchema: emptyInputSchema },
-    async () => irResult(await entrypointsIr(repositoryPath)),
+    { description: "Return detected entrypoints and their structured flows.", inputSchema: paginatedSchema },
+    async (input: { limit: number; cursor?: string | undefined }) => irResult(await entrypointsIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_git_changes",
-    { description: "Return Git changes mapped to symbols and impact paths.", inputSchema: emptyInputSchema },
-    async () => irResult(await changesIr(repositoryPath)),
+    { description: "Return Git changes mapped to symbols and impact paths.", inputSchema: paginatedSchema },
+    async (input: { limit: number; cursor?: string | undefined }) => irResult(await changesIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_rules",
-    { description: "Return architecture rules and evidence-linked violations.", inputSchema: emptyInputSchema },
-    async () => irResult(await rulesIr(repositoryPath)),
+    { description: "Return architecture rules and evidence-linked violations.", inputSchema: paginatedSchema },
+    async (input: { limit: number; cursor?: string | undefined }) => irResult(await rulesIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_rule_violations",
-    { description: "Return evidence-linked architecture-rule violations.", inputSchema: emptyInputSchema },
-    async () => irResult(await rulesIr(repositoryPath)),
+    { description: "Return evidence-linked architecture-rule violations.", inputSchema: paginatedSchema },
+    async (input: { limit: number; cursor?: string | undefined }) => irResult(await rulesIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "review_changes",
-    { description: "Return deterministic, evidence-gated architecture review findings.", inputSchema: emptyInputSchema },
-    async () => irResult(await reviewIr(repositoryPath)),
+    { description: "Return deterministic, evidence-gated architecture review findings.", inputSchema: paginatedSchema },
+    async (input: { limit: number; cursor?: string | undefined }) => irResult(await reviewIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_snapshot",

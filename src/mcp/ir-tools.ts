@@ -1,11 +1,107 @@
 import { describeImpact } from "../analysis/impact.js";
+import { symbolSearchText } from "../analysis/simplification.js";
+import { loadConfig } from "../core/config.js";
+import { CodeAtlasError } from "../core/errors.js";
 import { workspacePaths } from "../core/workspace.js";
 import { compareSnapshots, loadSnapshot } from "../git/snapshots.js";
 import type { Atlas } from "../ir/models.js";
+import { loadV2Config } from "../rules/config.js";
 import { architectureService } from "../service/architecture-service.js";
 
 export async function loadFreshIr(repositoryPath: string): Promise<Atlas> {
   return (await architectureService.load(repositoryPath)).atlas;
+}
+
+interface IrRuntime {
+  atlas: Atlas;
+  fingerprint: string;
+  maxResultNodes: number;
+  maxCallDepth: number;
+  maxImpactDepth: number;
+}
+
+interface CursorPayload {
+  version: 1;
+  scope: string;
+  fingerprint: string;
+  offset: number;
+}
+
+interface PageRequest {
+  limit: number;
+  cursor?: string;
+}
+
+async function loadIrRuntime(repositoryPath: string): Promise<IrRuntime> {
+  const context = await architectureService.load(repositoryPath);
+  const [config, v2Config] = await Promise.all([
+    loadConfig(context.repositoryRoot),
+    loadV2Config(context.repositoryRoot),
+  ]);
+  return {
+    atlas: context.atlas,
+    fingerprint: context.fingerprint,
+    maxResultNodes: config.limits.maxMcpResultNodes,
+    maxCallDepth: Math.min(config.limits.maxTraversalDepth, v2Config.analysis.max_call_depth),
+    maxImpactDepth: Math.min(config.limits.maxTraversalDepth, v2Config.analysis.max_impact_depth),
+  };
+}
+
+function encodeCursor(payload: CursorPayload): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeCursor(cursor: string, scope: string, fingerprint: string): number {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<CursorPayload>;
+    if (
+      value.version !== 1 ||
+      value.scope !== scope ||
+      value.fingerprint !== fingerprint ||
+      !Number.isInteger(value.offset) ||
+      (value.offset ?? -1) < 0
+    ) {
+      throw new Error("cursor context mismatch");
+    }
+    return value.offset!;
+  } catch (error) {
+    throw new CodeAtlasError("Invalid or stale canonical-IR cursor. Restart the query without a cursor.", { cause: error });
+  }
+}
+
+function page<T>(
+  items: readonly T[],
+  request: PageRequest,
+  scope: string,
+  runtime: IrRuntime,
+): { items: T[]; pagination: { limit: number; returned: number; total: number; cursor: string | null; has_more: boolean } } {
+  if (request.limit > runtime.maxResultNodes) {
+    throw new CodeAtlasError(
+      `Requested limit exceeds config.limits.maxMcpResultNodes (${runtime.maxResultNodes}).`,
+    );
+  }
+  const offset = request.cursor === undefined ? 0 : decodeCursor(request.cursor, scope, runtime.fingerprint);
+  const selected = items.slice(offset, offset + request.limit);
+  const nextOffset = offset + selected.length;
+  const hasMore = nextOffset < items.length;
+  return {
+    items: selected,
+    pagination: {
+      limit: request.limit,
+      returned: selected.length,
+      total: items.length,
+      cursor: hasMore
+        ? encodeCursor({ version: 1, scope, fingerprint: runtime.fingerprint, offset: nextOffset })
+        : null,
+      has_more: hasMore,
+    },
+  };
+}
+
+function validateDepth(depth: number, maximum: number, label: string): void {
+  if (depth > maximum) {
+    throw new CodeAtlasError(`Requested ${label} exceeds configured maximum (${maximum}).`);
+  }
 }
 
 function resolve(atlas: Atlas, target: string) {
@@ -23,57 +119,71 @@ function resolve(atlas: Atlas, target: string) {
   return matches[0]!;
 }
 
-export async function findSymbolIr(repositoryPath: string, query: string, limit: number) {
-  const atlas = await loadFreshIr(repositoryPath);
+export async function findSymbolIr(repositoryPath: string, query: string, limit: number, cursor?: string) {
+  const runtime = await loadIrRuntime(repositoryPath);
+  const atlas = runtime.atlas;
   const needle = query.toLocaleLowerCase();
+  const matches = atlas.symbols.filter((symbol) => symbolSearchText(symbol, atlas).includes(needle));
+  const result = page(matches, { limit, ...(cursor === undefined ? {} : { cursor }) }, `find_symbol:${needle}`, runtime);
   return {
     schema_version: atlas.schema_version,
     derivation: "canonical_ir",
-    results: atlas.symbols.filter((symbol) =>
-      [symbol.id, symbol.name, symbol.qualified_name, symbol.file, symbol.kind]
-        .filter((value): value is string => value !== null)
-        .some((value) => value.toLocaleLowerCase().includes(needle)),
-    ).slice(0, limit),
+    results: result.items,
+    pagination: result.pagination,
   };
 }
 
-export async function callersIr(repositoryPath: string, target: string, limit: number) {
-  const atlas = await loadFreshIr(repositoryPath);
+export async function callersIr(repositoryPath: string, target: string, limit: number, cursor?: string) {
+  const runtime = await loadIrRuntime(repositoryPath);
+  const atlas = runtime.atlas;
   const symbol = resolve(atlas, target);
-  const relationships = atlas.relationships.filter((edge) =>
+  const matches = atlas.relationships.filter((edge) =>
     edge.target === symbol.id && ["CALLS", "HANDLES", "TRIGGERS", "MAY_CONTINUE_TO"].includes(edge.type),
-  ).slice(0, limit);
+  );
+  const result = page(matches, { limit, ...(cursor === undefined ? {} : { cursor }) }, `callers:${symbol.id}`, runtime);
+  const relationships = result.items;
   const ids = new Set(relationships.map((edge) => edge.source));
   return {
     symbol,
     direct_callers: relationships.length,
     callers: atlas.symbols.filter((item) => ids.has(item.id)),
     relationships,
+    pagination: result.pagination,
   };
 }
 
 export async function symbolIr(repositoryPath: string, target: string) {
-  const atlas = await loadFreshIr(repositoryPath);
+  const runtime = await loadIrRuntime(repositoryPath);
+  const atlas = runtime.atlas;
   const symbol = resolve(atlas, target);
   const evidenceIds = new Set(symbol.evidence_ids);
+  const relationships = atlas.relationships.filter((edge) => edge.source === symbol.id || edge.target === symbol.id);
+  const result = page(relationships, { limit: runtime.maxResultNodes }, `symbol:${symbol.id}:relationships`, runtime);
   return {
     symbol,
-    relationships: atlas.relationships.filter((edge) => edge.source === symbol.id || edge.target === symbol.id).slice(0, 200),
+    relationships: result.items,
+    pagination: result.pagination,
     evidence: atlas.evidence.filter((item) => evidenceIds.has(item.id)),
   };
 }
 
 export async function repositoryOverviewIr(repositoryPath: string) {
-  const atlas = await loadFreshIr(repositoryPath);
+  const runtime = await loadIrRuntime(repositoryPath);
+  const atlas = runtime.atlas;
+  const domains = page(atlas.domains, { limit: runtime.maxResultNodes }, "overview:domains", runtime);
+  const entrypointIds = new Set(atlas.entrypoint_ids);
+  const entrypointSymbols = atlas.symbols.filter((symbol) => entrypointIds.has(symbol.id));
+  const entrypoints = page(entrypointSymbols, { limit: runtime.maxResultNodes }, "overview:entrypoints", runtime);
   return {
     schema_version: atlas.schema_version,
     project: atlas.project,
     snapshot: atlas.snapshot,
     statistics: atlas.statistics,
-    domains: atlas.domains.map((domain) => ({
+    domains: domains.items.map((domain) => ({
       id: domain.id, name: domain.name, members: domain.member_ids.length, entrypoints: domain.entrypoint_ids.length,
     })),
-    entrypoints: atlas.entrypoint_ids.map((id) => atlas.symbols.find((symbol) => symbol.id === id)).filter(Boolean),
+    entrypoints: entrypoints.items,
+    pagination: { domains: domains.pagination, entrypoints: entrypoints.pagination },
   };
 }
 
@@ -82,18 +192,35 @@ export async function neighborhoodIr(
   target: string,
   direction: "outgoing" | "incoming",
   limit: number,
+  cursor?: string,
 ) {
-  const atlas = await loadFreshIr(repositoryPath);
+  const runtime = await loadIrRuntime(repositoryPath);
+  const atlas = runtime.atlas;
   const symbol = resolve(atlas, target);
-  const relationships = atlas.relationships.filter((edge) =>
+  const matches = atlas.relationships.filter((edge) =>
     direction === "outgoing" ? edge.source === symbol.id : edge.target === symbol.id,
-  ).slice(0, limit);
+  );
+  const result = page(
+    matches,
+    { limit, ...(cursor === undefined ? {} : { cursor }) },
+    `neighborhood:${direction}:${symbol.id}`,
+    runtime,
+  );
+  const relationships = result.items;
   const ids = new Set(relationships.map((edge) => direction === "outgoing" ? edge.target : edge.source));
-  return { symbol, direction, relationships, symbols: atlas.symbols.filter((item) => ids.has(item.id)) };
+  return {
+    symbol,
+    direction,
+    relationships,
+    symbols: atlas.symbols.filter((item) => ids.has(item.id)),
+    pagination: result.pagination,
+  };
 }
 
 export async function tracePathIr(repositoryPath: string, from: string, to: string, depth: number) {
-  const atlas = await loadFreshIr(repositoryPath);
+  const runtime = await loadIrRuntime(repositoryPath);
+  validateDepth(depth, runtime.maxCallDepth, "depth");
+  const atlas = runtime.atlas;
   const source = resolve(atlas, from);
   const target = resolve(atlas, to);
   const outgoing = new Map<string, Atlas["relationships"]>();
@@ -123,7 +250,12 @@ export async function tracePathIr(repositoryPath: string, from: string, to: stri
 }
 
 export async function impactIr(repositoryPath: string, target: string, depth: number, limit: number) {
-  const atlas = await loadFreshIr(repositoryPath);
+  const runtime = await loadIrRuntime(repositoryPath);
+  validateDepth(depth, runtime.maxImpactDepth, "impact depth");
+  if (limit > runtime.maxResultNodes) {
+    throw new CodeAtlasError(`Requested limit exceeds config.limits.maxMcpResultNodes (${runtime.maxResultNodes}).`);
+  }
+  const atlas = runtime.atlas;
   const symbol = resolve(atlas, target);
   return {
     symbol,
@@ -132,19 +264,19 @@ export async function impactIr(repositoryPath: string, target: string, depth: nu
 }
 
 export async function flowIr(repositoryPath: string, target: string) {
-  const atlas = await loadFreshIr(repositoryPath);
+  const atlas = (await loadIrRuntime(repositoryPath)).atlas;
   const symbol = resolve(atlas, target);
   return { flow: atlas.flows.find((flow) => flow.entrypoint_id === symbol.id || flow.id === target) ?? null };
 }
 
 export async function controlFlowIr(repositoryPath: string, target: string) {
-  const atlas = await loadFreshIr(repositoryPath);
+  const atlas = (await loadIrRuntime(repositoryPath)).atlas;
   const symbol = resolve(atlas, target);
   return { symbol, control_flow: atlas.control_flows.find((flow) => flow.symbol_id === symbol.id) ?? null };
 }
 
 export async function evidenceIr(repositoryPath: string, target: string) {
-  const atlas = await loadFreshIr(repositoryPath);
+  const atlas = (await loadIrRuntime(repositoryPath)).atlas;
   const direct = atlas.evidence.find((evidence) => evidence.id === target);
   if (direct !== undefined) return { evidence: [direct] };
   const symbol = resolve(atlas, target);
@@ -152,39 +284,63 @@ export async function evidenceIr(repositoryPath: string, target: string) {
   return { symbol, evidence: atlas.evidence.filter((evidence) => ids.has(evidence.id)) };
 }
 
-export async function domainsIr(repositoryPath: string) {
-  const atlas = await loadFreshIr(repositoryPath);
-  return { domains: atlas.domains };
+export async function domainsIr(repositoryPath: string, limit = 100, cursor?: string) {
+  const runtime = await loadIrRuntime(repositoryPath);
+  const result = page(runtime.atlas.domains, { limit, ...(cursor === undefined ? {} : { cursor }) }, "domains", runtime);
+  return { domains: result.items, pagination: result.pagination };
 }
 
-export async function domainIr(repositoryPath: string, target: string) {
-  const atlas = await loadFreshIr(repositoryPath);
+export async function domainIr(repositoryPath: string, target: string, limit = 100, cursor?: string) {
+  const runtime = await loadIrRuntime(repositoryPath);
+  const atlas = runtime.atlas;
   const needle = target.toLocaleLowerCase();
   const domain = atlas.domains.find((item) => item.id === target || item.name.toLocaleLowerCase() === needle);
   if (domain === undefined) throw new Error(`Domain not found: ${target}`);
   const members = new Set(domain.member_ids);
-  return { domain, symbols: atlas.symbols.filter((symbol) => members.has(symbol.id)).slice(0, 500) };
+  const result = page(
+    atlas.symbols.filter((symbol) => members.has(symbol.id)),
+    { limit, ...(cursor === undefined ? {} : { cursor }) },
+    `domain:${domain.id}`,
+    runtime,
+  );
+  return { domain, symbols: result.items, pagination: result.pagination };
 }
 
-export async function entrypointsIr(repositoryPath: string) {
-  const atlas = await loadFreshIr(repositoryPath);
+export async function entrypointsIr(repositoryPath: string, limit = 100, cursor?: string) {
+  const runtime = await loadIrRuntime(repositoryPath);
+  const atlas = runtime.atlas;
   const ids = new Set(atlas.entrypoint_ids);
-  return { entrypoints: atlas.symbols.filter((symbol) => ids.has(symbol.id)), flows: atlas.flows };
+  const entries = atlas.symbols.filter((symbol) => ids.has(symbol.id));
+  const result = page(entries, { limit, ...(cursor === undefined ? {} : { cursor }) }, "entrypoints", runtime);
+  const visibleIds = new Set(result.items.map((symbol) => symbol.id));
+  return {
+    entrypoints: result.items,
+    flows: atlas.flows.filter((flow) => visibleIds.has(flow.entrypoint_id)),
+    pagination: result.pagination,
+  };
 }
 
-export async function changesIr(repositoryPath: string) {
-  const atlas = await loadFreshIr(repositoryPath);
-  return { changes: atlas.git_changes };
+export async function changesIr(repositoryPath: string, limit = 100, cursor?: string) {
+  const runtime = await loadIrRuntime(repositoryPath);
+  const result = page(runtime.atlas.git_changes, { limit, ...(cursor === undefined ? {} : { cursor }) }, "git_changes", runtime);
+  return { changes: result.items, pagination: result.pagination };
 }
 
-export async function rulesIr(repositoryPath: string) {
-  const atlas = await loadFreshIr(repositoryPath);
-  return { rules: atlas.rules, violations: atlas.rule_violations };
+export async function rulesIr(repositoryPath: string, limit = 100, cursor?: string) {
+  const runtime = await loadIrRuntime(repositoryPath);
+  const rules = page(runtime.atlas.rules, { limit, ...(cursor === undefined ? {} : { cursor }) }, "rules", runtime);
+  const violations = page(runtime.atlas.rule_violations, { limit, ...(cursor === undefined ? {} : { cursor }) }, "rule_violations", runtime);
+  return {
+    rules: rules.items,
+    violations: violations.items,
+    pagination: { rules: rules.pagination, violations: violations.pagination },
+  };
 }
 
-export async function reviewIr(repositoryPath: string) {
-  const atlas = await loadFreshIr(repositoryPath);
-  return { findings: atlas.review_findings, changes: atlas.git_changes };
+export async function reviewIr(repositoryPath: string, limit = 100, cursor?: string) {
+  const runtime = await loadIrRuntime(repositoryPath);
+  const findings = page(runtime.atlas.review_findings, { limit, ...(cursor === undefined ? {} : { cursor }) }, "review_findings", runtime);
+  return { findings: findings.items, changes: runtime.atlas.git_changes, pagination: findings.pagination };
 }
 
 export async function snapshotIr(repositoryPath: string, id: string) {
@@ -198,8 +354,16 @@ export async function compareSnapshotsIr(repositoryPath: string, oldId: string, 
 }
 
 export function irResult(value: Record<string, unknown>) {
+  const enriched = {
+    derivation: "canonical_ir",
+    ...value,
+    next_actions: [
+      "Use exact stable IDs from this response in follow-up MCP calls.",
+      "Use get_evidence for source-backed details and analyze_impact for blast-radius paths.",
+    ],
+  };
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(value) }],
-    structuredContent: value,
+    content: [{ type: "text" as const, text: JSON.stringify(enriched) }],
+    structuredContent: enriched,
   };
 }

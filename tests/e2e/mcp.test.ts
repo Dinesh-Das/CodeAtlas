@@ -175,7 +175,51 @@ describe("MCP stdio contract", () => {
           results: expect.arrayContaining([
             expect.objectContaining({ id: runCheckoutId, qualified_name: "runCheckout" }),
           ]),
+          pagination: expect.objectContaining({ has_more: false, cursor: null }),
+          next_actions: expect.any(Array),
         }));
+
+        const routeSearch = await client.callTool({
+          name: "find_symbol",
+          arguments: { query: "/checkout", limit: 50 },
+        });
+        expect(routeSearch.isError).not.toBe(true);
+        expect(routeSearch.structuredContent).toEqual(expect.objectContaining({
+          results: expect.arrayContaining([expect.objectContaining({ id: routeId })]),
+        }));
+
+        const duplicatePage1 = await client.callTool({
+          name: "find_symbol",
+          arguments: { query: "duplicate", limit: 1 },
+        });
+        const duplicatePage1Content = duplicatePage1.structuredContent as {
+          results: Array<{ id: string }>;
+          pagination: { cursor: string | null; has_more: boolean; total: number };
+        };
+        expect(duplicatePage1Content.results).toHaveLength(1);
+        expect(duplicatePage1Content.pagination.has_more).toBe(true);
+        expect(duplicatePage1Content.pagination.total).toBeGreaterThanOrEqual(2);
+        expect(duplicatePage1Content.pagination.cursor).toEqual(expect.any(String));
+        const duplicatePage2 = await client.callTool({
+          name: "find_symbol",
+          arguments: {
+            query: "duplicate",
+            limit: 1,
+            cursor: duplicatePage1Content.pagination.cursor,
+          },
+        });
+        const duplicatePage2Content = duplicatePage2.structuredContent as {
+          results: Array<{ id: string }>;
+          pagination: { cursor: string | null; has_more: boolean };
+        };
+        expect(duplicatePage2Content.results).toHaveLength(1);
+        expect(duplicatePage2Content.results[0]?.id).not.toBe(duplicatePage1Content.results[0]?.id);
+        if (duplicatePage1Content.pagination.total > 2) {
+          expect(duplicatePage2Content.pagination).toMatchObject({ has_more: true });
+          expect(duplicatePage2Content.pagination.cursor).toEqual(expect.any(String));
+        } else {
+          expect(duplicatePage2Content.pagination).toMatchObject({ has_more: false, cursor: null });
+        }
 
         const canonicalImpact = await client.callTool({
           name: "analyze_impact",
