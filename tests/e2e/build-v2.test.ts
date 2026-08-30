@@ -87,8 +87,16 @@ describe("codeatlas build v2", () => {
     expect(evidence.evidence.length).toBeGreaterThan(0);
     const html = await readFile(first.htmlPath, "utf8");
     expect(html).toContain('id="atlas-data"');
+    expect(html).toContain('id="projection-data"');
+    expect(html).toContain('id="hub-data"');
     expect(html).toContain("Overview");
     expect(html).toContain("Entrypoints");
+    expect(html).toContain("Aggregate dependencies");
+    expect(html).toContain("Representative paths");
+    expect(html).toContain("Hide utility hubs");
+    expect(html).toContain("Collapse utility hubs");
+    expect(html).toContain("Show hubs");
+    expect(html).toContain("rendering budget");
     expect(html).toContain("hierarchyCrumbs");
     expect(html).toContain("deterministic");
     expect(html).toContain("Edges preserve branch labels");

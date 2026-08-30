@@ -183,6 +183,14 @@ The first production compiler slice is implemented:
   bundle output, and persistent commit/worktree snapshots.
 - Bounded multi-level HTML navigation, complete hidden-node search, structured entrypoint flows,
   bounded AST-derived CFGs, interactive impact traversal, Git/rule/review views, and source details.
+- Large-repository rendering now consumes the shared IR projection layer rather than browser-only
+  slicing. Default domain/module projections are deterministic and budgeted (150 visible nodes by
+  default, 500 for selected-domain symbol expansion), surface explicit truncation warnings, and
+  aggregate architectural dependency edges while excluding structural/history edges. Aggregate
+  edges retain representative canonical relationship IDs for drill-down. Search still covers the
+  complete IR, including human-readable domains, signatures/metadata, and evidence-backed endpoint
+  text. High-degree utility hubs are detected without mutating the IR and can be hidden, collapsed
+  into a summary supernode, or shown in domain views.
 - Explainable impact scores and paths, Git hunk-to-symbol mapping, and deterministic architecture
   snapshot evolution covering domains, dependencies, APIs, dependency cycles, centrality changes,
   and introduced/resolved rule violations. Explicit `.codeatlas.yml` domains, reusable rule
