@@ -50,6 +50,25 @@ describe("MCP stdio contract", () => {
         "src/duplicate-b.ts",
         "export function duplicate(): string { return 'b'; }\n",
       );
+      await repository.write(
+        ".codeatlas.yml",
+        [
+          "version: 1",
+          "architecture:",
+          "  rules:",
+          "    - id: first-pagination-rule",
+          "      source:",
+          "        matches_path: never/first/**",
+          "      forbid:",
+          "        matches_path: never/**",
+          "    - id: second-pagination-rule",
+          "      source:",
+          "        matches_path: never/second/**",
+          "      forbid:",
+          "        matches_path: never/**",
+          "",
+        ].join("\n"),
+      );
       await repository.git("add", ".");
       await repository.git("commit", "-m", "mcp fixture");
       await initializeRepository(repository.root);
@@ -220,6 +239,38 @@ describe("MCP stdio contract", () => {
         } else {
           expect(duplicatePage2Content.pagination).toMatchObject({ has_more: false, cursor: null });
         }
+
+        const rulesPage1 = await client.callTool({
+          name: "get_rules",
+          arguments: { limit: 1 },
+        });
+        expect(rulesPage1.isError).not.toBe(true);
+        const rulesPage1Content = rulesPage1.structuredContent as {
+          rules: Array<{ id: string }>;
+          pagination: { cursor: string | null; has_more: boolean };
+        };
+        expect(rulesPage1Content.rules).toHaveLength(1);
+        expect(rulesPage1Content.pagination).toMatchObject({ has_more: true });
+        const rulesPage2 = await client.callTool({
+          name: "get_rules",
+          arguments: { limit: 1, cursor: rulesPage1Content.pagination.cursor },
+        });
+        expect(rulesPage2.isError).not.toBe(true);
+        const rulesPage2Content = rulesPage2.structuredContent as {
+          rules: Array<{ id: string }>;
+        };
+        expect(rulesPage2Content.rules).toHaveLength(1);
+        expect(rulesPage2Content.rules[0]?.id).not.toBe(rulesPage1Content.rules[0]?.id);
+
+        const violationPage = await client.callTool({
+          name: "get_rule_violations",
+          arguments: { limit: 1 },
+        });
+        expect(violationPage.isError).not.toBe(true);
+        expect(violationPage.structuredContent).toEqual(expect.objectContaining({
+          violations: expect.any(Array),
+          pagination: expect.objectContaining({ has_more: false }),
+        }));
 
         const canonicalImpact = await client.callTool({
           name: "analyze_impact",

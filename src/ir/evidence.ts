@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { sha256 } from "../core/hashing.js";
-import { isPathInside } from "../core/paths.js";
+import { resolveExistingPathInside } from "../core/paths.js";
 import type { AtlasEvidence } from "./models.js";
 
 export function createEvidenceId(input: {
@@ -36,8 +36,11 @@ export class EvidenceExcerptReader {
   async excerpt(file: string, startLine: number, endLine: number): Promise<string | null> {
     let lines = this.linesByFile.get(file);
     if (lines === undefined) {
-      const absolutePath = path.resolve(this.repositoryRoot, file);
-      if (!isPathInside(this.repositoryRoot, absolutePath)) {
+      const absolutePath = await resolveExistingPathInside(
+        this.repositoryRoot,
+        path.resolve(this.repositoryRoot, file),
+      );
+      if (absolutePath === null) {
         this.linesByFile.set(file, null);
         return null;
       }

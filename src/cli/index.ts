@@ -1,8 +1,20 @@
 #!/usr/bin/env node
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 import { CodeAtlasError } from "../core/errors.js";
 import { CODEATLAS_VERSION } from "../version.js";
 import { createIndexProgressReporter } from "./progress.js";
+
+function boundedIntegerOption(label: string, minimum: number, maximum: number) {
+  return (value: string): number => {
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+      throw new InvalidArgumentError(
+        `${label} must be an integer between ${minimum} and ${maximum}.`,
+      );
+    }
+    return parsed;
+  };
+}
 
 export function createProgram(): Command {
   const program = new Command();
@@ -52,14 +64,19 @@ export function createProgram(): Command {
     .command("watch")
     .description("Watch for repository changes and incrementally regenerate artifacts.")
     .argument("[path]", "A path inside the repository", process.cwd())
-    .option("--interval <milliseconds>", "Polling interval", "1000")
-    .action(async (targetPath: string, options: { interval: string }) => {
+    .option(
+      "--interval <milliseconds>",
+      "Polling interval",
+      boundedIntegerOption("interval", 250, 86_400_000),
+      1_000,
+    )
+    .action(async (targetPath: string, options: { interval: number }) => {
       const { formatBuildResult, watchRepository } = await import("./build.js");
       const controller = new AbortController();
       process.once("SIGINT", () => controller.abort());
       process.stderr.write("CodeAtlas is watching for changes. Press Ctrl+C to stop.\n");
       await watchRepository(targetPath, {
-        intervalMs: Number(options.interval),
+        intervalMs: options.interval,
         signal: controller.signal,
         onBuild: (result) => console.log(formatBuildResult(result)),
       });
@@ -82,10 +99,15 @@ export function createProgram(): Command {
     .description("Search the complete canonical architecture graph.")
     .argument("<query>", "Symbol name, qualified name, path, kind, or ID")
     .argument("[path]", "A path inside the repository", process.cwd())
-    .option("--limit <number>", "Maximum results", "50")
-    .action(async (query: string, targetPath: string, options: { limit: string }) => {
+    .option(
+      "--limit <number>",
+      "Maximum results",
+      boundedIntegerOption("limit", 1, 10_000),
+      50,
+    )
+    .action(async (query: string, targetPath: string, options: { limit: number }) => {
       const { findSymbols, loadCurrentAtlas } = await import("./v2-query.js");
-      console.log(JSON.stringify(findSymbols(await loadCurrentAtlas(targetPath), query, Number(options.limit)), null, 2));
+      console.log(JSON.stringify(findSymbols(await loadCurrentAtlas(targetPath), query, options.limit), null, 2));
     });
 
   program
@@ -103,11 +125,21 @@ export function createProgram(): Command {
     .description("Calculate evidence-linked reverse dependency paths for a symbol.")
     .argument("<symbol>", "Exact ID, qualified name, or unique search term")
     .argument("[path]", "A path inside the repository", process.cwd())
-    .option("--depth <number>", "Maximum traversal depth", "8")
-    .option("--limit <number>", "Maximum paths", "100")
-    .action(async (symbol: string, targetPath: string, options: { depth: string; limit: string }) => {
+    .option(
+      "--depth <number>",
+      "Maximum traversal depth",
+      boundedIntegerOption("depth", 1, 30),
+      8,
+    )
+    .option(
+      "--limit <number>",
+      "Maximum paths",
+      boundedIntegerOption("limit", 1, 2_000),
+      100,
+    )
+    .action(async (symbol: string, targetPath: string, options: { depth: number; limit: number }) => {
       const { impactFor, loadCurrentAtlas } = await import("./v2-query.js");
-      console.log(JSON.stringify(impactFor(await loadCurrentAtlas(targetPath), symbol, Number(options.depth), Number(options.limit)), null, 2));
+      console.log(JSON.stringify(impactFor(await loadCurrentAtlas(targetPath), symbol, options.depth, options.limit), null, 2));
     });
 
   program

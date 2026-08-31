@@ -36,7 +36,11 @@ export async function watchRepository(
     signal?: AbortSignal;
   } = {},
 ): Promise<void> {
-  const intervalMs = Math.max(250, options.intervalMs ?? 1_000);
+  const requestedInterval = options.intervalMs ?? 1_000;
+  if (!Number.isSafeInteger(requestedInterval) || requestedInterval < 250) {
+    throw new Error("Watch interval must be an integer of at least 250 milliseconds.");
+  }
+  const intervalMs = requestedInterval;
   let status = await getStatus(startPath);
   while (!options.signal?.aborted) {
     if (!status.synchronized) {

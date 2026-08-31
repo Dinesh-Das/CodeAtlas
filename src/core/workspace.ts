@@ -1,7 +1,8 @@
-import { mkdir, open, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
+import BetterSqlite3 from "better-sqlite3";
 import { CodeAtlasError } from "./errors.js";
 import { isPathInside } from "./paths.js";
 
@@ -31,7 +32,7 @@ export function workspacePaths(repositoryRoot: string): WorkspacePaths {
     manifest: path.join(directory, "manifest.json"),
     state: path.join(directory, "state.json"),
     logs: path.join(directory, "logs"),
-    lock: path.join(directory, "lock"),
+    lock: path.join(directory, "index.lock.db"),
     current: path.join(directory, "current"),
     snapshots: path.join(directory, "snapshots"),
     cache: path.join(directory, "cache"),
@@ -88,12 +89,16 @@ export interface IndexLockOptions {
   onWait?: (wait: IndexLockWait) => void;
 }
 
-function isProcessRunning(pid: number): boolean {
+function isSqliteBusy(error: unknown): boolean {
+  const code = (error as { code?: unknown }).code;
+  return code === "SQLITE_BUSY" || code === "SQLITE_LOCKED";
+}
+
+async function readLockOwner(filePath: string): Promise<Partial<LockContents>> {
   try {
-    process.kill(pid, 0);
-    return true;
+    return JSON.parse(await readFile(filePath, "utf8")) as Partial<LockContents>;
   } catch {
-    return false;
+    return {};
   }
 }
 
@@ -103,48 +108,50 @@ export async function acquireIndexLock(
 ): Promise<() => Promise<void>> {
   const paths = await ensureWorkspaceDirectories(repositoryRoot);
   const waitTimeoutMs = options.waitTimeoutMs ?? 60_000;
-  const pollIntervalMs = options.pollIntervalMs ?? 500;
+  const pollIntervalMs = Math.max(10, options.pollIntervalMs ?? 500);
   const startedAt = Date.now();
   const token = randomUUID();
+  const ownerPath = `${paths.lock}.owner.json`;
 
   while (true) {
+    let candidate: BetterSqlite3.Database | null = null;
     try {
-      const handle = await open(paths.lock, "wx");
+      candidate = new BetterSqlite3(paths.lock);
+      candidate.pragma("busy_timeout = 0");
+      candidate.exec("BEGIN EXCLUSIVE");
       const contents: LockContents = {
         pid: process.pid,
         acquiredAt: new Date().toISOString(),
         token,
       };
-      await handle.writeFile(`${JSON.stringify(contents)}\n`, "utf8");
-      await handle.close();
+      await writeJsonAtomic(ownerPath, contents);
+      const ownedDatabase = candidate;
+      candidate = null;
 
       let released = false;
       return async () => {
         if (released) return;
         released = true;
         try {
-          const current = JSON.parse(await readFile(paths.lock, "utf8")) as Partial<LockContents>;
-          if (current.token === token) await unlink(paths.lock);
+          const current = await readLockOwner(ownerPath);
+          if (current.token === token) await unlink(ownerPath);
         } catch {
-          // The lock was already removed or replaced; never remove another owner's lock.
+          // Owner metadata is diagnostic only; SQLite retains authoritative ownership.
+        } finally {
+          try {
+            ownedDatabase.exec("ROLLBACK");
+          } finally {
+            ownedDatabase.close();
+          }
         }
       };
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-
-      let contents: Partial<LockContents> = {};
-      let stale = false;
       try {
-        contents = JSON.parse(await readFile(paths.lock, "utf8")) as Partial<LockContents>;
-        stale = typeof contents.pid !== "number" || !isProcessRunning(contents.pid);
+        candidate?.close();
       } catch {
-        stale = true;
+        // Preserve the original acquisition error.
       }
-
-      if (stale) {
-        await unlink(paths.lock).catch(() => undefined);
-        continue;
-      }
+      if (!isSqliteBusy(error)) throw error;
 
       const elapsedMs = Date.now() - startedAt;
       if (elapsedMs >= waitTimeoutMs) {
@@ -153,9 +160,10 @@ export async function acquireIndexLock(
           { cause: error },
         );
       }
+      const contents = await readLockOwner(ownerPath);
       options.onWait?.({
         elapsedMs,
-        ownerPid: contents.pid!,
+        ownerPid: typeof contents.pid === "number" ? contents.pid : -1,
         acquiredAt: typeof contents.acquiredAt === "string" ? contents.acquiredAt : null,
       });
       await delay(Math.min(pollIntervalMs, waitTimeoutMs - elapsedMs));

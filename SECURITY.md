@@ -29,16 +29,18 @@ transport. The current release has no built-in local or remote AI-provider trans
 defaults to `false`, and enabling that flag alone does not send source anywhere. Any future provider
 must be explicitly enabled and document its outgoing context before it can transmit repository data.
 
-The source tool resolves indexed paths against the current repository root and rejects paths that
-resolve outside it. Source responses are capped by `limits.maxSourceSnippetLines` and
-`limits.maxSourceSnippetBytes`, including protection against a single oversized/minified line.
+Source, evidence, and untracked-diff readers resolve indexed paths against the real current
+repository root and reject paths whose symlink or junction target resolves outside it. Source
+responses are capped by `limits.maxSourceSnippetLines` and `limits.maxSourceSnippetBytes`,
+including protection against a single oversized/minified line.
 
 Every MCP packet identifies repository content as untrusted, declares that indexing is local-only,
 and states that CodeAtlas returns evidence rather than invented answers. The MCP host or model may
 send returned context to an external provider; that provider behavior is outside CodeAtlas and is
 controlled by the user's MCP host configuration.
 
-The index writer uses an exclusive repository-local lock. Structural, semantic, and search facts
+The index writer uses an exclusive repository-local SQLite lock that the operating system releases
+if its owner exits. Structural, semantic, and search facts
 advance atomically in one SQLite transaction. Architecture is computed outside that write lock and
 published in a second atomic transaction carrying the structural generation it derives from. WAL
 mode therefore lets readers see either the prior committed graph or a generation-labeled partial

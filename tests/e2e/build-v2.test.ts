@@ -6,7 +6,7 @@ import { buildRepository } from "../../src/compiler/build.js";
 import { runGit } from "../../src/git/repository.js";
 import { compareSnapshots } from "../../src/git/snapshots.js";
 import { workspacePaths } from "../../src/core/workspace.js";
-import { callersIr, evidenceIr, findSymbolIr, flowIr, impactIr } from "../../src/mcp/ir-tools.js";
+import { callersIr, evidenceIr, findSymbolIr, flowIr, impactIr, snapshotIr } from "../../src/mcp/ir-tools.js";
 import { ensureFreshIndex } from "../../src/mcp/freshness.js";
 import { statusPacket } from "../../src/mcp/repository-tools.js";
 import type { Atlas } from "../../src/ir/models.js";
@@ -141,6 +141,29 @@ describe("codeatlas build v2", () => {
     expect(html).not.toMatch(/<script[^>]+src=/iu);
     expect(html).not.toMatch(/<link[^>]+href=/iu);
     await expect(stat(path.join(root, ".codeatlas", "snapshots", first.snapshotId, "atlas.json"))).resolves.toBeDefined();
+    const snapshotSummary = await snapshotIr(root, first.snapshotId);
+    expect(snapshotSummary).toMatchObject({
+      section: "summary",
+      items: [],
+      snapshot: {
+        snapshot: { id: first.snapshotId },
+        sections: { symbols: atlas.symbols.length, relationships: atlas.relationships.length },
+      },
+      pagination: { has_more: false, cursor: null },
+    });
+    const snapshotPage1 = await snapshotIr(root, first.snapshotId, "symbols", 1);
+    expect(snapshotPage1.items).toHaveLength(1);
+    expect(snapshotPage1.pagination.cursor).toEqual(expect.any(String));
+    const snapshotPage2 = await snapshotIr(
+      root,
+      first.snapshotId,
+      "symbols",
+      1,
+      snapshotPage1.pagination.cursor ?? undefined,
+    );
+    expect(snapshotPage2.items).toHaveLength(1);
+    expect((snapshotPage2.items[0] as { id: string }).id)
+      .not.toBe((snapshotPage1.items[0] as { id: string }).id);
 
     const requiredTimingKeys = [
       "fileCollection",

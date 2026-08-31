@@ -7,7 +7,9 @@ import { assertValidAtlas } from "../ir/validation.js";
 import { compareArchitecture, type ArchitectureDiff } from "./architecture-diff.js";
 
 function safeSnapshotId(id: string): string {
-  if (!/^[a-zA-Z0-9._-]+$/u.test(id)) throw new Error(`Invalid snapshot ID: ${id}`);
+  if (id === "." || id === ".." || !/^[a-zA-Z0-9._-]+$/u.test(id)) {
+    throw new Error(`Invalid snapshot ID: ${id}`);
+  }
   return id;
 }
 

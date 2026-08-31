@@ -10,6 +10,7 @@ import { loadConfig } from "../core/config.js";
 import { CodeAtlasError } from "../core/errors.js";
 import { createEvidenceId, EvidenceExcerptReader } from "../ir/evidence.js";
 import { loadIgnoreRules } from "../core/ignore.js";
+import { resolveExistingPathInside } from "../core/paths.js";
 import { workspaceExists, workspacePaths, writeJsonAtomic, writeTextAtomic } from "../core/workspace.js";
 import { exportAtlasHtml } from "../export/html.js";
 import { exportAtlasBundle, exportAtlasData } from "../export/json.js";
@@ -220,7 +221,12 @@ async function sourceDiffForChange(
   ], true);
   if (diff.length === 0 && change.kind === "added") {
     try {
-      const body = await readFile(path.join(repositoryRoot, change.path), "utf8");
+      const sourcePath = await resolveExistingPathInside(
+        repositoryRoot,
+        path.resolve(repositoryRoot, change.path),
+      );
+      if (sourcePath === null) return diff;
+      const body = await readFile(sourcePath, "utf8");
       const lines = body.split(/\r?\n/u);
       diff = [
         "diff --git a/dev/null b/" + change.path,

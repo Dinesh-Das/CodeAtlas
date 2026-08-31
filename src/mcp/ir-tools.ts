@@ -13,6 +13,7 @@ export async function loadFreshIr(repositoryPath: string): Promise<Atlas> {
 }
 
 interface IrRuntime {
+  repositoryRoot: string;
   atlas: Atlas;
   fingerprint: string;
   maxResultNodes: number;
@@ -39,6 +40,7 @@ async function loadIrRuntime(repositoryPath: string): Promise<IrRuntime> {
     loadV2Config(context.repositoryRoot),
   ]);
   return {
+    repositoryRoot: context.repositoryRoot,
     atlas: context.atlas,
     fingerprint: context.fingerprint,
     maxResultNodes: config.limits.maxMcpResultNodes,
@@ -81,7 +83,22 @@ function page<T>(
     );
   }
   const offset = request.cursor === undefined ? 0 : decodeCursor(request.cursor, scope, runtime.fingerprint);
-  const selected = items.slice(offset, offset + request.limit);
+  const selected: T[] = [];
+  let selectedBytes = 0;
+  const maximumPageBytes = 1_000_000;
+  for (const item of items.slice(offset, offset + request.limit)) {
+    const itemBytes = Buffer.byteLength(JSON.stringify(item) ?? "null", "utf8");
+    if (selectedBytes + itemBytes > maximumPageBytes) {
+      if (selected.length === 0) {
+        throw new CodeAtlasError(
+          `One result exceeds the canonical-IR page byte limit (${maximumPageBytes}).`,
+        );
+      }
+      break;
+    }
+    selected.push(item);
+    selectedBytes += itemBytes;
+  }
   const nextOffset = offset + selected.length;
   const hasMore = nextOffset < items.length;
   return {
@@ -329,23 +346,90 @@ export async function changesIr(repositoryPath: string, limit = 100, cursor?: st
 export async function rulesIr(repositoryPath: string, limit = 100, cursor?: string) {
   const runtime = await loadIrRuntime(repositoryPath);
   const rules = page(runtime.atlas.rules, { limit, ...(cursor === undefined ? {} : { cursor }) }, "rules", runtime);
-  const violations = page(runtime.atlas.rule_violations, { limit, ...(cursor === undefined ? {} : { cursor }) }, "rule_violations", runtime);
-  return {
-    rules: rules.items,
-    violations: violations.items,
-    pagination: { rules: rules.pagination, violations: violations.pagination },
-  };
+  return { rules: rules.items, pagination: rules.pagination };
+}
+
+export async function ruleViolationsIr(repositoryPath: string, limit = 100, cursor?: string) {
+  const runtime = await loadIrRuntime(repositoryPath);
+  const violations = page(
+    runtime.atlas.rule_violations,
+    { limit, ...(cursor === undefined ? {} : { cursor }) },
+    "rule_violations",
+    runtime,
+  );
+  return { violations: violations.items, pagination: violations.pagination };
 }
 
 export async function reviewIr(repositoryPath: string, limit = 100, cursor?: string) {
   const runtime = await loadIrRuntime(repositoryPath);
   const findings = page(runtime.atlas.review_findings, { limit, ...(cursor === undefined ? {} : { cursor }) }, "review_findings", runtime);
-  return { findings: findings.items, changes: runtime.atlas.git_changes, pagination: findings.pagination };
+  return { findings: findings.items, pagination: findings.pagination };
 }
 
-export async function snapshotIr(repositoryPath: string, id: string) {
-  const context = await architectureService.load(repositoryPath);
-  return { snapshot: await loadSnapshot(workspacePaths(context.repositoryRoot).snapshots, id) };
+export const SNAPSHOT_SECTIONS = [
+  "summary",
+  "symbols",
+  "relationships",
+  "evidence",
+  "domains",
+  "flows",
+  "control_flows",
+  "git_changes",
+  "rules",
+  "rule_violations",
+  "review_findings",
+] as const;
+
+export type SnapshotSection = (typeof SNAPSHOT_SECTIONS)[number];
+
+function snapshotSectionItems(atlas: Atlas, section: Exclude<SnapshotSection, "summary">): readonly unknown[] {
+  return atlas[section];
+}
+
+export async function snapshotIr(
+  repositoryPath: string,
+  id: string,
+  section: SnapshotSection = "summary",
+  limit = 100,
+  cursor?: string,
+) {
+  const runtime = await loadIrRuntime(repositoryPath);
+  const atlas = await loadSnapshot(workspacePaths(runtime.repositoryRoot).snapshots, id);
+  const snapshot = {
+    schema_version: atlas.schema_version,
+    generator: atlas.generator,
+    project: atlas.project,
+    snapshot: atlas.snapshot,
+    statistics: atlas.statistics,
+    sections: Object.fromEntries(
+      SNAPSHOT_SECTIONS.filter((name) => name !== "summary").map((name) => [name, atlas[name].length]),
+    ),
+  };
+  if (section === "summary") {
+    return {
+      snapshot,
+      section,
+      items: [],
+      pagination: { limit: 0, returned: 0, total: 0, cursor: null, has_more: false },
+    };
+  }
+  const snapshotRuntime = {
+    ...runtime,
+    fingerprint: [
+      "snapshot",
+      atlas.snapshot.id,
+      atlas.snapshot.created_at,
+      atlas.generator.version,
+      atlas.generator.indexer_version,
+    ].join(":"),
+  };
+  const result = page(
+    snapshotSectionItems(atlas, section),
+    { limit, ...(cursor === undefined ? {} : { cursor }) },
+    `snapshot:${atlas.snapshot.id}:${section}`,
+    snapshotRuntime,
+  );
+  return { snapshot, section, items: result.items, pagination: result.pagination };
 }
 
 export async function compareSnapshotsIr(repositoryPath: string, oldId: string, newId: string) {
@@ -362,8 +446,16 @@ export function irResult(value: Record<string, unknown>) {
       "Use get_evidence for source-backed details and analyze_impact for blast-radius paths.",
     ],
   };
+  const serialized = JSON.stringify(enriched);
+  const maximumBytes = 2_000_000;
+  const serializedBytes = Buffer.byteLength(serialized, "utf8");
+  if (serializedBytes > maximumBytes) {
+    throw new CodeAtlasError(
+      `Canonical-IR response is ${serializedBytes} bytes; reduce the requested limit to stay below ${maximumBytes} bytes.`,
+    );
+  }
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(enriched) }],
+    content: [{ type: "text" as const, text: serialized }],
     structuredContent: enriched,
   };
 }

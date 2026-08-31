@@ -30,7 +30,9 @@ import {
   neighborhoodIr,
   repositoryOverviewIr,
   reviewIr,
+  ruleViolationsIr,
   rulesIr,
+  SNAPSHOT_SECTIONS,
   snapshotIr,
   symbolIr,
   tracePathIr,
@@ -181,6 +183,12 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
     limit: z.number().int().positive().max(1_000).optional().default(100),
     cursor: z.string().min(1).optional(),
   }).strict();
+  const snapshotInputSchema = z.object({
+    id: z.string().min(1),
+    section: z.enum(SNAPSHOT_SECTIONS).optional().default("summary"),
+    limit: z.number().int().positive().max(1_000).optional().default(100),
+    cursor: z.string().min(1).optional(),
+  }).strict();
   server.registerTool(
     "find_symbol",
     { description: "Find symbols in the canonical CodeAtlas IR.", inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().positive().max(1_000).optional().default(50), cursor: z.string().min(1).optional() }).strict() },
@@ -268,13 +276,13 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
   );
   server.registerTool(
     "get_rules",
-    { description: "Return architecture rules and evidence-linked violations.", inputSchema: paginatedSchema },
+    { description: "Return paginated architecture rules.", inputSchema: paginatedSchema },
     async (input: { limit: number; cursor?: string | undefined }) => irResult(await rulesIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_rule_violations",
     { description: "Return evidence-linked architecture-rule violations.", inputSchema: paginatedSchema },
-    async (input: { limit: number; cursor?: string | undefined }) => irResult(await rulesIr(repositoryPath, input.limit, input.cursor)),
+    async (input: { limit: number; cursor?: string | undefined }) => irResult(await ruleViolationsIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "review_changes",
@@ -283,8 +291,14 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
   );
   server.registerTool(
     "get_snapshot",
-    { description: "Return a persistent canonical architecture snapshot.", inputSchema: z.object({ id: z.string().min(1) }).strict() },
-    async (input: { id: string }) => irResult(await snapshotIr(repositoryPath, input.id)),
+    { description: "Return bounded metadata or one paginated section of a persistent canonical architecture snapshot.", inputSchema: snapshotInputSchema },
+    async (input: z.infer<typeof snapshotInputSchema>) => irResult(await snapshotIr(
+      repositoryPath,
+      input.id,
+      input.section,
+      input.limit,
+      input.cursor,
+    )),
   );
   server.registerTool(
     "compare_snapshots",

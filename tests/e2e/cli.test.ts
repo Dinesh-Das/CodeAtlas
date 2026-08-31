@@ -35,6 +35,21 @@ describe("compiled CLI", () => {
     expect(snapshotHelp.stdout).toMatch(/\bdiff\b/u);
   });
 
+  it("rejects malformed and out-of-range numeric options before executing commands", async () => {
+    await expect(runCli("watch", ".", "--interval", "not-a-number")).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("interval must be an integer between 250 and 86400000"),
+    });
+    await expect(runCli("search", "value", ".", "--limit", "0")).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("limit must be an integer between 1 and 10000"),
+    });
+    await expect(runCli("impact", "value", ".", "--depth", "31")).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("depth must be an integer between 1 and 30"),
+    });
+  });
+
   it("initializes, reports status, diagnoses, and safely cleans a Git repository", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);

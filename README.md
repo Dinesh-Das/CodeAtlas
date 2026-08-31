@@ -387,6 +387,11 @@ The canonical-IR surface additionally provides composable tools including
 `get_rules`, `get_rule_violations`, `get_evidence`, `get_snapshot`, `compare_snapshots`,
 `get_architecture_diff`, and `review_changes`.
 
+Canonical-IR collection tools use independent opaque cursors and serialized-size limits.
+`get_snapshot` returns metadata by default; pass a `section` such as `symbols`, `relationships`,
+`evidence`, or `git_changes` with `limit` and `cursor` to retrieve a bounded snapshot section.
+Use `get_git_changes` for paginated change records alongside `review_changes` findings.
+
 | Tool | Purpose |
 |---|---|
 | `codeatlas_status` | Repository, commit, dirty-tree, language, and index status |

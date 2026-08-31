@@ -16,6 +16,16 @@ All notable changes follow semantic versioning.
 - Added persistent architecture snapshots, deterministic comparisons, Git hunk-to-symbol mapping,
   evidence-gated review findings, and canonical-IR MCP tools.
 
+### Fixed
+
+- Prevented evidence and untracked-diff readers from following repository symlinks or junctions to
+  files outside the repository root.
+- Replaced stale-file lock cleanup with a crash-safe SQLite exclusive lock, eliminating the race
+  that could admit concurrent index writers.
+- Split rule and violation pagination into independent cursor scopes, bounded canonical-IR pages
+  by serialized size, and made snapshot retrieval section-based instead of returning whole files.
+- Added strict integer validation for CLI polling, search, and impact limits.
+
 ## 0.10.0-beta.3 - 2026-08-29
 
 ### Fixed

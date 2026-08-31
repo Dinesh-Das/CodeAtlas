@@ -7,6 +7,9 @@ export async function loadCurrentAtlas(startPath = process.cwd()): Promise<Atlas
 }
 
 export function findSymbols(atlas: Atlas, query: string, limit = 50): Atlas["symbols"] {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
+    throw new Error("Search limit must be an integer between 1 and 10000.");
+  }
   const needle = query.toLocaleLowerCase();
   return atlas.symbols.filter((symbol) =>
     [symbol.id, symbol.name, symbol.qualified_name, symbol.file, symbol.kind]
@@ -27,6 +30,12 @@ export function resolveSymbol(atlas: Atlas, target: string): Atlas["symbols"][nu
 }
 
 export function impactFor(atlas: Atlas, target: string, depth = 8, limit = 100) {
+  if (!Number.isSafeInteger(depth) || depth < 1 || depth > 30) {
+    throw new Error("Impact depth must be an integer between 1 and 30.");
+  }
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 2_000) {
+    throw new Error("Impact limit must be an integer between 1 and 2000.");
+  }
   const symbol = resolveSymbol(atlas, target);
   return { symbol, ...describeImpact(atlas, symbol.id, { depth, limit }) };
 }
