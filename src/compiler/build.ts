@@ -17,7 +17,8 @@ import { exportAtlasBundle, exportAtlasData } from "../export/json.js";
 import { exportAtlasMarkdown, renderAtlasMarkdown } from "../export/markdown.js";
 import { detectGitState } from "../git/changes.js";
 import { detectRepository, runGit } from "../git/repository.js";
-import { persistSnapshot } from "../git/snapshots.js";
+import { persistSnapshot, pruneSnapshots } from "../git/snapshots.js";
+import { exportAtlasMermaid } from "../export/mermaid.js";
 import { withDetachedWorktree } from "../git/worktree.js";
 import type { Atlas, AtlasGitChange, AtlasGitSymbolChange, AtlasSymbol } from "../ir/models.js";
 import { loadAtlasFromDatabase } from "../ir/loader.js";
@@ -35,6 +36,7 @@ export interface BuildResult {
   htmlPath: string;
   htmlMode: "single-file" | "bundle";
   markdownPath: string;
+  mermaidPath: string;
   currentDirectory: string;
   snapshotId: string;
   snapshotCreated: boolean;
@@ -386,6 +388,7 @@ export async function buildRepository(
   atlas.flows = buildExecutionFlows(atlas, {
     maxDepth: Math.min(config.limits.maxTraversalDepth, v2Config.analysis.max_call_depth),
     maxSteps: config.limits.maxExecutionPaths * 10,
+    maxPaths: config.limits.maxExecutionPaths,
   });
   const flowsMs = performance.now() - flowStarted;
   const cfgStarted = performance.now();
@@ -487,8 +490,10 @@ export async function buildRepository(
     ? path.join(index.repository.root, "codeatlas.html")
     : path.join(bundlePath, "index.html");
   const markdownPath = path.join(index.repository.root, "CODEATLAS.md");
+  const mermaidPath = path.join(index.repository.root, "CODEATLAS.mmd");
   const commonExports = [
     exportAtlasMarkdown(atlas, markdownPath),
+    exportAtlasMermaid(atlas, mermaidPath),
     writeTextAtomic(path.join(paths.agent, "overview.md"), renderAtlasMarkdown(atlas)),
     writeJsonAtomic(path.join(paths.agent, "manifest.json"), {
       schema_version: atlas.schema_version,
@@ -516,7 +521,10 @@ export async function buildRepository(
   const exportMs = performance.now() - exportStarted;
   const snapshotStarted = performance.now();
   const snapshotCreated = options.snapshot !== false;
-  if (snapshotCreated) await persistSnapshot(atlas, paths.snapshots);
+  if (snapshotCreated) {
+    await persistSnapshot(atlas, paths.snapshots);
+    await pruneSnapshots(paths.snapshots, config.limits.maxSnapshots, atlas.snapshot.id);
+  }
   const snapshotMs = performance.now() - snapshotStarted;
   const timingsMs = {
     fileCollection: roundedMs(indexPhaseElapsedMs(index.phaseMetrics, "repository_discovery")),
@@ -558,6 +566,7 @@ export async function buildRepository(
     htmlPath,
     htmlMode,
     markdownPath,
+    mermaidPath,
     currentDirectory: paths.current,
     snapshotId: atlas.snapshot.id,
     snapshotCreated,

@@ -1,3 +1,5 @@
+import type { ArchitecturalScope } from "../analysis/scope.js";
+
 export const ATLAS_SCHEMA_VERSION = "1.0" as const;
 
 export const ATLAS_PROVENANCE = [
@@ -36,6 +38,8 @@ export interface AtlasSymbol {
   name: string;
   qualified_name: string | null;
   file: string | null;
+  /** Added in 1.0 as a backwards-compatible field; older snapshots may omit it. */
+  scope?: ArchitecturalScope;
   language: string | null;
   location: AtlasLocation | null;
   domain_ids: string[];
@@ -96,11 +100,31 @@ export interface AtlasFlowStep {
   evidence_ids: string[];
 }
 
+export interface AtlasFlowEdge {
+  id: string;
+  source: string;
+  target: string;
+  relationship_id: string;
+  confidence: number;
+  evidence_ids: string[];
+}
+
+export interface AtlasFlowPath {
+  id: string;
+  symbol_ids: string[];
+  relationship_ids: string[];
+  truncated: boolean;
+  cycle_detected: boolean;
+}
+
 export interface AtlasFlow {
   id: string;
   name: string;
   entrypoint_id: string;
   steps: AtlasFlowStep[];
+  /** Branch-preserving execution graph. `steps` remains as a compatibility summary. */
+  edges?: AtlasFlowEdge[];
+  paths?: AtlasFlowPath[];
   truncated: boolean;
   cycle_detected: boolean;
 }
@@ -148,6 +172,8 @@ export interface ImpactPath {
   path: string[];
   relationship_ids: string[];
   evidence_ids: string[];
+  classification?: "definite" | "potential";
+  confidence?: number;
 }
 
 export interface ImpactFactor {
@@ -171,7 +197,10 @@ export interface ImpactScoreComponents {
 export interface ImpactResult {
   changed: string;
   direct_callers: string[];
+  direct_dependents?: string[];
   direct_dependencies: string[];
+  potential_direct_dependents?: string[];
+  potential_direct_dependencies?: string[];
   transitive_callers: string[];
   transitive_dependencies: string[];
   affected_files: string[];
@@ -182,6 +211,8 @@ export interface ImpactResult {
   affected_rules: string[];
   paths: ImpactPath[];
   dependency_paths: ImpactPath[];
+  potential_paths?: ImpactPath[];
+  potential_dependency_paths?: ImpactPath[];
   score: ImpactScore | null;
 }
 

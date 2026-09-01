@@ -39,6 +39,8 @@ export function normalizeAtlas(atlas: Atlas): Atlas {
     flows: atlas.flows.map((flow) => ({
       ...flow,
       steps: [...flow.steps].sort((left, right) => left.order - right.order),
+      ...(flow.edges === undefined ? {} : { edges: [...flow.edges].sort(byId) }),
+      ...(flow.paths === undefined ? {} : { paths: [...flow.paths].sort(byId) }),
     })).sort(byId),
     control_flows: atlas.control_flows.map((flow) => ({
       ...flow,

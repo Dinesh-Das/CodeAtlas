@@ -504,7 +504,6 @@ export function buildGroupingArtifacts(
       GENERIC_FEATURES.has(key) ||
       TECHNICAL_LAYERS.has(key)
     ) continue;
-    const filePaths = new Set(files.map((file) => file.filePath));
     const semanticMembers = files.flatMap((file) =>
       file.filePath === null || manuallyGroupedFiles.has(file.filePath)
         ? []

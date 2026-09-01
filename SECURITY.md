@@ -3,8 +3,8 @@
 ## Reporting a vulnerability
 
 Do not open a public issue containing exploit details, secrets, or private repository data.
-Until a private disclosure address is published, contact the repository maintainers through a
-private channel associated with the project host.
+Use [GitHub private vulnerability reporting](https://github.com/Dinesh-Das/CodeAtlas/security/advisories/new)
+to contact the maintainers. Do not send exploit details through a public issue or discussion.
 
 Include the affected version, operating system, reproduction steps, and impact. Remove all
 real credentials and proprietary source from the report.

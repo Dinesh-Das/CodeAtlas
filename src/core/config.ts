@@ -47,6 +47,9 @@ export const configSchema = z
         largeSymbolLines: z.number().int().min(10).max(100_000).default(80),
         highFanIn: z.number().int().min(1).max(100_000).default(10),
         highFanOut: z.number().int().min(1).max(100_000).default(10),
+        maxSnapshots: z.number().int().min(1).max(10_000).default(20),
+        minimumVerifiedRelationshipPercent: z.number().min(0).max(100).default(50),
+        maximumUnresolvedRelationshipPercent: z.number().min(0).max(100).default(20),
       })
       .strict(),
   })
@@ -79,6 +82,9 @@ export const DEFAULT_CONFIG: CodeAtlasConfig = {
     largeSymbolLines: 80,
     highFanIn: 10,
     highFanOut: 10,
+    maxSnapshots: 20,
+    minimumVerifiedRelationshipPercent: 50,
+    maximumUnresolvedRelationshipPercent: 20,
   },
 };
 

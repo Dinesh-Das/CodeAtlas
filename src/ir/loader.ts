@@ -1,4 +1,8 @@
 import { sha256 } from "../core/hashing.js";
+import {
+  classifyArchitecturalScope,
+  isArchitecturalEntrypoint,
+} from "../analysis/scope.js";
 import type { AtlasDatabase } from "../storage/database.js";
 import { CODEATLAS_VERSION, INDEXER_VERSION } from "../version.js";
 import { createEvidenceId, EvidenceExcerptReader, evidenceKind } from "./evidence.js";
@@ -116,7 +120,6 @@ function domainProjection(
   return domainSymbols.map((domain): AtlasDomain => {
     const domainMemberships = memberships.filter((edge) => edge.target === domain.id);
     const memberIds = domainMemberships.map((edge) => edge.source);
-    const members = new Set(memberIds);
     const fileIds = memberIds.filter((id) => symbolById.get(id)?.kind === "file");
     const memberFiles = new Set(
       memberIds.map((id) => symbolById.get(id)?.file).filter((file): file is string => file !== null && file !== undefined),
@@ -126,7 +129,7 @@ function domainProjection(
       ...symbols.filter((symbol) => symbol.file !== null && memberFiles.has(symbol.file)).map((symbol) => symbol.id),
     ]);
     const entrypointIds = symbols
-      .filter((symbol) => symbol.kind === "endpoint" && expandedMembers.has(symbol.id))
+      .filter((symbol) => isArchitecturalEntrypoint(symbol) && expandedMembers.has(symbol.id))
       .map((symbol) => symbol.id);
     const internal = relationships.filter((edge) =>
       expandedMembers.has(edge.source) && expandedMembers.has(edge.target),
@@ -220,6 +223,7 @@ export async function loadAtlasFromDatabase(input: {
       name: row.name,
       qualified_name: row.qualified_name,
       file: row.file_path,
+      scope: classifyArchitecturalScope(row.file_path),
       language: row.language,
       location: row.start_line === null ? null : {
         start_line: row.start_line,
@@ -283,7 +287,7 @@ export async function loadAtlasFromDatabase(input: {
   }
 
   const domains = domainProjection(symbols, relationships);
-  const entrypointIds = symbols.filter((symbol) => symbol.kind === "endpoint").map((symbol) => symbol.id);
+  const entrypointIds = symbols.filter(isArchitecturalEntrypoint).map((symbol) => symbol.id);
   const atlas: Atlas = {
     schema_version: ATLAS_SCHEMA_VERSION,
     generator: { name: "CodeAtlas", version: CODEATLAS_VERSION, indexer_version: INDEXER_VERSION },

@@ -6,7 +6,7 @@ import type { GraphEdge, GraphNode } from "../graph/types.js";
 import type { UnresolvedReference } from "../parser/parser.js";
 import { createTree, type SyntaxNode } from "../parser/tree-sitter.js";
 import { containerNodeId, frameworkEdge, frameworkNode, locationFor } from "./graph.js";
-import { identifierText, memberParts, stringLiteralValue, walkSyntax } from "./syntax.js";
+import { identifierText, memberParts, walkSyntax } from "./syntax.js";
 import type {
   FrameworkAdapter,
   FrameworkEntities,
@@ -294,7 +294,7 @@ export const prismaAdapter: FrameworkAdapter = {
         }),
       );
       for (const field of model.fields) {
-        const targetName = field.type.replace(/[?\[\]]/gu, "");
+        const targetName = field.type.replace(/[?[\]]/gu, "");
         const target = nodesByName.get(targetName);
         if (target === undefined || target.id === node.id) continue;
         edges.push(

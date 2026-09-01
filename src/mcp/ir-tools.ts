@@ -1,5 +1,5 @@
 import { describeImpact } from "../analysis/impact.js";
-import { symbolSearchText } from "../analysis/simplification.js";
+import { rankSymbolSearch } from "../analysis/simplification.js";
 import { loadConfig } from "../core/config.js";
 import { CodeAtlasError } from "../core/errors.js";
 import { workspacePaths } from "../core/workspace.js";
@@ -140,7 +140,11 @@ export async function findSymbolIr(repositoryPath: string, query: string, limit:
   const runtime = await loadIrRuntime(repositoryPath);
   const atlas = runtime.atlas;
   const needle = query.toLocaleLowerCase();
-  const matches = atlas.symbols.filter((symbol) => symbolSearchText(symbol, atlas).includes(needle));
+  const matches = atlas.symbols
+    .map((symbol) => ({ symbol, score: rankSymbolSearch(symbol, query, atlas) }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score || left.symbol.id.localeCompare(right.symbol.id))
+    .map((item) => item.symbol);
   const result = page(matches, { limit, ...(cursor === undefined ? {} : { cursor }) }, `find_symbol:${needle}`, runtime);
   return {
     schema_version: atlas.schema_version,

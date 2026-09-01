@@ -1,6 +1,7 @@
 import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { gunzipSync } from "node:zlib";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildRepository } from "../../src/compiler/build.js";
 import { runGit } from "../../src/git/repository.js";
@@ -14,6 +15,12 @@ import { semanticAtlasJson } from "../../src/ir/serialization.js";
 import { validateAtlas } from "../../src/ir/validation.js";
 
 const roots: string[] = [];
+
+function embeddedAtlas(html: string): Atlas {
+  const encoded = /<script id="atlas-data"[^>]*>([^<]+)<\/script>/u.exec(html)?.[1];
+  if (!encoded) throw new Error("Compressed atlas-data was not embedded in the HTML export.");
+  return JSON.parse(gunzipSync(Buffer.from(encoded, "base64")).toString("utf8")) as Atlas;
+}
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -129,10 +136,11 @@ describe("codeatlas build v2", () => {
     expect(html).toContain("Show hubs");
     expect(html).toContain("rendering budget");
     expect(html).toContain("hierarchyCrumbs");
-    expect(html).toContain(authentication.id);
-    expect(html).toContain(endpoint.id);
-    expect(html).toContain(authFile.id);
-    expect(html).toContain(authenticate!.id);
+    const embedded = embeddedAtlas(html);
+    expect(embedded.domains.map((domain) => domain.id)).toContain(authentication.id);
+    expect(embedded.symbols.map((symbol) => symbol.id)).toEqual(
+      expect.arrayContaining([endpoint.id, authFile.id, authenticate!.id]),
+    );
     expect(html).toContain("deterministic");
     expect(html).toContain("Edges preserve branch labels");
     expect(html).toContain("Architecture-rule status");

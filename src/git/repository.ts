@@ -74,7 +74,7 @@ export async function detectRepository(startPath = process.cwd()): Promise<Repos
       "--abbrev-ref",
       "HEAD",
     ]);
-  } catch (error) {
+  } catch {
     // An unborn repository has no HEAD, so retain the more permissive fallback.
     let rootOutput: string;
     try {

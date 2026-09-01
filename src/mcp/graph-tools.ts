@@ -23,7 +23,7 @@ import {
   type StoredNode,
 } from "./query.js";
 import { answerPacketSchema, type AnswerPacket } from "./schemas.js";
-import { rankEdges, rankNodes } from "./relevance.js";
+import { rankEdges } from "./relevance.js";
 
 interface PageInput {
   cursor?: string | null;

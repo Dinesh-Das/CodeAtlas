@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ARCHITECTURAL_SCOPES } from "../analysis/scope.js";
 import { ATLAS_PROVENANCE, ATLAS_SCHEMA_VERSION } from "./models.js";
 
 const locationSchema = z.object({
@@ -14,6 +15,7 @@ export const atlasSymbolSchema = z.object({
   name: z.string(),
   qualified_name: z.string().nullable(),
   file: z.string().nullable(),
+  scope: z.enum(ARCHITECTURAL_SCOPES).optional(),
   language: z.string().nullable(),
   location: locationSchema.nullable(),
   domain_ids: z.array(z.string()),

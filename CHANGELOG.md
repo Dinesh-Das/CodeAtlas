@@ -15,6 +15,11 @@ All notable changes follow semantic versioning.
 - Added explicit `.codeatlas.yml` domains and reusable architecture rules with CI failure semantics.
 - Added persistent architecture snapshots, deterministic comparisons, Git hunk-to-symbol mapping,
   evidence-gated review findings, and canonical-IR MCP tools.
+- Added interactive/exportable SVG architecture, sequence, and control-flow diagrams plus Mermaid
+  architecture export, compressed offline HTML, scope-aware entrypoints/search, and a public
+  language/framework extension API.
+- Added configurable snapshot retention and pruning, coverage and lint gates, dependency auditing,
+  CodeQL analysis, and private vulnerability reporting.
 
 ### Fixed
 
@@ -25,6 +30,10 @@ All notable changes follow semantic versioning.
 - Split rule and violation pagination into independent cursor scopes, bounded canonical-IR pages
   by serialized size, and made snapshot retrieval section-based instead of returning whole files.
 - Added strict integer validation for CLI polling, search, and impact limits.
+- Preserved independent branches in execution and impact paths, prevented converging branches from
+  being labeled as cycles, and separated definite impact from heuristic or inferred potential impact.
+- Reduced the default MCP surface from 33 overlapping tools to 19 canonical tools while retaining
+  the legacy API behind `CODEATLAS_MCP_LEGACY_TOOLS=1`.
 
 ## 0.10.0-beta.3 - 2026-08-29
 

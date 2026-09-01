@@ -22,9 +22,66 @@ interface TraversalStep {
   path: string[];
   relationshipIds: string[];
   evidenceIds: string[];
+  confidence: number;
+  potentialUsed: boolean;
 }
 
 function edgeMaps(relationships: readonly AtlasRelationship[]): {
+  forward: Map<string, AtlasRelationship[]>;
+  reverse: Map<string, AtlasRelationship[]>;
+} {
+  const forward = new Map<string, AtlasRelationship[]>();
+  const reverse = new Map<string, AtlasRelationship[]>();
+  for (const relationship of relationships) {
+    if (!isDefiniteImpactRelationship(relationship)) continue;
+    const outgoing = forward.get(relationship.source) ?? [];
+    outgoing.push(relationship);
+    forward.set(relationship.source, outgoing);
+    const incoming = reverse.get(relationship.target) ?? [];
+    incoming.push(relationship);
+    reverse.set(relationship.target, incoming);
+  }
+  const sort = (edges: AtlasRelationship[]): void => {
+    edges.sort((left, right) => left.id.localeCompare(right.id));
+  };
+  for (const edges of forward.values()) sort(edges);
+  for (const edges of reverse.values()) sort(edges);
+  return { forward, reverse };
+}
+
+export function isDefiniteImpactRelationship(relationship: AtlasRelationship): boolean {
+  return !NON_IMPACT_EDGES.has(relationship.type) &&
+    relationship.confidence >= 0.95 &&
+    relationship.fact_class !== "INFERRED" &&
+    !["HEURISTIC", "EMBEDDING", "LLM"].includes(relationship.provenance);
+}
+
+export function isPotentialImpactRelationship(relationship: AtlasRelationship): boolean {
+  return !NON_IMPACT_EDGES.has(relationship.type) && !isDefiniteImpactRelationship(relationship);
+}
+
+function potentialEdgeMaps(relationships: readonly AtlasRelationship[]): {
+  forward: Map<string, AtlasRelationship[]>;
+  reverse: Map<string, AtlasRelationship[]>;
+} {
+  const forward = new Map<string, AtlasRelationship[]>();
+  const reverse = new Map<string, AtlasRelationship[]>();
+  for (const relationship of relationships) {
+    if (!isPotentialImpactRelationship(relationship)) continue;
+    const outgoing = forward.get(relationship.source) ?? [];
+    outgoing.push(relationship);
+    forward.set(relationship.source, outgoing);
+    const incoming = reverse.get(relationship.target) ?? [];
+    incoming.push(relationship);
+    reverse.set(relationship.target, incoming);
+  }
+  for (const edges of [...forward.values(), ...reverse.values()]) {
+    edges.sort((left, right) => right.confidence - left.confidence || left.id.localeCompare(right.id));
+  }
+  return { forward, reverse };
+}
+
+function allImpactEdgeMaps(relationships: readonly AtlasRelationship[]): {
   forward: Map<string, AtlasRelationship[]>;
   reverse: Map<string, AtlasRelationship[]>;
 } {
@@ -39,11 +96,9 @@ function edgeMaps(relationships: readonly AtlasRelationship[]): {
     incoming.push(relationship);
     reverse.set(relationship.target, incoming);
   }
-  const sort = (edges: AtlasRelationship[]): void => {
-    edges.sort((left, right) => left.id.localeCompare(right.id));
-  };
-  for (const edges of forward.values()) sort(edges);
-  for (const edges of reverse.values()) sort(edges);
+  for (const edges of [...forward.values(), ...reverse.values()]) {
+    edges.sort((left, right) => right.confidence - left.confidence || left.id.localeCompare(right.id));
+  }
   return { forward, reverse };
 }
 
@@ -65,6 +120,22 @@ export function analyzeImpact(
   return createImpactAnalyzer(atlas)(changedSymbolId, options);
 }
 
+export function analyzePotentialImpact(
+  atlas: Atlas,
+  changedSymbolId: string,
+  options: { depth?: number; limit?: number } = {},
+): ImpactPath[] {
+  const { reverse } = allImpactEdgeMaps(atlas.relationships);
+  return traverseImpact(
+    reverse,
+    changedSymbolId,
+    Math.max(1, Math.min(options.depth ?? 8, 30)),
+    Math.max(1, Math.min(options.limit ?? 200, 2_000)),
+    "potential",
+    true,
+  );
+}
+
 export function createImpactAnalyzer(atlas: Atlas): (
   changedSymbolId: string,
   options?: { depth?: number; limit?: number },
@@ -83,35 +154,45 @@ function traverseImpact(
   changedSymbolId: string,
   depth: number,
   limit: number,
+  classification: "definite" | "potential" = "definite",
+  requirePotential = false,
 ): ImpactPath[] {
   const queue: TraversalStep[] = [{
     symbolId: changedSymbolId,
     path: [changedSymbolId],
     relationshipIds: [],
     evidenceIds: [],
+    confidence: 1,
+    potentialUsed: false,
   }];
-  const visited = new Set([changedSymbolId]);
   const results: ImpactPath[] = [];
-  while (queue.length > 0 && results.length < limit) {
+  let traversed = 0;
+  while (queue.length > 0 && results.length < limit && traversed < limit * 50) {
     const current = queue.shift()!;
     if (current.path.length > depth) continue;
     for (const relationship of reverse.get(current.symbolId) ?? []) {
-      if (visited.has(relationship.source)) continue;
-      visited.add(relationship.source);
+      if (current.path.includes(relationship.source)) continue;
+      traversed += 1;
       const next: TraversalStep = {
         symbolId: relationship.source,
         path: [...current.path, relationship.source],
         relationshipIds: [...current.relationshipIds, relationship.id],
         evidenceIds: [...new Set([...current.evidenceIds, ...relationship.evidence_ids])],
+        confidence: Math.min(current.confidence, relationship.confidence),
+        potentialUsed: current.potentialUsed || isPotentialImpactRelationship(relationship),
       };
-      results.push({
-        changed: changedSymbolId,
-        impacted: relationship.source,
-        distance: next.path.length - 1,
-        path: next.path,
-        relationship_ids: next.relationshipIds,
-        evidence_ids: next.evidenceIds,
-      });
+      if (!requirePotential || next.potentialUsed) {
+        results.push({
+          changed: changedSymbolId,
+          impacted: relationship.source,
+          distance: next.path.length - 1,
+          path: next.path,
+          relationship_ids: next.relationshipIds,
+          evidence_ids: next.evidenceIds,
+          classification,
+          confidence: next.confidence,
+        });
+      }
       queue.push(next);
       if (results.length >= limit) break;
     }
@@ -124,35 +205,45 @@ function traverseDependencies(
   changedSymbolId: string,
   depth: number,
   limit: number,
+  classification: "definite" | "potential" = "definite",
+  requirePotential = false,
 ): ImpactPath[] {
   const queue: TraversalStep[] = [{
     symbolId: changedSymbolId,
     path: [changedSymbolId],
     relationshipIds: [],
     evidenceIds: [],
+    confidence: 1,
+    potentialUsed: false,
   }];
-  const visited = new Set([changedSymbolId]);
   const results: ImpactPath[] = [];
-  while (queue.length > 0 && results.length < limit) {
+  let traversed = 0;
+  while (queue.length > 0 && results.length < limit && traversed < limit * 50) {
     const current = queue.shift()!;
     if (current.path.length > depth) continue;
     for (const relationship of forward.get(current.symbolId) ?? []) {
-      if (visited.has(relationship.target)) continue;
-      visited.add(relationship.target);
+      if (current.path.includes(relationship.target)) continue;
+      traversed += 1;
       const next: TraversalStep = {
         symbolId: relationship.target,
         path: [...current.path, relationship.target],
         relationshipIds: [...current.relationshipIds, relationship.id],
         evidenceIds: [...new Set([...current.evidenceIds, ...relationship.evidence_ids])],
+        confidence: Math.min(current.confidence, relationship.confidence),
+        potentialUsed: current.potentialUsed || isPotentialImpactRelationship(relationship),
       };
-      results.push({
-        changed: changedSymbolId,
-        impacted: relationship.target,
-        distance: next.path.length - 1,
-        path: next.path,
-        relationship_ids: next.relationshipIds,
-        evidence_ids: next.evidenceIds,
-      });
+      if (!requirePotential || next.potentialUsed) {
+        results.push({
+          changed: changedSymbolId,
+          impacted: relationship.target,
+          distance: next.path.length - 1,
+          path: next.path,
+          relationship_ids: next.relationshipIds,
+          evidence_ids: next.evidenceIds,
+          classification,
+          confidence: next.confidence,
+        });
+      }
       queue.push(next);
       if (results.length >= limit) break;
     }
@@ -168,9 +259,27 @@ export function describeImpact(
   const depth = Math.max(1, Math.min(options.depth ?? 8, 30));
   const limit = Math.max(1, Math.min(options.limit ?? 200, 2_000));
   const { forward, reverse } = edgeMaps(atlas.relationships);
+  const potential = potentialEdgeMaps(atlas.relationships);
+  const allImpact = allImpactEdgeMaps(atlas.relationships);
   const symbolById = new Map(atlas.symbols.map((symbol) => [symbol.id, symbol]));
   const paths = traverseImpact(reverse, changedSymbolId, depth, limit);
   const dependencyPaths = traverseDependencies(forward, changedSymbolId, depth, limit);
+  const potentialPaths = traverseImpact(
+    allImpact.reverse,
+    changedSymbolId,
+    depth,
+    limit,
+    "potential",
+    true,
+  );
+  const potentialDependencyPaths = traverseDependencies(
+    allImpact.forward,
+    changedSymbolId,
+    depth,
+    limit,
+    "potential",
+    true,
+  );
   const impactedIds = new Set([changedSymbolId, ...paths.map((path) => path.impacted)]);
   const impactedSymbols = [...impactedIds].map((id) => symbolById.get(id)).filter((item): item is AtlasSymbol => item !== undefined);
   const affectedDomains = new Set(impactedSymbols.flatMap((symbol) => symbol.domain_ids));
@@ -185,8 +294,15 @@ export function describeImpact(
   ).map((violation) => violation.id);
   return {
     changed: changedSymbolId,
-    direct_callers: [...new Set((reverse.get(changedSymbolId) ?? []).map((edge) => edge.source))],
+    direct_callers: [...new Set((reverse.get(changedSymbolId) ?? [])
+      .filter((edge) => edge.type === "CALLS")
+      .map((edge) => edge.source))],
+    direct_dependents: [...new Set((reverse.get(changedSymbolId) ?? []).map((edge) => edge.source))],
     direct_dependencies: [...new Set((forward.get(changedSymbolId) ?? []).map((edge) => edge.target))],
+    potential_direct_dependents: [...new Set((potential.reverse.get(changedSymbolId) ?? [])
+      .map((edge) => edge.source))],
+    potential_direct_dependencies: [...new Set((potential.forward.get(changedSymbolId) ?? [])
+      .map((edge) => edge.target))],
     transitive_callers: [...new Set(paths.map((path) => path.impacted))],
     transitive_dependencies: [...new Set(dependencyPaths.map((path) => path.impacted))],
     affected_files: [...affectedFiles].sort((left, right) => left.localeCompare(right)),
@@ -197,6 +313,8 @@ export function describeImpact(
     affected_rules: [...new Set(affectedRules)],
     paths,
     dependency_paths: dependencyPaths,
+    potential_paths: potentialPaths,
+    potential_dependency_paths: potentialDependencyPaths,
     score: atlas.impact.scores.find((score) => score.symbol_id === changedSymbolId) ?? null,
   };
 }
@@ -222,7 +340,9 @@ export function buildImpactIndex(atlas: Atlas): AtlasImpactIndex {
     const ownDomains = new Set(symbol.domain_ids);
     const crossedDomains = [...domains].filter((domain) => !ownDomains.has(domain)).length;
     const crossDomain = crossedDomains > 0;
-    const directCallers = (reverse.get(symbol.id) ?? []).length;
+    const directCallers = (reverse.get(symbol.id) ?? [])
+      .filter((edge) => edge.type === "CALLS")
+      .length;
     const centrality = new Set([
       ...(forward.get(symbol.id) ?? []).map((edge) => edge.target),
       ...(reverse.get(symbol.id) ?? []).map((edge) => edge.source),

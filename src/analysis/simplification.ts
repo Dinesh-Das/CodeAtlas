@@ -1,4 +1,5 @@
 import type { Atlas, AtlasRelationship, AtlasSymbol } from "../ir/models.js";
+import { isPrimaryArchitectureSymbol, symbolArchitecturalScope } from "./scope.js";
 
 export const DEFAULT_VISIBLE_NODE_BUDGET = 150;
 export const DEFAULT_EXPANDED_NODE_BUDGET = 500;
@@ -102,19 +103,23 @@ export function buildDefaultProjection(
 ): GraphProjection {
   const safeBudget = Math.max(1, budget);
   if (atlas.domains.length > 0) {
-    const rankedDomains = [...atlas.domains].sort((left, right) =>
-      right.member_ids.length - left.member_ids.length || left.id.localeCompare(right.id),
+    const primaryIds = new Set(atlas.symbols.filter(isPrimaryArchitectureSymbol).map((symbol) => symbol.id));
+    const primaryMembers = (domain: Atlas["domains"][number]): string[] =>
+      domain.member_ids.filter((id) => primaryIds.has(id));
+    const rankedDomains = atlas.domains.filter((domain) => primaryMembers(domain).length > 0)
+      .sort((left, right) =>
+      primaryMembers(right).length - primaryMembers(left).length || left.id.localeCompare(right.id),
     );
     const nodes = rankedDomains.slice(0, safeBudget).map((domain): GraphProjectionNode => ({
       id: domain.id,
       kind: "domain",
       name: domain.name,
-      member_ids: [...domain.member_ids].sort((left, right) => left.localeCompare(right)),
-      count: domain.member_ids.length,
+      member_ids: primaryMembers(domain).sort((left, right) => left.localeCompare(right)),
+      count: primaryMembers(domain).length,
     }));
     const groupBySymbol = new Map<string, string>();
-    for (const domain of atlas.domains) {
-      for (const memberId of domain.member_ids) groupBySymbol.set(memberId, domain.id);
+    for (const domain of rankedDomains) {
+      for (const memberId of primaryMembers(domain)) groupBySymbol.set(memberId, domain.id);
     }
     const visible = new Set(nodes.map((node) => node.id));
     return {
@@ -123,13 +128,13 @@ export function buildDefaultProjection(
       edges: aggregateEdges(atlas.relationships, groupBySymbol)
         .filter((edge) => visible.has(edge.source) && visible.has(edge.target)),
       hidden_node_count: atlas.symbols.length,
-      truncated: atlas.domains.length > safeBudget,
-      warnings: budgetWarning("Domain", atlas.domains.length, safeBudget),
+      truncated: rankedDomains.length > safeBudget,
+      warnings: budgetWarning("Production domain", rankedDomains.length, safeBudget),
     };
   }
 
   const modules = atlas.symbols
-    .filter((symbol) => symbol.kind === "module" || symbol.kind === "file")
+    .filter((symbol) => (symbol.kind === "module" || symbol.kind === "file") && isPrimaryArchitectureSymbol(symbol))
     .sort((left, right) => left.id.localeCompare(right.id));
   const visibleModules = modules.slice(0, safeBudget);
   const visibleIds = new Set(visibleModules.map((module) => module.id));
@@ -228,4 +233,51 @@ export function symbolSearchText(symbol: AtlasSymbol, atlas?: Atlas): string {
     .filter((value): value is string => value !== null)
     .join(" ")
     .toLocaleLowerCase();
+}
+
+const SEARCH_KIND_WEIGHT: Readonly<Record<string, number>> = {
+  endpoint: 80,
+  function: 70,
+  method: 68,
+  class: 64,
+  interface: 56,
+  database_model: 56,
+  module: 48,
+  file: 44,
+  domain: 42,
+  feature: 40,
+  test: 12,
+  variable: 0,
+};
+
+export function rankSymbolSearch(symbol: AtlasSymbol, query: string, atlas?: Atlas): number {
+  const needle = query.trim().toLocaleLowerCase();
+  if (needle === "") return 0;
+  const name = symbol.name.toLocaleLowerCase();
+  const qualified = symbol.qualified_name?.toLocaleLowerCase() ?? "";
+  const file = symbol.file?.toLocaleLowerCase() ?? "";
+  const text = symbolSearchText(symbol, atlas);
+  const terms = [...new Set(needle.split(/[^a-z0-9_]+/u).filter((term) => term.length > 1))];
+  if (!text.includes(needle) && !terms.some((term) => text.includes(term))) return 0;
+  let score = SEARCH_KIND_WEIGHT[symbol.kind] ?? 24;
+  if (name === needle) score += 1_000;
+  else if (qualified === needle) score += 900;
+  else if (name.startsWith(needle)) score += 500;
+  else if (qualified.startsWith(needle)) score += 400;
+  else if (name.includes(needle)) score += 300;
+  else if (qualified.includes(needle)) score += 220;
+  else if (file.includes(needle)) score += 100;
+  for (const term of terms) {
+    if (name === term) score += 90;
+    else if (name.includes(term)) score += 45;
+    else if (qualified.includes(term)) score += 28;
+    else if (file.includes(term)) score += 16;
+    else if (text.includes(term)) score += 6;
+  }
+  const scope = symbolArchitecturalScope(symbol);
+  if (scope === "production") score += 60;
+  else if (scope === "configuration") score += 20;
+  else if (!["test", "fixture", "example"].some((candidate) => needle.includes(candidate))) score -= 120;
+  if (symbol.visibility === "public") score += 15;
+  return score;
 }

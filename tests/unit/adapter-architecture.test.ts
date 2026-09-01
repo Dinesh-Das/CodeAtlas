@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { registerCodeAtlasLanguage } from "../../src/api.js";
+import { detectLanguage, isSourceLanguage } from "../../src/core/languages.js";
 import { availableFrameworkAdapters, registerFrameworkAdapter } from "../../src/framework/registry.js";
 import type { FrameworkAdapter } from "../../src/framework/types.js";
 import type { LanguageAdapter } from "../../src/parser/parser.js";
@@ -38,6 +40,28 @@ describe("language and framework adapter architecture", () => {
     expect(getLanguageAdapter("python")).toBe(replacement);
     unregister();
     expect(getLanguageAdapter("python")).toBe(original);
+  });
+
+  it("exposes a public extension API for third-party source languages", () => {
+    const baseline = getLanguageAdapter("python")!;
+    const adapter: LanguageAdapter = {
+      language: "example-language",
+      version: "example-1",
+      engine: "tree-sitter",
+      createSyntaxTree: (content) => baseline.createSyntaxTree(content),
+      parseFile: (input) => baseline.parseFile(input),
+    };
+    const unregister = registerCodeAtlasLanguage({
+      language: "example-language",
+      extensions: [".example"],
+      adapter,
+    });
+    expect(detectLanguage("src/service.example")).toBe("example-language");
+    expect(isSourceLanguage("example-language")).toBe(true);
+    expect(getLanguageAdapter("example-language")).toBe(adapter);
+    unregister();
+    expect(detectLanguage("src/service.example")).toBeNull();
+    expect(getLanguageAdapter("example-language")).toBeNull();
   });
 
   it("restores a replaced framework adapter when an extension is unregistered", () => {

@@ -11,6 +11,11 @@ import { openDatabase } from "../../src/storage/database.js";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
 
 const repositories: TestRepository[] = [];
+const defaultMcpEnvironment = Object.fromEntries(
+  Object.entries(process.env).filter(
+    (entry): entry is [string, string] => entry[0] !== "CODEATLAS_MCP_LEGACY_TOOLS" && entry[1] !== undefined,
+  ),
+);
 
 afterEach(async () => {
   await Promise.all(repositories.splice(0).map((repository) => repository.remove()));
@@ -92,6 +97,7 @@ describe("MCP stdio contract", () => {
         command: process.execPath,
         args: [path.resolve("dist", "cli", "index.js"), "mcp", repository.root],
         cwd: repository.root,
+        env: { ...process.env, CODEATLAS_MCP_LEGACY_TOOLS: "1" } as Record<string, string>,
         stderr: "pipe",
       });
       const client = new Client({ name: "codeatlas-contract-tests", version: "1.0.0" });
@@ -140,6 +146,42 @@ describe("MCP stdio contract", () => {
         const trace = listed.tools.find((tool) => tool.name === "codeatlas_trace");
         expect(trace?.inputSchema).toHaveProperty("properties.start");
         expect(trace?.inputSchema).not.toHaveProperty("properties.from");
+
+        const defaultTransport = new StdioClientTransport({
+          command: process.execPath,
+          args: [path.resolve("dist", "cli", "index.js"), "mcp", repository.root],
+          cwd: repository.root,
+          env: defaultMcpEnvironment,
+          stderr: "pipe",
+        });
+        const defaultClient = new Client({ name: "codeatlas-default-surface", version: "1.0.0" });
+        await defaultClient.connect(defaultTransport);
+        try {
+          const defaultTools = await defaultClient.listTools();
+          expect(defaultTools.tools.map((tool) => tool.name).sort()).toEqual([
+            "analyze_impact",
+            "compare_snapshots",
+            "find_symbol",
+            "get_callers",
+            "get_control_flow",
+            "get_dependencies",
+            "get_domain",
+            "get_entrypoints",
+            "get_evidence",
+            "get_execution_flow",
+            "get_git_changes",
+            "get_repository_overview",
+            "get_rule_violations",
+            "get_rules",
+            "get_snapshot",
+            "get_symbol",
+            "list_domains",
+            "review_changes",
+            "trace_path",
+          ]);
+        } finally {
+          await defaultClient.close();
+        }
 
         const calls: Array<{ name: string; arguments: Record<string, unknown> }> = [
           { name: "codeatlas_status", arguments: {} },
@@ -386,6 +428,7 @@ describe("MCP stdio contract", () => {
         command: process.execPath,
         args: [path.resolve("dist", "cli", "index.js"), "mcp", repository.root],
         cwd: repository.root,
+        env: { ...process.env, CODEATLAS_MCP_LEGACY_TOOLS: "1" } as Record<string, string>,
         stderr: "pipe",
       });
       const client = new Client({ name: "codeatlas-freshness-tests", version: "1.0.0" });
@@ -480,6 +523,7 @@ describe("MCP stdio contract", () => {
         command: process.execPath,
         args: [path.resolve("dist", "cli", "index.js"), "mcp", repository.root],
         cwd: repository.root,
+        env: { ...process.env, CODEATLAS_MCP_LEGACY_TOOLS: "1" } as Record<string, string>,
         stderr: "pipe",
       });
       const client = new Client({ name: "codeatlas-rename-tests", version: "1.0.0" });

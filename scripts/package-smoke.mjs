@@ -53,6 +53,8 @@ try {
     "CODE_OF_CONDUCT.md",
     "ROADMAP.md",
     "dist/cli/index.js",
+    "dist/api.js",
+    "dist/api.d.ts",
     "examples/mcp-config.json",
     "examples/README.md",
   ]) {
@@ -98,6 +100,16 @@ try {
       fixtureRoot,
     );
   progress("Running the installed CLI");
+  const { stdout: apiOutput } = await run(
+    process.execPath,
+    [
+      "--input-type=module",
+      "--eval",
+      "import('@dinesh-das/codeatlas').then(api => process.stdout.write(String(typeof api.buildRepository)))",
+    ],
+    fixtureRoot,
+  );
+  if (apiOutput !== "function") throw new Error("Installed package did not expose the public API.");
   const { stdout: versionOutput } = await execute("--version");
   if (versionOutput.trim() !== packageMetadata.version) {
     throw new Error(

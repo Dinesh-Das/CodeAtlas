@@ -19,6 +19,7 @@ export function formatBuildResult(result: BuildResult): string {
     "Generated:",
     `  ${result.htmlPath}`,
     `  ${result.markdownPath}`,
+    `  ${result.mermaidPath}`,
     `  ${result.currentDirectory}`,
     result.bundlePath === null ? null : `  ${result.bundlePath}`,
     "",

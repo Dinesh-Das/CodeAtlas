@@ -26,10 +26,12 @@ agents:
 codeatlas build .
 ```
 
-Generated outputs include `codeatlas.html`, `CODEATLAS.md`, `.codeatlas/current/atlas.json`,
+Generated outputs include `codeatlas.html`, `CODEATLAS.md`, `CODEATLAS.mmd`, `.codeatlas/current/atlas.json`,
 JSONL symbol/relationship/flow streams, compact agent context, and a persistent architecture
-snapshot. The HTML opens directly from disk and has no CDN or network dependency. It is a view of
-the same versioned IR queried by MCP—not a separate analysis pipeline.
+snapshot. The HTML opens directly from disk, embeds its graph as compressed data, and has no CDN or
+network dependency. Its architecture, sequence, and control-flow diagrams are interactive SVG and
+can be exported as standalone SVG. It is a view of the same versioned IR queried by MCP—not a
+separate analysis pipeline.
 
 - Trace requests end to end.
 - Understand an unfamiliar architecture.
@@ -276,6 +278,7 @@ codeatlas ask "<question>"        Answer locally from graph facts and evidence
 codeatlas snapshot list           List persistent architecture states
 codeatlas snapshot show <id>      Show one canonical snapshot
 codeatlas snapshot diff <a> <b>   Compare two architecture snapshots
+codeatlas snapshot prune --keep 20 Remove snapshots beyond the retention limit
 codeatlas init [path]             Create the workspace and initial structural graph
 codeatlas init --shared-ignore    Deliberately add .codeatlas/ to tracked .gitignore
 codeatlas overview [path]         Print architecture, entrypoints, and hotspots directly
@@ -375,35 +378,29 @@ All source snippets in the stable Answer Packet contract are labeled
 `insufficient_evidence`, `unresolved_reference`, or `dynamic_relationship`; the MCP layer never
 manufactures a missing relationship or answer.
 
-The available tools are `codeatlas_status`, `codeatlas_overview`, `codeatlas_search`,
-`codeatlas_get_node`, `codeatlas_explain_feature`, `codeatlas_trace`, `codeatlas_impact`,
-`codeatlas_dependencies`, `codeatlas_source`, and `codeatlas_health`. Search and other node facts
-include a stable `node_id` in their statement so a client can pass it to follow-up tools.
-
-The canonical-IR surface additionally provides composable tools including
-`get_repository_overview`, `find_symbol`, `search_symbols`, `get_symbol`, `get_callers`,
-`get_callees`, `get_dependencies`, `get_dependents`, `trace_path`, `analyze_impact`, `get_domain`,
+The default API is a focused canonical-IR surface: `get_repository_overview`, `find_symbol`,
+`get_symbol`, `get_callers`, `get_dependencies`, `trace_path`, `analyze_impact`, `get_domain`,
 `list_domains`, `get_entrypoints`, `get_execution_flow`, `get_control_flow`, `get_git_changes`,
-`get_rules`, `get_rule_violations`, `get_evidence`, `get_snapshot`, `compare_snapshots`,
-`get_architecture_diff`, and `review_changes`.
+`get_rules`, `get_rule_violations`, `get_evidence`, `get_snapshot`, `compare_snapshots`, and
+`review_changes`. Results use stable IDs, explicit provenance, and bounded evidence.
+
+The previous 33-tool API remains available for existing clients by setting
+`CODEATLAS_MCP_LEGACY_TOOLS=1` on the MCP server process. New integrations should use the default
+canonical tools to reduce tool-selection ambiguity and context overhead.
 
 Canonical-IR collection tools use independent opaque cursors and serialized-size limits.
 `get_snapshot` returns metadata by default; pass a `section` such as `symbols`, `relationships`,
 `evidence`, or `git_changes` with `limit` and `cursor` to retrieve a bounded snapshot section.
 Use `get_git_changes` for paginated change records alongside `review_changes` findings.
 
-| Tool | Purpose |
+| Canonical tool | Purpose |
 |---|---|
-| `codeatlas_status` | Repository, commit, dirty-tree, language, and index status |
-| `codeatlas_overview` | Domains, features, communities, entrypoints, and models |
-| `codeatlas_search` | Search features, symbols, APIs, files, and models |
-| `codeatlas_get_node` | Node metadata, location, memberships, and relationships |
-| `codeatlas_explain_feature` | Grounded feature components and execution context |
-| `codeatlas_trace` | Bounded evidence-bearing execution/dependency paths |
-| `codeatlas_impact` | Definite and potential direct/transitive dependents |
-| `codeatlas_dependencies` | Incoming and outgoing dependency neighborhood |
-| `codeatlas_source` | Minimal current-working-tree source range |
-| `codeatlas_health` | Architecture and technical-debt signals |
+| `get_repository_overview` | Repository, domains, entrypoints, and graph statistics |
+| `find_symbol` / `get_symbol` | Ranked architecture-aware discovery and exact symbol context |
+| `trace_path` / `get_execution_flow` | Evidence-bearing dependency and multi-branch execution paths |
+| `analyze_impact` | Separate definite and potential blast radius with bounded paths |
+| `get_dependencies` / `get_callers` | Outgoing and incoming canonical neighborhoods |
+| `get_evidence` | Minimal evidence for a symbol or evidence ID |
 
 Useful first questions include “Give me the repository architecture overview”, “How does checkout
 work?”, and “What is affected if I change `PaymentService`?”. The host model explains the result;
@@ -466,7 +463,10 @@ route paths remain answerable without storing plaintext paths.
     "largeFileLines": 500,
     "largeSymbolLines": 80,
     "highFanIn": 10,
-    "highFanOut": 10
+    "highFanOut": 10,
+    "maxSnapshots": 20,
+    "minimumVerifiedRelationshipPercent": 50,
+    "maximumUnresolvedRelationshipPercent": 20
   }
 }
 ```
@@ -543,11 +543,21 @@ TypeScript, TSX, JavaScript, JSX, and Python. Each language adapter owns both st
 and syntax-tree creation, so downstream analyses such as control-flow generation reuse the same
 language adapter instead of maintaining a second grammar switch.
 
-Language adapters are registered through `registerLanguageAdapter(...)`; framework adapters use
+The public package API exposes `registerCodeAtlasLanguage(...)` and
 `registerFrameworkAdapter(...)`. Both registries reject accidental duplicate registration, support
 explicit temporary replacement, and restore the previous adapter when the replacement is removed.
 Framework extensions can detect a supported framework and contribute routes, models, supporting
 nodes, relationships, and unresolved references without replacing the generic AST analysis.
+
+```ts
+import { registerCodeAtlasLanguage, registerFrameworkAdapter } from "@dinesh-das/codeatlas";
+
+const unregister = registerCodeAtlasLanguage({
+  language: "my-language",
+  extensions: [".mine"],
+  adapter: myTreeSitterAdapter,
+});
+```
 
 Current framework adapters prioritize the repository's existing supported surface: Express,
 Fastify, FastAPI, Prisma, and SQLAlchemy. Additional frameworks can be added through the same

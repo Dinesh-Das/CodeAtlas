@@ -278,7 +278,6 @@ async function benchmarkSize(loc) {
       async () => {},
     );
     const renameSource = path.join(fixture.root, "src", "rename-leaf.ts");
-    const renameTarget = path.join(fixture.root, "src", "renamed-leaf.ts");
     await writeFile(renameSource, "export const renameLeaf = true;\n", "utf8");
     await git(fixture.root, "add", "src/rename-leaf.ts");
     await git(fixture.root, "commit", "-m", "Add rename benchmark leaf", "--", "src/rename-leaf.ts");

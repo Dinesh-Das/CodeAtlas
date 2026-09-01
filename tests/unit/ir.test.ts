@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { answerFromAtlas } from "../../src/ai/answering.js";
 import { summarizeReviewArchitecture } from "../../src/cli/review.js";
 import { renderAtlasHtml } from "../../src/export/html.js";
+import { renderAtlasMermaid } from "../../src/export/mermaid.js";
 import { createEvidenceId } from "../../src/ir/evidence.js";
 import { validateEvidenceIds } from "../../src/ir/evidence-validation.js";
 import { ATLAS_SCHEMA_VERSION, type Atlas } from "../../src/ir/models.js";
@@ -120,6 +121,35 @@ describe("canonical CodeAtlas IR", () => {
     ]);
   });
 
+  it("explains how an AI agent receives source-grounded MCP context", () => {
+    const atlas = fixture();
+    const names = ["repositoryOverviewIr", "findSymbolIr", "impactIr", "evidenceIr"];
+    atlas.symbols = names.map((name, index) => {
+      const line = index + 1;
+      const id = `function:${name}`;
+      const evidenceId = createEvidenceId({
+        file: "src/mcp/ir-tools.ts", startLine: line, startColumn: 0,
+        endLine: line, endColumn: 20, symbolId: id,
+      });
+      return {
+        ...atlas.symbols[0]!, id, name, qualified_name: name, file: "src/mcp/ir-tools.ts",
+        location: { start_line: line, start_column: 0, end_line: line, end_column: 20 },
+        signature: `function ${name}()`, evidence_ids: [evidenceId],
+      };
+    });
+    atlas.evidence = atlas.symbols.map((symbol) => ({
+      id: symbol.evidence_ids[0]!, file: symbol.file!, start_line: symbol.location!.start_line,
+      start_column: 0, end_line: symbol.location!.end_line, end_column: 20,
+      symbol_id: symbol.id, relationship_id: null, kind: "source" as const,
+      excerpt: `function ${symbol.name}() {}`, content_hash: null,
+    }));
+
+    const answer = answerFromAtlas(atlas, "How does an AI agent get MCP project context?");
+    expect(answer.answer).toContain("AI agents get indexed repository context through the MCP query layer");
+    expect(answer.answer).toContain("source-grounded evidence");
+    expect(answer.claims[0]?.fact_class).toBe("semantic_inference");
+  });
+
   it("summarizes architecture-aware review impact and exposes review context in HTML", () => {
     const atlas = fixture();
     const symbol = atlas.symbols[0]!;
@@ -176,8 +206,25 @@ describe("canonical CodeAtlas IR", () => {
     expect(html).toContain("Direct dependencies");
     expect(html).toContain("Evidence");
     expect(html).toContain("Location");
+    expect(html).toContain("path.symbol_ids");
     const scriptStart = html.lastIndexOf("<script>") + "<script>".length;
     const scriptEnd = html.lastIndexOf("</script>");
     expect(() => new Function(html.slice(scriptStart, scriptEnd))).not.toThrow();
+  });
+
+  it("renders a portable Mermaid architecture diagram", () => {
+    const atlas = fixture();
+    const symbol = atlas.symbols[0]!;
+    symbol.domain_ids = ["domain:core"];
+    atlas.domains = [{
+      id: "domain:core", name: "Core", member_ids: [symbol.id], file_ids: ["src/a.ts"],
+      entrypoint_ids: [symbol.id], internal_relationship_ids: [], outgoing_relationship_ids: [],
+      confidence: 1, label_provenance: "CONFIG", evidence_ids: symbol.evidence_ids,
+    }];
+
+    const mermaid = renderAtlasMermaid(atlas);
+    expect(mermaid).toContain("flowchart LR");
+    expect(mermaid).toContain("Core");
+    expect(mermaid).toContain("1 files");
   });
 });

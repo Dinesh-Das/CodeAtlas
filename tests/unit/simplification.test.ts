@@ -39,6 +39,20 @@ describe("large graph simplification", () => {
       content_hash: null, confidence: 1, provenance: "STATIC_ANALYSIS" as const,
       fact_class: "INFERRED" as const, evidence_ids: [], metadata: {},
     })));
+    symbols.push({
+      ...symbols[0]!,
+      id: "symbol:test-only",
+      name: "testOnly",
+      qualified_name: "tests.testOnly",
+      file: "tests/fixtures/test-only.ts",
+      scope: "fixture",
+      domain_ids: ["domain:tests"],
+    });
+    domains.push({
+      id: "domain:tests", name: "Tests", member_ids: ["symbol:test-only"], file_ids: [],
+      entrypoint_ids: [], internal_relationship_ids: [], outgoing_relationship_ids: [], confidence: 1,
+      label_provenance: "STATIC_ANALYSIS", evidence_ids: [],
+    });
     const atlas: Atlas = {
       schema_version: ATLAS_SCHEMA_VERSION,
       generator: { name: "CodeAtlas", version: "test", indexer_version: "test" },

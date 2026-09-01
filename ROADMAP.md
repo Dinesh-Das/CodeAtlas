@@ -11,6 +11,14 @@ driven by incorrect or missing evidence on real repositories, not by raw languag
 - Document known compiler/framework coverage limits and surface them through `doctor`.
 - Prove the install → index → overview → agent-question path on all supported operating systems.
 
+## Completed in the current development release
+
+- Interactive offline architecture, sequence, and CFG diagrams with SVG export and Mermaid output.
+- Stable public registration APIs for third-party language and framework adapters.
+- Scope-aware production architecture, branch-preserving flow/impact paths, and explicit
+  definite-versus-potential impact.
+- Coverage, lint, dependency-audit, CodeQL, package-smoke, and multi-OS CI gates.
+
 ## Next
 
 - Broaden production Fastify and Prisma fixtures from public issue reports.
@@ -23,7 +31,6 @@ driven by incorrect or missing evidence on real repositories, not by raw languag
 ## Later
 
 - Additional language and framework adapters based on demonstrated demand.
-- A local visualization that consumes the same evidence packets as MCP clients.
-- Stable extension APIs for third-party framework adapters and retrieval strategies.
+- Extension hooks for third-party retrieval strategies.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing or implementing a roadmap item.

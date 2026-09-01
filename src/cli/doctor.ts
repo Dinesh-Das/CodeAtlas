@@ -1,6 +1,6 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import { loadConfig } from "../core/config.js";
+import { DEFAULT_CONFIG, loadConfig } from "../core/config.js";
 import { workspaceExists, workspacePaths } from "../core/workspace.js";
 import { detectRepository } from "../git/repository.js";
 import { getJournalMode, openDatabase, verifyDatabase } from "../storage/database.js";
@@ -117,8 +117,9 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
   });
   if (!initialized) return checks;
 
+  let config = DEFAULT_CONFIG;
   try {
-    await loadConfig(repository.root);
+    config = await loadConfig(repository.root);
     checks.push({ name: "Configuration", ok: true, detail: "valid" });
   } catch (error) {
     checks.push({
@@ -236,21 +237,39 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
         )
         .get() as { total: number; verified: number; inferred: number; dynamic: number };
       const unresolvedRelationships = database
-        .prepare("SELECT count(*) FROM resolution_issues")
+        .prepare(
+          `SELECT count(*) FROM resolution_issues
+           WHERE reference_kind NOT IN ('reference', 'reflection', 'import')
+              OR (reference_kind = 'import' AND coalesce(
+                    json_extract(metadata_json, '$.import_classification'),
+                    'uncategorized'
+                  ) <> 'external_dependency')`,
+        )
         .pluck()
         .get() as number;
       const denominator = relationshipQuality.total + unresolvedRelationships;
       const percentage = (value: number): string =>
         denominator === 0 ? "0.0" : ((value / denominator) * 100).toFixed(1);
+      const verifiedPercent = denominator === 0
+        ? 100
+        : (relationshipQuality.verified / denominator) * 100;
+      const unresolvedPercent = denominator === 0
+        ? 0
+        : (unresolvedRelationships / denominator) * 100;
+      const relationshipQualityOk =
+        verifiedPercent >= config.limits.minimumVerifiedRelationshipPercent &&
+        unresolvedPercent <= config.limits.maximumUnresolvedRelationshipPercent;
       checks.push({
         name: "Relationship quality",
-        ok: true,
+        ok: relationshipQualityOk,
         detail:
           `verified=${relationshipQuality.verified} (${percentage(relationshipQuality.verified)}%), ` +
           `inferred=${relationshipQuality.inferred} (${percentage(relationshipQuality.inferred)}%), ` +
           `dynamic=${relationshipQuality.dynamic} (${percentage(relationshipQuality.dynamic)}%), ` +
-          `unresolved=${unresolvedRelationships} (${percentage(unresolvedRelationships)}%)`,
-        severity: "info",
+          `actionable_unresolved=${unresolvedRelationships} (${percentage(unresolvedRelationships)}%); ` +
+          `thresholds verified>=${config.limits.minimumVerifiedRelationshipPercent}%, ` +
+          `unresolved<=${config.limits.maximumUnresolvedRelationshipPercent}%`,
+        severity: relationshipQualityOk ? "info" : "warning",
       });
 
       const parserFailureRows = database

@@ -1,4 +1,5 @@
 import { describeImpact } from "../analysis/impact.js";
+import { rankSymbolSearch } from "../analysis/simplification.js";
 import type { Atlas } from "../ir/models.js";
 import { architectureService } from "../service/architecture-service.js";
 
@@ -10,12 +11,12 @@ export function findSymbols(atlas: Atlas, query: string, limit = 50): Atlas["sym
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
     throw new Error("Search limit must be an integer between 1 and 10000.");
   }
-  const needle = query.toLocaleLowerCase();
-  return atlas.symbols.filter((symbol) =>
-    [symbol.id, symbol.name, symbol.qualified_name, symbol.file, symbol.kind]
-      .filter((value): value is string => value !== null)
-      .some((value) => value.toLocaleLowerCase().includes(needle)),
-  ).slice(0, limit);
+  return atlas.symbols
+    .map((symbol) => ({ symbol, score: rankSymbolSearch(symbol, query, atlas) }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score || left.symbol.id.localeCompare(right.symbol.id))
+    .slice(0, limit)
+    .map((item) => item.symbol);
 }
 
 export function resolveSymbol(atlas: Atlas, target: string): Atlas["symbols"][number] {

@@ -2,7 +2,6 @@ import { sha256 } from "../core/hashing.js";
 import type { CodeAtlasConfig } from "../core/config.js";
 import type { FileHistorySummary } from "../git/history.js";
 import type {
-  AnalysisNode,
   ArchitectureFinding,
   ArchitectureMetric,
   FileGraph,

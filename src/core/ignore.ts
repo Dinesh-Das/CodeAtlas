@@ -20,6 +20,7 @@ const DEFAULT_IGNORES = [
   "target/",
   "codeatlas.html",
   "CODEATLAS.md",
+  "CODEATLAS.mmd",
   "codeatlas/",
 ];
 

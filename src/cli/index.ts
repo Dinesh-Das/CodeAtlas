@@ -202,6 +202,15 @@ export function createProgram(): Command {
       const { snapshotDiff } = await import("./snapshot.js");
       console.log(JSON.stringify(await snapshotDiff(oldId, newId, targetPath), null, 2));
     });
+  snapshot.command("prune")
+    .description("Remove oldest snapshots beyond the configured retention limit.")
+    .argument("[path]", "A path inside the repository", process.cwd())
+    .option("--keep <count>", "Number of newest snapshots to retain", (value) => Number.parseInt(value, 10))
+    .action(async (targetPath: string, options: { keep?: number }) => {
+      const { snapshotPrune } = await import("./snapshot.js");
+      const removed = await snapshotPrune(options.keep, targetPath);
+      console.log(removed.length === 0 ? "No snapshots pruned." : `Pruned ${removed.length} snapshot(s): ${removed.join(", ")}`);
+    });
 
   program
     .command("init")

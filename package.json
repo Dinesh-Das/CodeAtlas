@@ -10,6 +10,12 @@
   "bin": {
     "codeatlas": "dist/cli/index.js"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/api.d.ts",
+      "import": "./dist/api.js"
+    }
+  },
   "files": [
     "dist",
     "README.md",
@@ -28,10 +34,12 @@
     "pretest": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "npm run build && vitest run --coverage",
+    "lint": "oxlint src scripts --disable-unicorn-plugin --deny-warnings",
     "benchmark": "npm run build && node scripts/benchmark.mjs --profile smoke",
     "benchmark:full": "npm run build && node scripts/benchmark.mjs --profile full",
     "benchmark:real": "npm run build && node scripts/benchmark-real.mjs",
-    "check": "npm run typecheck && npm test",
+    "check": "npm run typecheck && npm run lint && npm test",
     "prepack": "npm run build",
     "package:smoke": "node scripts/package-smoke.mjs",
     "release:check": "npm run check && npm run package:smoke"
@@ -81,6 +89,8 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "26.3.0",
     "@types/picomatch": "4.0.3",
+    "@vitest/coverage-v8": "4.1.11",
+    "oxlint": "1.80.0",
     "typescript": "7.0.2",
     "vitest": "4.1.11"
   }

@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { writeTextAtomic } from "../core/workspace.js";
 import type { Atlas } from "../ir/models.js";
@@ -40,6 +40,32 @@ export async function listSnapshots(snapshotsDirectory: string): Promise<string[
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+}
+
+export async function pruneSnapshots(
+  snapshotsDirectory: string,
+  keep: number,
+  preserveId?: string,
+): Promise<string[]> {
+  if (!Number.isInteger(keep) || keep < 1) throw new Error("Snapshot retention must be at least 1.");
+  const ids = await listSnapshots(snapshotsDirectory);
+  const snapshots = await Promise.all(ids.map(async (id) => ({
+    id,
+    modified: (await stat(path.join(snapshotsDirectory, id, "atlas.json"))).mtimeMs,
+  })));
+  snapshots.sort((left, right) => right.modified - left.modified || right.id.localeCompare(left.id));
+  const retained = new Set(snapshots.slice(0, keep).map((snapshot) => snapshot.id));
+  if (preserveId !== undefined) retained.add(safeSnapshotId(preserveId));
+  const root = path.resolve(snapshotsDirectory);
+  const removed: string[] = [];
+  for (const snapshot of snapshots) {
+    if (retained.has(snapshot.id)) continue;
+    const target = path.resolve(snapshotsDirectory, safeSnapshotId(snapshot.id));
+    if (path.dirname(target) !== root) throw new Error(`Unsafe snapshot path: ${target}`);
+    await rm(target, { recursive: true, force: false });
+    removed.push(snapshot.id);
+  }
+  return removed;
 }
 
 export async function loadSnapshot(snapshotsDirectory: string, id: string): Promise<Atlas> {
