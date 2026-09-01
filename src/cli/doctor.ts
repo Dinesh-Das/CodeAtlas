@@ -300,21 +300,35 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
            ORDER BY path`,
         )
         .all() as Array<{ path: string; parseStatus: string }>;
-      const indexingFailures = parserFailureRows.length;
-      const generatedFailures = parserFailureRows.filter((row) =>
+      const hardFailures = parserFailureRows.filter((row) => row.parseStatus === "parse_error");
+      const parserDiagnostics = parserFailureRows.filter((row) =>
+        row.parseStatus === "parsed_with_errors"
+      );
+      const generatedFailures = hardFailures.filter((row) =>
         /(?:^|\/)(?:generated|__generated__|gen)(?:\/|$)/iu.test(row.path),
       ).length;
-      const importantFailures = indexingFailures - generatedFailures;
+      const importantFailures = hardFailures.length - generatedFailures;
       checks.push({
         name: "Indexing failures",
-        ok: indexingFailures === 0,
-        detail: indexingFailures === 0
+        ok: hardFailures.length === 0,
+        detail: hardFailures.length === 0
           ? "none"
-          : `${indexingFailures} files have parser failures (important_source=${importantFailures}, generated=${generatedFailures}): ${parserFailureRows
+          : `${hardFailures.length} files could not be parsed (important_source=${importantFailures}, generated=${generatedFailures}): ${hardFailures
               .slice(0, 20)
               .map((row) => `${row.path}[${row.parseStatus}]`)
-              .join(", ")}${indexingFailures > 20 ? ", …" : ""}`,
-        severity: indexingFailures === 0 ? "info" : "warning",
+              .join(", ")}${hardFailures.length > 20 ? ", …" : ""}`,
+        severity: hardFailures.length === 0 ? "info" : "warning",
+      });
+      checks.push({
+        name: "Parser diagnostics",
+        ok: parserDiagnostics.length === 0,
+        detail: parserDiagnostics.length === 0
+          ? "none"
+          : `${parserDiagnostics.length} files retained partial facts with syntax diagnostics: ${parserDiagnostics
+              .slice(0, 20)
+              .map((row) => row.path)
+              .join(", ")}${parserDiagnostics.length > 20 ? ", …" : ""}`,
+        severity: parserDiagnostics.length === 0 ? "info" : "warning",
       });
 
       try {

@@ -1,4 +1,14 @@
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -351,6 +361,7 @@ describe("codeatlas build v2", () => {
     expect(unchanged.reusedFiles).toBe(first.statistics.files);
 
     const servicePath = path.join(root, "src", "auth", "service.ts");
+    const serviceStat = await stat(servicePath);
     const service = await readFile(servicePath, "utf8");
     await writeFile(
       servicePath,
@@ -359,6 +370,11 @@ describe("codeatlas build v2", () => {
         'return password.length > 10 ? "token" : "unauthorized";',
       ),
       "utf8",
+    );
+    await utimes(
+      servicePath,
+      serviceStat.atime,
+      new Date(Math.max(Date.now() + 1_000, serviceStat.mtimeMs + 2_000)),
     );
     const modified = await buildRepository(root);
     expect(modified.parsedFiles).toBe(1);

@@ -1,4 +1,5 @@
 name: Stable Release Evidence
+run-name: Validate ${{ inputs.audit_id }} on ${{ inputs.runner }}
 
 on:
   workflow_dispatch:
@@ -63,8 +64,9 @@ jobs:
           --id $env:AUDIT_ID
           --output release-validation.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
         with:
           name: stable-release-evidence-${{ inputs.audit_id }}-${{ inputs.runner }}
           path: release-validation.json
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 90

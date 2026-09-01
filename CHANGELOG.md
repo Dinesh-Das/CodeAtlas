@@ -32,8 +32,12 @@ All notable changes follow semantic versioning.
 
 ### Fixed
 
-- Canonicalized temporary repository fixtures before path assertions so macOS `/var` aliases and
-  Windows 8.3 short-name paths cannot cause false cross-platform CI failures.
+- Added an evidence-backed starting-point fallback for generic AI-agent architecture questions on
+  small repositories instead of returning an empty answer when no query term matches a symbol.
+- Separated recoverable parser diagnostics from hard indexing failures and bounded external
+  validation heaps within the stable-release memory budget.
+- Canonicalized temporary repository fixtures and explicit modification timestamps so macOS path
+  aliases/coarse timestamps and Windows 8.3 paths cannot cause false cross-platform CI failures.
 - Prevented evidence and untracked-diff readers from following repository symlinks or junctions to
   files outside the repository root.
 - Replaced stale-file lock cleanup with a crash-safe SQLite exclusive lock, eliminating the race

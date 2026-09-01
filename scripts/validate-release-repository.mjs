@@ -83,7 +83,15 @@ if (!source || !id) {
     const api = path.join(installedRoot, "dist", "api.js");
     await execFile(
       process.execPath,
-      [cli, "build", cloneRoot, "--full", "--no-snapshot", "--json"],
+      [
+        `--max-old-space-size=${STABLE_RELEASE_BUDGETS.validationHeapMiB}`,
+        cli,
+        "build",
+        cloneRoot,
+        "--full",
+        "--no-snapshot",
+        "--json",
+      ],
       { cwd: cloneRoot, maxBuffer: 40 * 1024 * 1024 },
     );
     const { stdout: doctorOutput } = await execFile(process.execPath, [cli, "doctor", cloneRoot], {
@@ -154,6 +162,26 @@ if (!source || !id) {
       verifiedRelationshipPercent: Number(quality[1]),
       unresolvedRelationshipPercent: Number(quality[2]),
     };
+    const serializedResult = `${JSON.stringify(result, null, 2)}\n`;
+    const requestedOutput = options.get("--output");
+    if (requestedOutput !== undefined) {
+      const outputPath = path.resolve(requestedOutput);
+      await mkdir(path.dirname(outputPath), { recursive: true });
+      await writeFile(outputPath, serializedResult, "utf8");
+    }
+    const failedChecks = Object.entries(result.checks)
+      .filter(([, passed]) => !passed)
+      .map(([name]) => name);
+    if (failedChecks.length > 0) {
+      const doctorDiagnostic = doctorOutput
+        .split(/\r?\n/u)
+        .find((line) => line.includes("Indexing failures"));
+      throw new Error(
+        `Repository validation failed: ${failedChecks.join(", ")}.${
+          doctorDiagnostic === undefined ? "" : ` ${doctorDiagnostic}`
+        }`,
+      );
+    }
     repositoryValidationSchema.parse(result);
     if (
       result.verifiedRelationshipPercent <
@@ -171,21 +199,8 @@ if (!source || !id) {
         `Repository has more than ${STABLE_RELEASE_BUDGETS.maximumUnresolvedRelationshipPercent}% unresolved relationships.`,
       );
     }
-    const failedChecks = Object.entries(result.checks)
-      .filter(([, passed]) => !passed)
-      .map(([name]) => name);
-    if (failedChecks.length > 0) {
-      throw new Error(`Repository validation failed: ${failedChecks.join(", ")}.`);
-    }
     if (result.languages.length === 0) {
       throw new Error("Repository contains no supported TypeScript, JavaScript, or Python source.");
-    }
-    const serializedResult = `${JSON.stringify(result, null, 2)}\n`;
-    const requestedOutput = options.get("--output");
-    if (requestedOutput !== undefined) {
-      const outputPath = path.resolve(requestedOutput);
-      await mkdir(path.dirname(outputPath), { recursive: true });
-      await writeFile(outputPath, serializedResult, "utf8");
     }
     console.log(serializedResult.trimEnd());
   } finally {

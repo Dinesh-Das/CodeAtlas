@@ -12,6 +12,7 @@ export const STABLE_RELEASE_BUDGETS = {
   minimumVerifiedRelationshipPercent: 50,
   maximumUnresolvedRelationshipPercent: 20,
   maximumEvidenceAgeDays: 90,
+  validationHeapMiB: 5_120,
 } as const;
 
 export const repositoryValidationSchema = z.object({

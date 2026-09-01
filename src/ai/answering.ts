@@ -61,7 +61,7 @@ export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
       if (!queryTerms.includes(term)) queryTerms.push(term);
     }
   }
-  const candidates = atlas.symbols
+  const rankedCandidates = atlas.symbols
     .filter((symbol) => isPrimaryArchitectureSymbol(symbol) && EXPLANATION_KINDS.has(symbol.kind))
     .map((symbol) => {
       const coreText = architecturalSearchText(symbol, atlas);
@@ -72,10 +72,37 @@ export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
         score: rankSymbolSearch(symbol, question, atlas) + matchedTerms * 200,
       };
     })
+    .filter((item) => item.symbol.evidence_ids.length > 0);
+  let candidates = rankedCandidates
     .filter((item) => queryTerms.length === 0 || item.matchedTerms > 0)
     .filter((item) => item.score > 0)
     .sort((left, right) => right.score - left.score || left.symbol.id.localeCompare(right.symbol.id))
-    .slice(0, 8).map((item) => item.symbol);
+    .slice(0, 8)
+    .map((item) => item.symbol);
+  if (asksForAgentContext && candidates.length === 0) {
+    const entrypoints = new Set(atlas.entrypoint_ids);
+    const kindPriority = new Map([
+      ["endpoint", 6],
+      ["function", 5],
+      ["class", 4],
+      ["method", 3],
+      ["interface", 2],
+      ["module", 1],
+      ["file", 0],
+    ]);
+    candidates = rankedCandidates
+      .sort((left, right) => {
+        const priority = (symbol: AtlasSymbol): number =>
+          (entrypoints.has(symbol.id) ? 1_000 : 0) +
+          (symbol.domain_ids.length > 0 ? 100 : 0) +
+          (symbol.visibility === "public" ? 10 : 0) +
+          (kindPriority.get(symbol.kind) ?? 0);
+        return priority(right.symbol) - priority(left.symbol) ||
+          left.symbol.id.localeCompare(right.symbol.id);
+      })
+      .slice(0, 8)
+      .map((item) => item.symbol);
+  }
   const symbolById = new Map(atlas.symbols.map((symbol) => [symbol.id, symbol]));
   const flow = bestFlow(atlas, candidates);
   const claims: AtlasClaim[] = [];

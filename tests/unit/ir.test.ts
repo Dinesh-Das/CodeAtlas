@@ -121,6 +121,20 @@ describe("canonical CodeAtlas IR", () => {
     ]);
   });
 
+  it("grounds a generic AI-agent architecture question in repository starting points", () => {
+    const atlas = fixture();
+    const answer = answerFromAtlas(
+      atlas,
+      "Explain the repository architecture and where an AI coding agent should start.",
+    );
+    expect(answer.claims).toHaveLength(1);
+    expect(answer.claims[0]).toMatchObject({
+      text: "a is a function in src/a.ts.",
+      fact_class: "source_fact",
+    });
+    expect(answer.evidence).toEqual(atlas.evidence);
+  });
+
   it("explains how an AI agent receives source-grounded MCP context", () => {
     const atlas = fixture();
     const names = ["repositoryOverviewIr", "findSymbolIr", "impactIr", "evidenceIr"];

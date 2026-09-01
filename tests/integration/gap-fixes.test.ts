@@ -293,4 +293,19 @@ describe("gap-fix evidence and resilience", () => {
     await ensureFreshIndex(repository.root);
     await expect(getStatus(repository.root)).resolves.toMatchObject({ synchronized: true });
   });
+
+  it("separates recoverable parser diagnostics from hard indexing failures", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write("src/partial.ts", "export function partial( {\n");
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "parser diagnostic fixture");
+    await initializeRepository(repository.root);
+
+    const doctor = await runDoctor(repository.root);
+    expect(doctor).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "Indexing failures", ok: true, severity: "info" }),
+      expect.objectContaining({ name: "Parser diagnostics", ok: false, severity: "warning" }),
+    ]));
+  });
 });
