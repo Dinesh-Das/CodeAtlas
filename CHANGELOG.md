@@ -4,6 +4,8 @@ All notable changes follow semantic versioning.
 
 ## Unreleased
 
+## 0.10.0 - 2026-09-01
+
 ### Added
 
 - Added the versioned canonical CodeAtlas IR with deterministic JSON/JSONL exports and first-class
