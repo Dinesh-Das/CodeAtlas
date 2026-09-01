@@ -43,8 +43,8 @@ All notable changes follow semantic versioning.
   small repositories instead of returning an empty answer when no query term matches a symbol.
 - Separated recoverable parser diagnostics from hard indexing failures and bounded external
   validation heaps within the stable-release memory budget.
-- Canonicalized temporary repository fixtures and explicit modification timestamps so macOS path
-  aliases/coarse timestamps and Windows 8.3 paths cannot cause false cross-platform CI failures.
+- Canonicalized temporary repository fixtures and made incremental edits size-distinct so macOS
+  path aliases/coarse timestamps and Windows 8.3 paths cannot cause false cross-platform CI failures.
 - Prevented evidence and untracked-diff readers from following repository symlinks or junctions to
   files outside the repository root.
 - Replaced stale-file lock cleanup with a crash-safe SQLite exclusive lock, eliminating the race
