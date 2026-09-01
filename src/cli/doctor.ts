@@ -247,28 +247,67 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
         severity: dynamicSummary.invalid === 0 ? "info" : "warning",
       });
 
-      const relationshipQuality = database
+      const relationshipRows = database
         .prepare(
-          `SELECT
-             count(*) AS total,
-             coalesce(sum(CASE WHEN provenance_category = 'verified' THEN 1 ELSE 0 END), 0) AS verified,
-             coalesce(sum(CASE WHEN provenance_category = 'inferred' THEN 1 ELSE 0 END), 0) AS inferred,
-             coalesce(sum(CASE WHEN provenance_category = 'dynamic' THEN 1 ELSE 0 END), 0) AS dynamic
-           FROM edges`,
+          `SELECT provenance_category AS provenance, file_path AS filePath
+           FROM edges
+           WHERE provenance_category IN ('verified', 'inferred', 'dynamic')`,
         )
-        .get() as { total: number; verified: number; inferred: number; dynamic: number };
-      const unresolvedRelationships = database
+        .all() as Array<{
+          provenance: "verified" | "inferred" | "dynamic";
+          filePath: string | null;
+        }>;
+      const primaryRelationships = relationshipRows.filter((row) =>
+        isPrimaryArchitectureScope(classifyArchitecturalScope(row.filePath)),
+      );
+      const countPrimaryProvenance = (provenance: "verified" | "inferred" | "dynamic"): number =>
+        primaryRelationships.filter((row) => row.provenance === provenance).length;
+      const dynamicIssues = (
+        database
+          .prepare(
+            `SELECT file_path AS filePath FROM resolution_issues
+             WHERE reason IN ('dynamic_relationship', 'generated_code')`,
+          )
+          .all() as Array<{ filePath: string }>
+      ).filter((row) =>
+        isPrimaryArchitectureScope(classifyArchitecturalScope(row.filePath)),
+      ).length;
+      const actionableIssueRows = database
         .prepare(
-          `SELECT count(*) FROM resolution_issues
-           WHERE reference_kind NOT IN ('reference', 'reflection', 'import')
-              OR (reference_kind = 'import' AND coalesce(
-                    json_extract(metadata_json, '$.import_classification'),
-                    'uncategorized'
-                  ) <> 'external_dependency')`,
+          `SELECT file_path AS filePath
+           FROM resolution_issues
+           WHERE (
+             reason = 'multi_candidate'
+             AND reference_kind NOT IN ('reference', 'reflection')
+           ) OR (
+             reference_kind = 'import'
+             AND coalesce(
+               json_extract(metadata_json, '$.import_classification'),
+               'uncategorized'
+             ) <> 'external_dependency'
+           ) OR (
+             reason = 'unresolved_reference'
+             AND reference_kind IN (
+               'extends', 'implements', 'framework_route_handler',
+               'framework_implementation', 'framework_mount', 'framework_hook',
+               'framework_protection', 'prisma_query', 'prisma_update'
+             )
+           )`,
         )
-        .pluck()
-        .get() as number;
-      const denominator = relationshipQuality.total + unresolvedRelationships;
+        .all() as Array<{ filePath: string }>;
+      const unresolvedRelationships = actionableIssueRows.filter((row) =>
+        isPrimaryArchitectureScope(classifyArchitecturalScope(row.filePath)),
+      ).length;
+      const relationshipQuality = {
+        verified: countPrimaryProvenance("verified"),
+        inferred: countPrimaryProvenance("inferred"),
+        dynamic: countPrimaryProvenance("dynamic") + dynamicIssues,
+      };
+      const denominator =
+        relationshipQuality.verified +
+        relationshipQuality.inferred +
+        relationshipQuality.dynamic +
+        unresolvedRelationships;
       const percentage = (value: number): string =>
         denominator === 0 ? "0.0" : ((value / denominator) * 100).toFixed(1);
       const verifiedPercent = denominator === 0
@@ -288,6 +327,7 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
           `inferred=${relationshipQuality.inferred} (${percentage(relationshipQuality.inferred)}%), ` +
           `dynamic=${relationshipQuality.dynamic} (${percentage(relationshipQuality.dynamic)}%), ` +
           `actionable_unresolved=${unresolvedRelationships} (${percentage(unresolvedRelationships)}%); ` +
+          "scope=production+configuration; " +
           `thresholds verified>=${config.limits.minimumVerifiedRelationshipPercent}%, ` +
           `unresolved<=${config.limits.maximumUnresolvedRelationshipPercent}%`,
         severity: relationshipQualityOk ? "info" : "warning",

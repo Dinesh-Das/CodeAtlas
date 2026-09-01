@@ -113,6 +113,10 @@ describe("gap-fix evidence and resilience", () => {
           ok: true,
           severity: "info",
         }),
+        expect.objectContaining({
+          name: "Relationship quality",
+          detail: expect.stringMatching(/dynamic=[1-9]\d* .*actionable_unresolved=0 /u),
+        }),
       ]),
     );
   });

@@ -288,6 +288,32 @@ function moduleCandidates(
   const sourceDirectory = path.posix.dirname(reference.evidence.file);
   const candidatePaths = new Set<string>();
 
+  // An explicit runtime extension is authoritative when that file is indexed. TypeScript may
+  // resolve `./index.js` to a neighboring declaration file for type checking; adding both the
+  // runtime and declaration modules makes a single import look ambiguous and weakens every
+  // binding derived from it. Preserve TypeScript's ESM convention by falling back to the matching
+  // source extension only when the requested runtime file does not exist.
+  if (
+    reference.name.startsWith(".") &&
+    /\.[cm]?jsx?$/u.test(reference.name) &&
+    /\.[cm]?[jt]sx?$/u.test(reference.evidence.file)
+  ) {
+    const explicitPath = path.posix.normalize(path.posix.join(sourceDirectory, reference.name));
+    const explicit = modulesByFile.get(explicitPath);
+    if (explicit !== undefined) return [explicit];
+    const extension = path.posix.extname(explicitPath);
+    const withoutExtension = explicitPath.slice(0, -extension.length);
+    const sourceExtensions = extension === ".mjs"
+      ? [".mts"]
+      : extension === ".cjs"
+        ? [".cts"]
+        : [".ts", ".tsx"];
+    const sourceCandidates = sourceExtensions
+      .map((sourceExtension) => modulesByFile.get(`${withoutExtension}${sourceExtension}`))
+      .filter((node): node is StoredNode => node !== undefined);
+    if (sourceCandidates.length > 0) return uniqueNodes(sourceCandidates);
+  }
+
   for (const candidate of projectResolver.resolveModule(reference.name, reference.evidence.file)) {
     candidatePaths.add(candidate);
   }

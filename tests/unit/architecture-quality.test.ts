@@ -76,6 +76,9 @@ describe("architecture quality gates", () => {
   it("classifies fixtures separately and promotes real CLI/MCP entrypoints", () => {
     expect(classifyArchitecturalScope("tests/fixtures/framework/routes.ts")).toBe("fixture");
     expect(classifyArchitecturalScope("scripts/benchmark.mjs")).toBe("tooling");
+    expect(classifyArchitecturalScope("benchmark.js")).toBe("tooling");
+    expect(classifyArchitecturalScope("test.js")).toBe("test");
+    expect(classifyArchitecturalScope("index.test-d.ts")).toBe("test");
     expect(classifyArchitecturalScope("LICENSE")).toBe("documentation");
     expect(classifyArchitecturalScope(".gitignore")).toBe("configuration");
     expect(classifyArchitecturalScope("src/service.ts")).toBe("production");

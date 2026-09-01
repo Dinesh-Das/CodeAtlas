@@ -29,7 +29,8 @@ export function classifyArchitecturalScope(filePath: string | null): Architectur
     return "example";
   }
   if (new RegExp(`${SEGMENT}(?:tests?|__tests__|specs?)(?:/|$)`, "u").test(normalized) ||
-      /\.(?:spec|test)\.[^/]+$/u.test(normalized)) {
+      /\.(?:spec|test)(?:-d)?\.[^/]+$/u.test(normalized) ||
+      /^(?:tests?|spec)(?:[-_.].*)?\.[^/]+$/u.test(baseName)) {
     return "test";
   }
   if (new RegExp(`${SEGMENT}(?:dist|build|coverage|generated|__generated__|vendor|node_modules)(?:/|$)`, "u").test(normalized)) {
@@ -41,6 +42,9 @@ export function classifyArchitecturalScope(filePath: string | null): Architectur
     return "documentation";
   }
   if (new RegExp(`${SEGMENT}(?:scripts?|tools?)(?:/|$)`, "u").test(normalized)) {
+    return "tooling";
+  }
+  if (/^(?:bench|benchmark|performance)(?:[-_.].*)?\.[^/]+$/u.test(baseName)) {
     return "tooling";
   }
   const extension = path.posix.extname(normalized);

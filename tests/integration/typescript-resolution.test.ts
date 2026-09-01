@@ -12,6 +12,50 @@ afterEach(async () => {
 });
 
 describe("project-aware TypeScript resolution", () => {
+  it("prefers an explicit runtime module over a neighboring declaration file", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write(
+      "src/index.js",
+      "export default function runtimeEntry() { return true; }\n",
+    );
+    await repository.write(
+      "src/index.d.ts",
+      "export default function runtimeEntry(): boolean;\n",
+    );
+    await repository.write(
+      "src/consumer.js",
+      'import runtimeEntry from "./index.js";\nexport function run() { return runtimeEntry(); }\n',
+    );
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "explicit runtime import");
+    await initializeRepository(repository.root);
+
+    const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
+    try {
+      const imports = database
+        .prepare(
+          `SELECT target.file_path AS targetFile, edges.provenance_category AS provenance
+           FROM edges JOIN nodes target ON target.id = edges.target_node_id
+           WHERE edges.edge_type = 'IMPORTS' AND edges.file_path = 'src/consumer.js'`,
+        )
+        .all();
+      expect(imports).toEqual([{ targetFile: "src/index.js", provenance: "verified" }]);
+      expect(
+        database
+          .prepare(
+            `SELECT target.file_path AS targetFile, edges.provenance_category AS provenance
+             FROM edges JOIN nodes target ON target.id = edges.target_node_id
+             WHERE edges.edge_type = 'CALLS' AND edges.file_path = 'src/consumer.js'
+               AND target.name = 'runtimeEntry'`,
+          )
+          .all(),
+      ).toEqual([{ targetFile: "src/index.js", provenance: "verified" }]);
+    } finally {
+      database.close();
+    }
+  });
+
   it("falls back when a target TypeScript package lacks the required compiler API", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);
