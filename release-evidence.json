@@ -112,6 +112,28 @@
       "unresolvedRelationshipPercent": 2.2
     },
     {
+      "id": "lru-cache-macos",
+      "repository": "https://github.com/isaacs/node-lru-cache",
+      "commit": "16b3a916662ab449d496b7b4b4f04132565d1d28",
+      "validatedAt": "2026-09-01T12:54:44.845Z",
+      "codeAtlasVersion": "0.10.0-beta.3",
+      "atlasSha256": "46cf2927faac38c89557fa2a1edb2975e5770d9665d5487cbb3dbbf02d369027",
+      "operatingSystem": "macos",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "checks": {
+        "install": true,
+        "index": true,
+        "overview": true,
+        "agentQuestion": true,
+        "noIndexingFailures": true
+      },
+      "verifiedRelationshipPercent": 85.5,
+      "unresolvedRelationshipPercent": 0.5
+    },
+    {
       "id": "ofetch-windows",
       "repository": "https://github.com/unjs/ofetch",
       "commit": "1dbc37fd1ceab832fc7c90cad81b1091c95ba563",
