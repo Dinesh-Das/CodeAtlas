@@ -159,6 +159,7 @@ interface ProjectContext {
   program?: ts.Program;
   checker?: ts.TypeChecker;
   callsBySource?: Map<string, readonly SemanticCall[]>;
+  sourceFilesByIndexedPath?: Map<string, ts.SourceFile>;
 }
 
 export interface TypeScriptResolutionMetrics {
@@ -223,6 +224,7 @@ export class TypeScriptProjectResolver {
   readonly #projectByConfig = new Map<string, ProjectContext>();
   readonly #configByDirectory = new Map<string, string | null>();
   readonly #moduleCache = new Map<string, string[]>();
+  readonly #relativePathCache = new Map<string, string | null>();
   readonly #workspacePackages = new Map<string, { directory: string; manifest: PackageManifest }>();
   readonly #metrics: TypeScriptResolutionMetrics = {
     projectDiscoveryMs: 0,
@@ -259,24 +261,53 @@ export class TypeScriptProjectResolver {
   }
 
   #relativeIndexedPath(absolutePath: string): string | null {
-    let resolved = path.resolve(absolutePath);
+    const cacheKey = path.resolve(absolutePath);
+    const cached = this.#relativePathCache.get(cacheKey);
+    if (cached !== undefined || this.#relativePathCache.has(cacheKey)) return cached ?? null;
+    let resolved = cacheKey;
     try {
       if (existsSync(resolved)) resolved = realpathSync.native(resolved);
     } catch {
       // Broken symlinks and partial installs are ordinary indexing conditions.
     }
-    if (!isPathInside(this.#repositoryRoot, resolved)) return null;
+    if (!isPathInside(this.#repositoryRoot, resolved)) {
+      this.#relativePathCache.set(cacheKey, null);
+      return null;
+    }
     const relative = toPosixPath(path.relative(this.#repositoryRoot, resolved));
-    if (this.#indexedPaths.has(relative)) return relative;
+    if (this.#indexedPaths.has(relative)) {
+      this.#relativePathCache.set(cacheKey, relative);
+      return relative;
+    }
     const extension = path.posix.extname(relative);
     const withoutExtension = extension === "" ? relative : relative.slice(0, -extension.length);
     for (const candidate of [
       ...JS_EXTENSIONS.map((suffix) => `${withoutExtension}${suffix}`),
       ...JS_EXTENSIONS.map((suffix) => path.posix.join(relative, `index${suffix}`)),
     ]) {
-      if (this.#indexedPaths.has(candidate)) return candidate;
+      if (this.#indexedPaths.has(candidate)) {
+        this.#relativePathCache.set(cacheKey, candidate);
+        return candidate;
+      }
     }
+    this.#relativePathCache.set(cacheKey, null);
     return null;
+  }
+
+  #sourceFile(project: ProjectContext, indexedPath: string): ts.SourceFile | undefined {
+    const absolutePath = path.join(this.#repositoryRoot, ...indexedPath.split("/"));
+    const direct = project.program?.getSourceFile(absolutePath);
+    if (direct !== undefined) return direct;
+    if (project.program === undefined) return undefined;
+    if (project.sourceFilesByIndexedPath === undefined) {
+      const sourceFiles = new Map<string, ts.SourceFile>();
+      for (const sourceFile of project.program.getSourceFiles()) {
+        const relativePath = this.#relativeIndexedPath(sourceFile.fileName);
+        if (relativePath !== null) sourceFiles.set(relativePath, sourceFile);
+      }
+      project.sourceFilesByIndexedPath = sourceFiles;
+    }
+    return project.sourceFilesByIndexedPath.get(indexedPath);
   }
 
   #loadProject(sourceFile: string): ProjectContext {
@@ -454,14 +485,7 @@ export class TypeScriptProjectResolver {
         this.#metrics.programsCreated += 1;
       }
       project.checker ??= project.program.getTypeChecker();
-      const absoluteSource = path.join(
-        this.#repositoryRoot,
-        ...reference.evidence.file.split("/"),
-      );
-      const source = project.program.getSourceFile(absoluteSource) ??
-        project.program.getSourceFiles().find((file) =>
-          this.#relativeIndexedPath(file.fileName) === reference.evidence.file,
-        );
+      const source = this.#sourceFile(project, reference.evidence.file);
       if (source === undefined) return null;
       const position = source.getPositionOfLineAndCharacter(
         Math.max(0, reference.evidence.line - 1),
@@ -537,11 +561,7 @@ export class TypeScriptProjectResolver {
         this.#metrics.programsCreated += 1;
       }
       project.checker ??= project.program.getTypeChecker();
-      const absoluteSource = path.join(this.#repositoryRoot, ...sourceFile.split("/"));
-      const source = project.program.getSourceFile(absoluteSource) ??
-        project.program.getSourceFiles().find((file) =>
-          this.#relativeIndexedPath(file.fileName) === sourceFile,
-        );
+      const source = this.#sourceFile(project, sourceFile);
       if (source === undefined) return null;
       const sourceSymbol = project.checker.getSymbolAtLocation(source) ??
         (source as ts.SourceFile & { symbol?: ts.Symbol }).symbol;

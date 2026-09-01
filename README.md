@@ -210,7 +210,9 @@ uncertainty rather than selecting a candidate silently.
 - Git
 - npm
 
-CI verifies the project on Linux, macOS, and Windows.
+CI verifies the project on Linux, macOS, and Windows. Release tags repeat the complete Node 22/24
+matrix, package installation smoke tests, coverage gate, dependency audit, and CodeQL analysis
+before the OIDC publisher can run.
 
 Non-Git directories are not supported in V1. Docker, an API key, a cloud account, and a separate
 database service are not required.
@@ -684,6 +686,17 @@ are in use, then retry from a clean npm cache.
 CodeAtlas is in public beta and is distributed through the
 [official npm package](https://www.npmjs.com/package/@dinesh-das/codeatlas). Possible future
 distribution work includes Homebrew, standalone binaries, and Windows package-manager support.
+
+Stable publication is mechanically blocked until `release-evidence.json` records at least ten
+independent repository validations across Linux, macOS, Windows, TypeScript, JavaScript, and Python,
+and the documented large-repository performance budgets pass. `npm run release:check` validates a
+prerelease; `npm run stable:check` deliberately fails until all stable evidence is present.
+Generate an auditable repository record with
+`npm run validate:repository -- --repository /absolute/path --id UNIQUE_AUDIT_ID`; the command tests
+the packed artifact in an isolated consumer and emits commit-, version-, timestamp-, and
+atlas-hash-bound JSON for review before it is added to the manifest.
+Maintainers can collect the same record on Linux, macOS, or Windows through the manual
+`Stable Release Evidence` GitHub workflow.
 
 See the [contribution guide](https://github.com/Dinesh-Das/CodeAtlas/blob/main/CONTRIBUTING.md),
 [release process](https://github.com/Dinesh-Das/CodeAtlas/blob/main/RELEASING.md),

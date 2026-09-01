@@ -75,6 +75,9 @@ function atlas(symbols: AtlasSymbol[], relationships: AtlasRelationship[]): Atla
 describe("architecture quality gates", () => {
   it("classifies fixtures separately and promotes real CLI/MCP entrypoints", () => {
     expect(classifyArchitecturalScope("tests/fixtures/framework/routes.ts")).toBe("fixture");
+    expect(classifyArchitecturalScope("scripts/benchmark.mjs")).toBe("tooling");
+    expect(classifyArchitecturalScope("LICENSE")).toBe("documentation");
+    expect(classifyArchitecturalScope(".gitignore")).toBe("configuration");
     expect(classifyArchitecturalScope("src/service.ts")).toBe("production");
     expect(isArchitecturalEntrypoint(symbol("createProgram", {
       name: "createProgram",

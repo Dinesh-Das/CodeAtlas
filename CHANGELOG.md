@@ -20,6 +20,15 @@ All notable changes follow semantic versioning.
   language/framework extension API.
 - Added configurable snapshot retention and pruning, coverage and lint gates, dependency auditing,
   CodeQL analysis, and private vulnerability reporting.
+- Added a machine-enforced stable-release evidence manifest, independent repository/OS/language
+  requirements, explicit scale budgets, tag-time multi-OS validation, pinned CI actions, and npm
+  provenance enforcement.
+- Added an isolated external-repository validator that installs the exact packed artifact and emits
+  commit-, version-, timestamp-, and atlas-hash-bound evidence for the stable-release manifest.
+- Added a pinned, least-privilege manual GitHub workflow for collecting those validation records on
+  Linux, macOS, and Windows without executing the target repository's dependency scripts.
+- Raised repository-wide coverage floors to 84% statements, 71% branches, 84% functions, and 86%
+  lines after validating the higher thresholds against the complete suite.
 
 ### Fixed
 
@@ -34,6 +43,12 @@ All notable changes follow semantic versioning.
   being labeled as cycles, and separated definite impact from heuristic or inferred potential impact.
 - Reduced the default MCP surface from 33 overlapping tools to 19 canonical tools while retaining
   the legacy API behind `CODEATLAS_MCP_LEGACY_TOOLS=1`.
+- Cached TypeScript compiler path normalization and indexed source-file lookup, eliminating repeated
+  filesystem canonicalization and cutting the measured self-index candidate phase by roughly 96%.
+- Made architecture scope and `doctor` diagnostics distinguish production code from tooling and
+  repository metadata, so actionable warnings no longer count benchmark scripts or license files.
+- Treated the supported bundled semantic compiler as healthy when a target compiler intentionally
+  exposes no compiler API, while retaining warnings for unsupported versions and load failures.
 
 ## 0.10.0-beta.3 - 2026-08-29
 

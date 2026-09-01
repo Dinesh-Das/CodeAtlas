@@ -8,6 +8,7 @@ export { renderAtlasHtml, exportAtlasHtml } from "./export/html.js";
 export { renderAtlasMarkdown, exportAtlasMarkdown } from "./export/markdown.js";
 export { renderAtlasMermaid, exportAtlasMermaid } from "./export/mermaid.js";
 export { createCodeAtlasServer } from "./mcp/server.js";
+export { CODEATLAS_VERSION } from "./version.js";
 export { registerFrameworkAdapter } from "./framework/registry.js";
 export type { FrameworkAdapter, FrameworkEntities, RepositoryContext } from "./framework/types.js";
 export type { Atlas, AtlasSymbol, AtlasRelationship, AtlasFlow, ImpactResult } from "./ir/models.js";

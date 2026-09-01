@@ -9,6 +9,7 @@ export const ARCHITECTURAL_SCOPES = [
   "generated",
   "documentation",
   "configuration",
+  "tooling",
   "unknown",
 ] as const;
 
@@ -19,6 +20,7 @@ const SEGMENT = "(?:^|/)";
 export function classifyArchitecturalScope(filePath: string | null): ArchitecturalScope {
   if (filePath === null || filePath.trim() === "") return "unknown";
   const normalized = filePath.replaceAll("\\", "/").toLocaleLowerCase();
+  const baseName = path.posix.basename(normalized);
   if (new RegExp(`${SEGMENT}(?:tests?|__tests__)/fixtures?(?:/|$)`, "u").test(normalized) ||
       new RegExp(`${SEGMENT}(?:fixtures?|__fixtures__)(?:/|$)`, "u").test(normalized)) {
     return "fixture";
@@ -34,12 +36,17 @@ export function classifyArchitecturalScope(filePath: string | null): Architectur
     return "generated";
   }
   if (new RegExp(`${SEGMENT}(?:docs?|documentation)(?:/|$)`, "u").test(normalized) ||
-      /\.(?:md|mdx|rst|adoc)$/u.test(normalized)) {
+      /\.(?:md|mdx|rst|adoc)$/u.test(normalized) ||
+      /^(?:license|copying|notice)(?:\..*)?$/u.test(baseName)) {
     return "documentation";
+  }
+  if (new RegExp(`${SEGMENT}(?:scripts?|tools?)(?:/|$)`, "u").test(normalized)) {
+    return "tooling";
   }
   const extension = path.posix.extname(normalized);
   if ([".json", ".jsonc", ".yaml", ".yml", ".toml"].includes(extension) ||
-      new RegExp(`${SEGMENT}(?:\\.github|config)(?:/|$)`, "u").test(normalized)) {
+      new RegExp(`${SEGMENT}(?:\\.github|config)(?:/|$)`, "u").test(normalized) ||
+      /^\.(?:gitignore|gitattributes|npmignore|editorconfig)$/u.test(baseName)) {
     return "configuration";
   }
   return "production";

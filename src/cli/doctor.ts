@@ -1,5 +1,9 @@
 import { stat } from "node:fs/promises";
 import path from "node:path";
+import {
+  classifyArchitecturalScope,
+  isPrimaryArchitectureScope,
+} from "../analysis/scope.js";
 import { DEFAULT_CONFIG, loadConfig } from "../core/config.js";
 import { workspaceExists, workspacePaths } from "../core/workspace.js";
 import { detectRepository } from "../git/repository.js";
@@ -90,13 +94,12 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
   const compiler = semanticCompilerInfo(repository.root);
   const compilerFallbackWarning = [
     "incompatible_version",
-    "incompatible_api",
     "load_failed",
   ].includes(compiler.fallbackReason ?? "");
   const compilerDetail = compiler.source === "repository"
     ? `TypeScript ${compiler.version} from the target repository`
     : compiler.fallbackReason === "incompatible_api"
-      ? `TypeScript ${compiler.version} bundled fallback (target TypeScript ${compiler.targetVersion} does not expose the required compiler API)`
+      ? `TypeScript ${compiler.version} bundled semantic compiler active (target TypeScript ${compiler.targetVersion} does not expose the required compiler API)`
       : compiler.fallbackReason === "incompatible_version"
         ? `TypeScript ${compiler.version} bundled fallback (target TypeScript ${compiler.targetVersion} is unsupported)`
         : compiler.fallbackReason === "load_failed"
@@ -164,38 +167,48 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
            ORDER BY path LIMIT 100`,
         )
         .all() as Array<{ path: string }>;
+      const unsupportedSource = unsupported.filter((row) =>
+        classifyArchitecturalScope(row.path) === "production",
+      );
       const unsupportedKinds = [...new Set(
-        unsupported.map((row) => path.posix.extname(row.path).toLowerCase() || "extensionless"),
+        unsupportedSource.map((row) => path.posix.extname(row.path).toLowerCase() || "extensionless"),
       )];
       checks.push({
         name: "Unsupported languages",
-        ok: unsupported.length === 0,
-        detail: unsupported.length === 0
-          ? "none"
-          : `${unsupported.length} files (${unsupportedKinds.join(", ")}) use generic file metadata only`,
-        severity: unsupported.length === 0 ? "info" : "warning",
+        ok: unsupportedSource.length === 0,
+        detail: unsupportedSource.length === 0
+          ? `none${unsupported.length === 0 ? "" : `; ${unsupported.length} repository metadata files use generic nodes`}`
+          : `${unsupportedSource.length} source files (${unsupportedKinds.join(", ")}) use generic file metadata only`,
+        severity: unsupportedSource.length === 0 ? "info" : "warning",
       });
 
-      const unresolvedImportCategories = database
+      const unresolvedImportRows = database
         .prepare(
-          `SELECT coalesce(
+          `SELECT file_path AS filePath, coalesce(
                     json_extract(metadata_json, '$.import_classification'),
                     'uncategorized'
-                  ) AS category,
-                  count(*) AS count
+                  ) AS category
            FROM resolution_issues
            WHERE reference_kind = 'import'
              AND reason IN ('unresolved_reference', 'multi_candidate')
-           GROUP BY category ORDER BY category`,
+           ORDER BY file_path, line, column_number`,
         )
-        .all() as Array<{ category: string; count: number }>;
+        .all() as Array<{ filePath: string; category: string }>;
+      const categoryCounts = new Map<string, number>();
+      for (const row of unresolvedImportRows) {
+        categoryCounts.set(row.category, (categoryCounts.get(row.category) ?? 0) + 1);
+      }
+      const unresolvedImportCategories = [...categoryCounts]
+        .map(([category, count]) => ({ category, count }))
+        .sort((left, right) => left.category.localeCompare(right.category));
       const unresolvedImports = unresolvedImportCategories.reduce(
         (sum, category) => sum + category.count,
         0,
       );
-      const actionableImports = unresolvedImportCategories
-        .filter((entry) => entry.category !== "external_dependency")
-        .reduce((sum, category) => sum + category.count, 0);
+      const actionableImports = unresolvedImportRows.filter((entry) =>
+        entry.category !== "external_dependency" &&
+        isPrimaryArchitectureScope(classifyArchitecturalScope(entry.filePath)),
+      ).length;
       checks.push({
         name: "Unresolved imports",
         ok: actionableImports === 0,
@@ -203,27 +216,35 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
           ? "none"
           : `${unresolvedImports} categorized references (${unresolvedImportCategories
               .map((entry) => `${entry.category}=${entry.count}`)
-              .join(", ")}); actionable_internal=${actionableImports}`,
+              .join(", ")}); actionable_primary=${actionableImports}`,
         severity: actionableImports === 0 ? "info" : "warning",
       });
 
-      const dynamicRelationships = database
+      const dynamicSummary = database
         .prepare(
           `SELECT
              (SELECT count(*) FROM resolution_issues
-               WHERE reason IN ('dynamic_relationship', 'generated_code')) +
+               WHERE reason IN ('dynamic_relationship', 'generated_code')) AS issues,
              (SELECT count(*) FROM edges
-               WHERE provenance_category = 'dynamic') AS count`,
+               WHERE provenance_category = 'dynamic') AS edges,
+             (SELECT count(*) FROM resolution_issues
+               WHERE reason IN ('dynamic_relationship', 'generated_code')
+                 AND (json_extract(metadata_json, '$.evidence.file') IS NULL
+                   OR json_extract(metadata_json, '$.provenance') NOT IN ('dynamic', 'unresolved'))) +
+             (SELECT count(*) FROM edges
+               WHERE provenance_category = 'dynamic'
+                 AND (confidence >= 1
+                   OR json_extract(metadata_json, '$.evidence.file') IS NULL)) AS invalid`,
         )
-        .pluck()
-        .get() as number;
+        .get() as { issues: number; edges: number; invalid: number };
+      const dynamicRelationships = dynamicSummary.issues + dynamicSummary.edges;
       checks.push({
-        name: "Dynamic relationships",
-        ok: dynamicRelationships === 0,
+        name: "Dynamic relationship labeling",
+        ok: dynamicSummary.invalid === 0,
         detail: dynamicRelationships === 0
           ? "none"
-          : `${dynamicRelationships} candidate or unresolved dynamic relationships`,
-        severity: dynamicRelationships === 0 ? "info" : "warning",
+          : `${dynamicRelationships} explicitly labeled candidate/unresolved facts; invalid_labels=${dynamicSummary.invalid}`,
+        severity: dynamicSummary.invalid === 0 ? "info" : "warning",
       });
 
       const relationshipQuality = database

@@ -18,6 +18,10 @@ driven by incorrect or missing evidence on real repositories, not by raw languag
 - Scope-aware production architecture, branch-preserving flow/impact paths, and explicit
   definite-versus-potential impact.
 - Coverage, lint, dependency-audit, CodeQL, package-smoke, and multi-OS CI gates.
+- A stable-release evidence gate with an independent-repository/OS/language matrix, explicit
+  performance budgets, tag-time multi-OS revalidation, pinned actions, OIDC, and npm provenance.
+- Cached compiler path and source-file normalization, reducing CodeAtlas's self-index candidate
+  generation from about 68 seconds to about 2.3 seconds on the measured Windows environment.
 
 ## Next
 

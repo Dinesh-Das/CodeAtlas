@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "targetVersion": "0.10.0",
+  "independentRepositories": [],
+  "largeRepositoryBenchmark": {
+    "repository": "freeCodeCamp/freeCodeCamp",
+    "commit": "6d0d89755eb233631adfdb5d44596339c5bbe97b",
+    "trackedLoc": 220775,
+    "coldIndexMs": 405400,
+    "peakRssMiB": 4300.8,
+    "databaseMiB": 700.7,
+    "searchP95Ms": 42.46,
+    "impactP95Ms": 172.63,
+    "freshnessP95Ms": 2479.07
+  }
+}

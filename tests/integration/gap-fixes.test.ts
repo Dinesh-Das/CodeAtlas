@@ -108,7 +108,11 @@ describe("gap-fix evidence and resilience", () => {
     const doctor = await runDoctor(repository.root);
     expect(doctor).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ name: "Dynamic relationships", severity: "warning" }),
+        expect.objectContaining({
+          name: "Dynamic relationship labeling",
+          ok: true,
+          severity: "info",
+        }),
       ]),
     );
   });

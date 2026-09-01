@@ -42,7 +42,10 @@
     "check": "npm run typecheck && npm run lint && npm test",
     "prepack": "npm run build",
     "package:smoke": "node scripts/package-smoke.mjs",
-    "release:check": "npm run check && npm run package:smoke"
+    "release:gate": "node scripts/release-gate.mjs",
+    "validate:repository": "npm run build && node scripts/validate-release-repository.mjs",
+    "release:check": "npm run check && npm run package:smoke && npm run release:gate",
+    "stable:check": "npm run release:check && node scripts/release-gate.mjs --stable"
   },
   "engines": {
     "node": ">=22.12.0"

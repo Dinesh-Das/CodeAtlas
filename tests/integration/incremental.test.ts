@@ -225,7 +225,7 @@ describe("Phase 4 incremental indexing", () => {
         detail: expect.stringContaining("run `codeatlas index --full`"),
       }),
     ]);
-    expect(checks.some((check) => check.name === "Dynamic relationships")).toBe(false);
+    expect(checks.some((check) => check.name === "Dynamic relationship labeling")).toBe(false);
   });
 
   it("reindexes the reverse dependency neighborhood without touching unrelated files", async () => {
