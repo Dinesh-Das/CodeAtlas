@@ -32,6 +32,8 @@ All notable changes follow semantic versioning.
 
 ### Fixed
 
+- Canonicalized temporary repository fixtures before path assertions so macOS `/var` aliases and
+  Windows 8.3 short-name paths cannot cause false cross-platform CI failures.
 - Prevented evidence and untracked-diff readers from following repository symlinks or junctions to
   files outside the repository root.
 - Replaced stale-file lock cleanup with a crash-safe SQLite exclusive lock, eliminating the race

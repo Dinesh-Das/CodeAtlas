@@ -25,7 +25,7 @@ jobs:
       - run: npm run release:gate
 
   check:
-    name: Check (${{ matrix.os }})
+    name: Check (${{ matrix.os }}, Node ${{ matrix.node }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:

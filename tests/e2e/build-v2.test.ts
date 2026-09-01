@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 
 async function repositoryFixture(): Promise<string> {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codeatlas-v2-"));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "codeatlas-v2-")));
   roots.push(root);
   await cp(path.resolve("tests/fixtures/v2-architecture"), root, { recursive: true });
   await runGit(root, ["init"]);
@@ -39,7 +39,9 @@ async function repositoryFixture(): Promise<string> {
 }
 
 async function filesystemFixture(): Promise<string> {
-  const root = await mkdtemp(path.join(os.tmpdir(), "codeatlas-v2-filesystem-"));
+  const root = await realpath(
+    await mkdtemp(path.join(os.tmpdir(), "codeatlas-v2-filesystem-")),
+  );
   roots.push(root);
   await cp(path.resolve("tests/fixtures/v2-architecture"), root, { recursive: true });
   return root;
