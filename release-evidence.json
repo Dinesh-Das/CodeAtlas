@@ -1,7 +1,248 @@
 {
   "schemaVersion": 1,
   "targetVersion": "0.10.0",
-  "independentRepositories": [],
+  "independentRepositories": [
+    {
+      "id": "ajv-linux",
+      "repository": "https://github.com/ajv-validator/ajv",
+      "commit": "f177fe323420ccb23e1a79445fd470cbf80aee7c",
+      "validatedAt": "2026-09-01T12:49:54.038Z",
+      "codeAtlasVersion": "0.10.0-beta.3",
+      "atlasSha256": "07ae7c0c44afb0257eeba723a827e7d776411fd0dafe7a3b13f90914cf543f16",
+      "operatingSystem": "linux",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "checks": {
+        "install": true,
+        "index": true,
+        "overview": true,
+        "agentQuestion": true,
+        "noIndexingFailures": true
+      },
+      "verifiedRelationshipPercent": 73.1,
+      "unresolvedRelationshipPercent": 1.1
+    },
+    {
+      "id": "chalk-macos",
+      "repository": "https://github.com/chalk/chalk",
+      "commit": "661317e6f91fe7c90306c2c48ea9354562ee9146",
+      "validatedAt": "2026-09-01T12:49:19.675Z",
+      "codeAtlasVersion": "0.10.0-beta.3",
+      "atlasSha256": "66b98118d4c4d91d29f453fcd94819f665c250e94a16789fc948a31d5bcc000d",
+      "operatingSystem": "macos",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "checks": {
+        "install": true,
+        "index": true,
+        "overview": true,
+        "agentQuestion": true,
+        "noIndexingFailures": true
+      },
+      "verifiedRelationshipPercent": 89.4,
+      "unresolvedRelationshipPercent": 0.6
+    },
+    {
+      "id": "fastify-windows",
+      "repository": "https://github.com/fastify/fastify",
+      "commit": "4cdb0c5def812f5773c952efdb79f1e99dcfae92",
+      "validatedAt": "2026-09-01T12:51:56.633Z",
+      "codeAtlasVersion": "0.10.0-beta.3",
+      "atlasSha256": "ac560b98f9153e5a08faf2ce8459233a00ad03258c62fceb060a89ea9c6ef869",
+      "operatingSystem": "windows",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "checks": {
+        "install": true,
+        "index": true,
+        "overview": true,
+        "agentQuestion": true,
+        "noIndexingFailures": true
+      },
+      "verifiedRelationshipPercent": 72.3,
+      "unresolvedRelationshipPercent": 0.6
+    },
+    {
+      "id": "ky-macos",
+      "repository": "https://github.com/sindresorhus/ky",
+      "commit": "d27ad21266d162ee218d4ea69dce192b84b6f967",
+      "validatedAt": "2026-09-01T12:49:56.921Z",
+      "codeAtlasVersion": "0.10.0-beta.3",
+      "atlasSha256": "38ed65340e0bb37bbad11f01ba6a0f8f3ea5226cb0d6b7a01b809afe2b9e8550",
+      "operatingSystem": "macos",
+      "languages": [
+        "typescript"
+      ],
+      "checks": {
+        "install": true,
+        "index": true,
+        "overview": true,
+        "agentQuestion": true,
+        "noIndexingFailures": true
+      },
+      "verifiedRelationshipPercent": 86.8,
+      "unresolvedRelationshipPercent": 0.5
+    },
+    {
+      "id": "mcp-typescript-sdk-linux",
+      "repository": "https://github.com/modelcontextprotocol/typescript-sdk",
+      "commit": "dcc01028ff6a499a5728c2b6181c1727d52e2fab",
+      "validatedAt": "2026-09-01T12:52:26.728Z",
+      "codeAtlasVersion": "0.10.0-beta.3",
+      "atlasSha256": "00d2d94f0647eb9caac5143d17bfbe4f7e999c2237307632c063bd693e289a2e",
+      "operatingSystem": "linux",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "checks": {
+        "install": true,
+        "index": true,
+        "overview": true,
+        "agentQuestion": true,
+        "noIndexingFailures": true
+      },
+      "verifiedRelationshipPercent": 76.4,
+      "unresolvedRelationshipPercent": 2.2
+    },
+    {
+      "id": "ofetch-windows",
+      "repository": "https://github.com/unjs/ofetch",
+      "commit": "1dbc37fd1ceab832fc7c90cad81b1091c95ba563",
+      "validatedAt": "2026-09-01T12:50:30.878Z",
+      "codeAtlasVersion": "0.10.0-beta.3",
+      "atlasSha256": "88c7650d3b02df5699e0200e49285ae7c7fe34f94097119c1e8f41b928ec79d2",
+      "operatingSystem": "windows",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "checks": {
+        "install": true,
+        "index": true,
+        "overview": true,
+        "agentQuestion": true,
+        "noIndexingFailures": true
+      },
+      "verifiedRelationshipPercent": 85.2,
+      "unresolvedRelationshipPercent": 0.9
+    },
+    {
+      "id": "p-limit-linux",
+      "repository": "https://github.com/sindresorhus/p-limit",
+      "commit": "783068bb9e967fd7bea8642e1bf5a3627fe38bdf",
+      "validatedAt": "2026-09-01T12:49:15.342Z",
+      "codeAtlasVersion": "0.10.0-beta.3",
+      "atlasSha256": "a2a9d80960cb88896abd495ca42d959bd876d4fbf6e4654240602ef6c844a404",
+      "operatingSystem": "linux",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "checks": {
+        "install": true,
+        "index": true,
+        "overview": true,
+        "agentQuestion": true,
+        "noIndexingFailures": true
+      },
+      "verifiedRelationshipPercent": 76.2,
+      "unresolvedRelationshipPercent": 0
+    },
+    {
+      "id": "p-map-windows",
+      "repository": "https://github.com/sindresorhus/p-map",
+      "commit": "22dda61ea29037ba85af25e84bc5efba77e62f44",
+      "validatedAt": "2026-09-01T12:50:34.324Z",
+      "codeAtlasVersion": "0.10.0-beta.3",
+      "atlasSha256": "92ae41c0643f5003bbb6c76e5e027c609e39722ffc3ade774aad48f95aa51702",
+      "operatingSystem": "windows",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "checks": {
+        "install": true,
+        "index": true,
+        "overview": true,
+        "agentQuestion": true,
+        "noIndexingFailures": true
+      },
+      "verifiedRelationshipPercent": 83,
+      "unresolvedRelationshipPercent": 0
+    },
+    {
+      "id": "sampleproject-linux",
+      "repository": "https://github.com/pypa/sampleproject",
+      "commit": "621e4974ca25ce531773def586ba3ed8e736b3fc",
+      "validatedAt": "2026-09-01T12:49:14.843Z",
+      "codeAtlasVersion": "0.10.0-beta.3",
+      "atlasSha256": "d216b15cd1ab907cc77ad1ee4cb5ddec37050003df1828d88c0592f6ea75a370",
+      "operatingSystem": "linux",
+      "languages": [
+        "python"
+      ],
+      "checks": {
+        "install": true,
+        "index": true,
+        "overview": true,
+        "agentQuestion": true,
+        "noIndexingFailures": true
+      },
+      "verifiedRelationshipPercent": 52.9,
+      "unresolvedRelationshipPercent": 0
+    },
+    {
+      "id": "uuid-windows",
+      "repository": "https://github.com/uuidjs/uuid",
+      "commit": "fd59f0277549d22cc7ec00a7b3b5c9bccb4d3c1d",
+      "validatedAt": "2026-09-01T12:50:38.231Z",
+      "codeAtlasVersion": "0.10.0-beta.3",
+      "atlasSha256": "8bd7a09a75107ba533894b8961c062a675e03d1aab7f2c57d3b3f7a07e8e76d6",
+      "operatingSystem": "windows",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "checks": {
+        "install": true,
+        "index": true,
+        "overview": true,
+        "agentQuestion": true,
+        "noIndexingFailures": true
+      },
+      "verifiedRelationshipPercent": 90.5,
+      "unresolvedRelationshipPercent": 0.4
+    },
+    {
+      "id": "zod-linux",
+      "repository": "https://github.com/colinhacks/zod",
+      "commit": "cafbee4772ef481611fef6f5fb9ed9a1b9597069",
+      "validatedAt": "2026-09-01T12:50:59.935Z",
+      "codeAtlasVersion": "0.10.0-beta.3",
+      "atlasSha256": "cf1e493cf28f1298156c31b1487da9b0f6ebe508f6c339f322f5af0417c49af5",
+      "operatingSystem": "linux",
+      "languages": [
+        "javascript",
+        "typescript"
+      ],
+      "checks": {
+        "install": true,
+        "index": true,
+        "overview": true,
+        "agentQuestion": true,
+        "noIndexingFailures": true
+      },
+      "verifiedRelationshipPercent": 65.5,
+      "unresolvedRelationshipPercent": 4.2
+    }
+  ],
   "largeRepositoryBenchmark": {
     "repository": "freeCodeCamp/freeCodeCamp",
     "commit": "6d0d89755eb233631adfdb5d44596339c5bbe97b",
