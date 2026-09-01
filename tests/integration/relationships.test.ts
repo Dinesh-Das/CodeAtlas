@@ -13,6 +13,46 @@ afterEach(async () => {
 });
 
 describe("relationship resolution", () => {
+  it("records ambiguous identifier candidates without materializing guessed reference edges", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write("src/a.ts", "export const duplicate = 1;\n");
+    await repository.write("src/b.ts", "export const duplicate = 2;\n");
+    await repository.write(
+      "src/consumer.ts",
+      'import "./a.js";\nimport "./b.js";\nexport const selected = duplicate;\n',
+    );
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "ambiguous identifier");
+    await initializeRepository(repository.root);
+
+    const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
+    try {
+      expect(
+        database
+          .prepare(
+            `SELECT count(*) FROM edges JOIN nodes target ON target.id = edges.target_node_id
+             WHERE edges.edge_type = 'REFERENCES' AND edges.file_path = 'src/consumer.ts'
+               AND target.name = 'duplicate'`,
+          )
+          .pluck()
+          .get(),
+      ).toBe(0);
+      expect(
+        database
+          .prepare(
+            `SELECT reference_kind AS kind, reason,
+                    json_array_length(candidate_node_ids_json) AS candidates
+             FROM resolution_issues
+             WHERE file_path = 'src/consumer.ts' AND reference_name = 'duplicate'`,
+          )
+          .get(),
+      ).toEqual({ kind: "reference", reason: "multi_candidate", candidates: 2 });
+    } finally {
+      database.close();
+    }
+  });
+
   it("matches the deterministic evidence-bearing call graph snapshot", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);

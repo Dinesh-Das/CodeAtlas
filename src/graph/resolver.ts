@@ -1117,6 +1117,13 @@ export function resolveReferences(
         timestamp,
       );
       ambiguous += 1;
+      // A bare identifier with several reachable same-name symbols is useful uncertainty, not a
+      // set of graph edges. Materializing every candidate creates dense, misleading REFERENCES
+      // fans in large repositories. Keep the candidates in resolution_issues for inspection.
+      if (reference.kind === "reference") {
+        reportProgress();
+        continue;
+      }
     }
     persistEdges(
       database,

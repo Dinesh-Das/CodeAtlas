@@ -12,6 +12,34 @@ afterEach(async () => {
 });
 
 describe("project-aware TypeScript resolution", () => {
+  it("shares one fallback compiler program across configless source files", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    for (const name of ["A", "B", "C"]) {
+      await repository.write(
+        `src/${name.toLowerCase()}.js`,
+        [
+          `export class ${name} { process() { return "${name}"; } }`,
+          `export function run${name}() {`,
+          `  const service = new ${name}();`,
+          "  return service.process();",
+          "}",
+          "",
+        ].join("\n"),
+      );
+    }
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "configless compiler project");
+
+    const result = await initializeRepository(repository.root);
+    expect(
+      result.phaseMetrics.find((metric) => metric.phase === "typescript_project_discovery"),
+    ).toMatchObject({ itemsProcessed: 1 });
+    expect(
+      result.phaseMetrics.find((metric) => metric.phase === "typescript_program_creation"),
+    ).toMatchObject({ itemsProcessed: 1 });
+  });
+
   it("prefers an explicit runtime module over a neighboring declaration file", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);

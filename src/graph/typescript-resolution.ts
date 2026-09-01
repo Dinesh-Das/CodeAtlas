@@ -223,6 +223,7 @@ export class TypeScriptProjectResolver {
   readonly #projectBySource = new Map<string, ProjectContext>();
   readonly #projectByConfig = new Map<string, ProjectContext>();
   readonly #configByDirectory = new Map<string, string | null>();
+  #fallbackProject: ProjectContext | null = null;
   readonly #moduleCache = new Map<string, string[]>();
   readonly #relativePathCache = new Map<string, string | null>();
   readonly #workspacePackages = new Map<string, { directory: string; manifest: PackageManifest }>();
@@ -349,9 +350,19 @@ export class TypeScriptProjectResolver {
           undefined,
           configPath,
         );
+        const compilerOptions = { ...parsed.options };
+        // A repository's diagnostic flags must not turn CodeAtlas indexing into an unbounded
+        // compiler trace. They do not affect semantic resolution and can emit gigabytes of text.
+        delete compilerOptions.traceResolution;
+        delete compilerOptions.diagnostics;
+        delete compilerOptions.extendedDiagnostics;
+        delete compilerOptions.listFiles;
+        delete compilerOptions.listEmittedFiles;
+        delete compilerOptions.explainFiles;
+        delete compilerOptions.generateTrace;
         const project: ProjectContext = {
           configPath,
-          options: parsed.options,
+          options: compilerOptions,
           rootNames: parsed.fileNames,
           ...(parsed.projectReferences === undefined
             ? {}
@@ -364,18 +375,27 @@ export class TypeScriptProjectResolver {
         return project;
       }
     }
-    const project: ProjectContext = {
-      configPath: null,
-      options: {
-        allowJs: true,
-        resolveJsonModule: true,
-        module: this.#compiler.ModuleKind.NodeNext,
-        moduleResolution: this.#compiler.ModuleResolutionKind.NodeNext,
-      },
-      rootNames: [absoluteSource],
-    };
+    let project = this.#fallbackProject;
+    if (project === null) {
+      project = {
+        configPath: null,
+        options: {
+          allowJs: true,
+          resolveJsonModule: true,
+          module: this.#compiler.ModuleKind.NodeNext,
+          moduleResolution: this.#compiler.ModuleResolutionKind.NodeNext,
+        },
+        rootNames: [...this.#indexedPaths]
+          .filter((indexedPath) => /\.[cm]?[jt]sx?$/u.test(indexedPath))
+          .sort((left, right) => left.localeCompare(right))
+          .map((indexedPath) => path.join(this.#repositoryRoot, ...indexedPath.split("/"))),
+      };
+      this.#fallbackProject = project;
+      this.#metrics.projectsDiscovered += 1;
+    } else {
+      this.#metrics.projectCacheHits += 1;
+    }
     this.#projectBySource.set(sourceFile, project);
-    this.#metrics.projectsDiscovered += 1;
     this.#metrics.projectDiscoveryMs += performance.now() - startedAt;
     return project;
   }

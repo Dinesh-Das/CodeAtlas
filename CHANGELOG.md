@@ -36,6 +36,9 @@ All notable changes follow semantic versioning.
   relationships, report dynamic uncertainty in its own bucket, and reserve actionable unresolved
   counts for ambiguous or internal targets; explicit runtime imports now prefer the requested
   module over neighboring declaration files.
+- Stopped materializing guessed edges for ambiguous bare references, shared one bounded semantic
+  compiler program across configless sources, and suppressed target-repository compiler trace flags
+  that could flood output during indexing.
 - Added an evidence-backed starting-point fallback for generic AI-agent architecture questions on
   small repositories instead of returning an empty answer when no query term matches a symbol.
 - Separated recoverable parser diagnostics from hard indexing failures and bounded external
