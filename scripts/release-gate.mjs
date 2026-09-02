@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { validateStableReleaseEvidence } from "../dist/release/evidence.js";
+import { createPackageFingerprint } from "./package-fingerprint.mjs";
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 const packageLock = JSON.parse(await readFile("package-lock.json", "utf8"));
@@ -39,7 +40,11 @@ for (const [name, workflow] of [
   }
 }
 
-const stableEvidence = validateStableReleaseEvidence(version, evidence);
+const packageFingerprint = await createPackageFingerprint(process.cwd());
+const stableEvidence = validateStableReleaseEvidence(version, evidence, {
+  codeAtlasVersion: version,
+  ...packageFingerprint,
+});
 const stableRequested = process.argv.includes("--stable") || !version.includes("-");
 if (stableRequested && !stableEvidence.ready) errors.push(...stableEvidence.errors);
 

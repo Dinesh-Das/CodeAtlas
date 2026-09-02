@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { answerFromAtlas } from "../../src/ai/answering.js";
+import { answerFromAtlas, evaluateArchitectureAnswer } from "../../src/ai/answering.js";
 import { summarizeReviewArchitecture } from "../../src/cli/review.js";
 import { renderAtlasHtml } from "../../src/export/html.js";
 import { renderAtlasMermaid } from "../../src/export/mermaid.js";
@@ -123,16 +123,43 @@ describe("canonical CodeAtlas IR", () => {
 
   it("grounds a generic AI-agent architecture question in repository starting points", () => {
     const atlas = fixture();
+    atlas.entrypoint_ids = [atlas.symbols[0]!.id];
     const answer = answerFromAtlas(
       atlas,
       "Explain the repository architecture and where an AI coding agent should start.",
     );
     expect(answer.claims).toHaveLength(1);
     expect(answer.claims[0]).toMatchObject({
-      text: "a is a function in src/a.ts.",
-      fact_class: "source_fact",
+      text: "Start with a in src/a.ts. These are the detected production entrypoints.",
+      fact_class: "semantic_inference",
     });
     expect(answer.evidence).toEqual(atlas.evidence);
+    expect(evaluateArchitectureAnswer(atlas, answer)).toMatchObject({
+      score: 1,
+      passed: true,
+    });
+  });
+
+  it("does not turn short conversational words into architecture-domain matches", () => {
+    const atlas = fixture();
+    atlas.entrypoint_ids = [atlas.symbols[0]!.id];
+    atlas.domains = [{
+      id: "domain:framework",
+      name: "Framework",
+      member_ids: [atlas.symbols[0]!.id],
+      file_ids: [atlas.symbols[0]!.id],
+      entrypoint_ids: [atlas.symbols[0]!.id],
+      internal_relationship_ids: [],
+      outgoing_relationship_ids: [],
+      confidence: 1,
+      label_provenance: "STATIC_ANALYSIS",
+      evidence_ids: atlas.evidence.map((item) => item.id),
+    }];
+    const answer = answerFromAtlas(
+      atlas,
+      "Give me the repository architecture overview for an AI coding agent.",
+    );
+    expect(answer.claims.some((claim) => claim.text.includes("region spans"))).toBe(false);
   });
 
   it("explains how an AI agent receives source-grounded MCP context", () => {

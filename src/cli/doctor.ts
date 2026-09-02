@@ -21,6 +21,29 @@ export interface DoctorCheck {
   severity?: "info" | "warning" | "error";
 }
 
+interface SemanticFailureSample {
+  operation: string;
+  file: string;
+  message: string;
+}
+
+function semanticFailureSamples(value: string | undefined): SemanticFailureSample[] {
+  if (value === undefined) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is SemanticFailureSample => {
+      if (typeof entry !== "object" || entry === null) return false;
+      const record = entry as Record<string, unknown>;
+      return typeof record.operation === "string" &&
+        typeof record.file === "string" &&
+        typeof record.message === "string";
+    });
+  } catch {
+    return [];
+  }
+}
+
 export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
   const [major = 0, minor = 0] = process.versions.node
@@ -159,6 +182,50 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
       // Later diagnostics query columns and tables introduced by newer migrations. Stop with one
       // actionable compatibility error instead of obscuring it with a secondary SQL failure.
       if (!compatibleSchema) return checks;
+
+      const semanticStateRows = database
+        .prepare(
+          `SELECT key, value FROM repository_state
+           WHERE key IN (
+             'semantic_resolution_failures',
+             'semantic_public_api_failures',
+             'semantic_failure_samples',
+             'semantic_primary_failure_file_count'
+           )`,
+        )
+        .all() as Array<{ key: string; value: string }>;
+      const semanticState = Object.fromEntries(
+        semanticStateRows.map((row) => [row.key, row.value]),
+      );
+      const callFailures = Number.parseInt(semanticState.semantic_resolution_failures ?? "0", 10) || 0;
+      const publicApiFailures = Number.parseInt(
+        semanticState.semantic_public_api_failures ?? "0",
+        10,
+      ) || 0;
+      const semanticFailures = callFailures + publicApiFailures;
+      const failureSamples = semanticFailureSamples(semanticState.semantic_failure_samples);
+      const primaryFailureFiles = Number.parseInt(
+        semanticState.semantic_primary_failure_file_count ?? "0",
+        10,
+      ) || 0;
+      const primaryFailureSamples = failureSamples.filter((failure) =>
+        isPrimaryArchitectureScope(classifyArchitecturalScope(failure.file))
+      );
+      checks.push({
+        name: "Semantic resolution diagnostics",
+        ok: primaryFailureFiles === 0,
+        detail: semanticFailures === 0
+          ? "no compiler-resolution failures in the latest index"
+          : `call_resolution=${callFailures}, public_api_extraction=${publicApiFailures}, ` +
+            `actionable_primary_files=${primaryFailureFiles}` +
+            (primaryFailureSamples.length === 0
+              ? "; failures are outside production/configuration scope"
+              : `; ${primaryFailureSamples
+                  .slice(0, 5)
+                  .map((failure) => `${failure.operation}:${failure.file} (${failure.message})`)
+                  .join(", ")}`),
+        severity: primaryFailureFiles === 0 ? "info" : "warning",
+      });
 
       const unsupported = database
         .prepare(

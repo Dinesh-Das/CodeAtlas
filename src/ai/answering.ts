@@ -1,7 +1,11 @@
 import type { Atlas, AtlasEvidence, AtlasFlow, AtlasSymbol } from "../ir/models.js";
 import { isDefiniteImpactRelationship } from "../analysis/impact.js";
 import { rankSymbolSearch } from "../analysis/simplification.js";
-import { isPrimaryArchitectureSymbol } from "../analysis/scope.js";
+import {
+  classifyArchitecturalScope,
+  isPrimaryArchitectureScope,
+  isPrimaryArchitectureSymbol,
+} from "../analysis/scope.js";
 import { validateEvidenceIds } from "../ir/evidence-validation.js";
 
 export interface AtlasClaim {
@@ -18,9 +22,22 @@ export interface AtlasAnswer {
   provenance: "STATIC_ANALYSIS";
 }
 
+export interface ArchitectureAnswerQuality {
+  score: number;
+  passed: boolean;
+  checks: {
+    grounded: boolean;
+    primaryScopeOnly: boolean;
+    identifiesStartingPoint: boolean;
+    architectureSpecific: boolean;
+    nonRepetitive: boolean;
+  };
+}
+
 const STOP_WORDS = new Set([
   "a", "ai", "an", "and", "agent", "architecture", "coding", "codeatlas", "context", "developer",
-  "does", "give", "how", "is", "of", "project", "provide", "the", "to", "tool", "what", "where", "why", "work",
+  "does", "explain", "for", "give", "how", "is", "of", "overview", "point", "project", "provide",
+  "repository", "start", "starting", "the", "to", "tool", "what", "where", "why", "work",
 ]);
 
 function terms(question: string): string[] {
@@ -51,16 +68,57 @@ function architecturalSearchText(symbol: AtlasSymbol, atlas: Atlas): string {
     .toLocaleLowerCase();
 }
 
+function primaryEntrypoints(atlas: Atlas): AtlasSymbol[] {
+  const symbolById = new Map(atlas.symbols.map((symbol) => [symbol.id, symbol]));
+  return atlas.entrypoint_ids
+    .map((id) => symbolById.get(id))
+    .filter((symbol): symbol is AtlasSymbol =>
+      symbol !== undefined && isPrimaryArchitectureSymbol(symbol) && symbol.evidence_ids.length > 0
+    )
+    .sort((left, right) => {
+      const publicPriority = (symbol: AtlasSymbol): number => symbol.visibility === "public" ? 1 : 0;
+      return publicPriority(right) - publicPriority(left) ||
+        (left.file ?? "").localeCompare(right.file ?? "") ||
+        left.id.localeCompare(right.id);
+    });
+}
+
+function primaryDomainSummary(atlas: Atlas): Array<{
+  name: string;
+  files: number;
+  evidenceIds: string[];
+}> {
+  const symbolById = new Map(atlas.symbols.map((symbol) => [symbol.id, symbol]));
+  return atlas.domains
+    .map((domain) => {
+      const members = domain.member_ids
+        .map((id) => symbolById.get(id))
+        .filter((symbol): symbol is AtlasSymbol =>
+          symbol !== undefined && isPrimaryArchitectureSymbol(symbol)
+        );
+      const files = new Set(members.map((member) => member.file).filter((file): file is string => file !== null));
+      return {
+        name: domain.name,
+        files: files.size,
+        evidenceIds: boundedEvidence(domain.evidence_ids, ...members.map((member) => member.evidence_ids)),
+      };
+    })
+    .filter((domain) => domain.files > 0 && domain.evidenceIds.length > 0)
+    .sort((left, right) => right.files - left.files || left.name.localeCompare(right.name));
+}
+
+function describedStartingPoint(symbol: AtlasSymbol): string {
+  const name = symbol.qualified_name ?? symbol.name;
+  return symbol.file === null ? name : `${name} in ${symbol.file}`;
+}
+
 export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
   const normalizedQuestion = question.toLocaleLowerCase();
   const asksForAgentContext = /\b(?:ai|agent)\b/u.test(normalizedQuestion) &&
     /\b(?:context|mcp|architecture)\b/u.test(normalizedQuestion);
+  const asksForArchitectureOverview = asksForAgentContext ||
+    /\b(?:architecture|architectural|overview|onboard|starting point|start)\b/u.test(normalizedQuestion);
   const queryTerms = terms(question);
-  if (asksForAgentContext) {
-    for (const term of ["mcp", "overview", "symbol", "impact", "flow", "evidence"]) {
-      if (!queryTerms.includes(term)) queryTerms.push(term);
-    }
-  }
   const rankedCandidates = atlas.symbols
     .filter((symbol) => isPrimaryArchitectureSymbol(symbol) && EXPLANATION_KINDS.has(symbol.kind))
     .map((symbol) => {
@@ -79,7 +137,7 @@ export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
     .sort((left, right) => right.score - left.score || left.symbol.id.localeCompare(right.symbol.id))
     .slice(0, 8)
     .map((item) => item.symbol);
-  if (asksForAgentContext && candidates.length === 0) {
+  if (asksForArchitectureOverview && candidates.length === 0) {
     const entrypoints = new Set(atlas.entrypoint_ids);
     const kindPriority = new Map([
       ["endpoint", 6],
@@ -107,6 +165,19 @@ export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
   const flow = bestFlow(atlas, candidates);
   const claims: AtlasClaim[] = [];
   const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+  if (asksForArchitectureOverview) {
+    const domains = primaryDomainSummary(atlas);
+    if (domains.length > 0) {
+      const largest = domains.slice(0, 5);
+      claims.push({
+        text: `The repository has ${domains.length} primary architecture regions. The largest are ${largest
+          .map((domain) => `${domain.name} (${domain.files} ${domain.files === 1 ? "file" : "files"})`)
+          .join(", ")}.`,
+        fact_class: "graph_inference",
+        evidence_ids: boundedEvidence(...largest.map((domain) => domain.evidenceIds)),
+      });
+    }
+  }
   if (asksForAgentContext) {
     const contextComponents = ["repositoryOverviewIr", "findSymbolIr", "impactIr", "evidenceIr"]
       .map((name) => atlas.symbols.find((symbol) =>
@@ -121,11 +192,28 @@ export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
       });
     }
   }
+  if (asksForArchitectureOverview) {
+    const detectedEntrypoints = primaryEntrypoints(atlas).slice(0, 5);
+    const startingPoints = detectedEntrypoints.length > 0
+      ? detectedEntrypoints
+      : candidates.filter((symbol) => symbol.evidence_ids.length > 0).slice(0, 5);
+    if (startingPoints.length > 0) {
+      claims.push({
+        text: detectedEntrypoints.length > 0
+          ? `Start with ${startingPoints.map(describedStartingPoint).join(", ")}. These are the detected production entrypoints.`
+          : `Start with ${startingPoints.map(describedStartingPoint).join(", ")}. No formal production entrypoint was detected, so these are the highest-ranked public architecture symbols.`,
+        fact_class: "semantic_inference",
+        evidence_ids: boundedEvidence(...startingPoints.map((symbol) => symbol.evidence_ids)),
+      });
+    }
+  }
   const matchingDomains = atlas.domains
     .map((domain) => ({
       domain,
-      score: queryTerms.reduce((score, term) =>
-        score + (domain.name.toLocaleLowerCase() === term ? 10 : domain.name.toLocaleLowerCase().includes(term) ? 5 : 0), 0),
+      score: queryTerms.reduce((score, term) => {
+        const name = domain.name.toLocaleLowerCase();
+        return score + (name === term ? 10 : term.length >= 4 && name.includes(term) ? 5 : 0);
+      }, 0),
     }))
     .filter((item) => item.score > 0)
     .sort((left, right) => right.score - left.score || left.domain.id.localeCompare(right.domain.id))
@@ -147,7 +235,7 @@ export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
       });
     }
   }
-  if (flow !== null) {
+  if (flow !== null && !asksForArchitectureOverview) {
     const path = flow.paths?.find((candidate) => !candidate.cycle_detected) ?? flow.paths?.[0];
     const symbolIds = path?.symbol_ids ?? flow.steps.map((step) => step.symbol_id);
     const names = symbolIds.map((id) => symbolById.get(id)?.qualified_name ?? symbolById.get(id)?.name ?? id);
@@ -162,7 +250,7 @@ export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
       ),
     });
   }
-  for (const symbol of candidates.slice(0, 3)) {
+  for (const symbol of asksForArchitectureOverview ? [] : candidates.slice(0, 3)) {
     const outgoing = atlas.relationships.filter((relationship) =>
       relationship.source === symbol.id &&
       isDefiniteImpactRelationship(relationship) &&
@@ -175,9 +263,9 @@ export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
       return priority(right) - priority(left) || left.id.localeCompare(right.id);
     }).slice(0, 6);
     if (outgoing.length > 0) {
-      const targets = outgoing.map((relationship) =>
+      const targets = [...new Set(outgoing.map((relationship) =>
         symbolById.get(relationship.target)?.qualified_name ?? symbolById.get(relationship.target)?.name ?? relationship.target,
-      );
+      ))];
       const normalizedName = symbol.name.toLocaleLowerCase();
       const connection = /^create.*server$/u.test(normalizedName)
         ? "orchestrates evidence-backed query components including"
@@ -215,4 +303,37 @@ export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
     evidence,
     provenance: "STATIC_ANALYSIS",
   };
+}
+
+export function evaluateArchitectureAnswer(
+  atlas: Atlas,
+  answer: AtlasAnswer,
+): ArchitectureAnswerQuality {
+  const validEvidence = new Set(atlas.evidence.map((item) => item.id));
+  const citedEvidence = new Set(answer.claims.flatMap((claim) => claim.evidence_ids));
+  const grounded = answer.claims.length > 0 && answer.evidence.length > 0 &&
+    answer.claims.every((claim) =>
+      claim.evidence_ids.length > 0 && claim.evidence_ids.every((id) => validEvidence.has(id))
+    ) && answer.evidence.every((item) => citedEvidence.has(item.id));
+  const primaryScopeOnly = answer.evidence.length > 0 && answer.evidence.every((item) =>
+    isPrimaryArchitectureScope(classifyArchitecturalScope(item.file))
+  );
+  const normalized = answer.answer.toLocaleLowerCase();
+  const identifiesStartingPoint = /\bstart with\b|\bentrypoints?\b/u.test(normalized);
+  const architectureSpecific = /\barchitecture regions?\b|\bmcp query layer\b|\bproduction entrypoints?\b/u
+    .test(normalized);
+  const normalizedClaims = answer.claims.map((claim) =>
+    claim.text.toLocaleLowerCase().replace(/\s+/gu, " ").trim()
+  );
+  const nonRepetitive = new Set(normalizedClaims).size === normalizedClaims.length &&
+    !/\b([a-z_][a-z0-9_]*)\s*,\s*\1\b/iu.test(answer.answer);
+  const checks = {
+    grounded,
+    primaryScopeOnly,
+    identifiesStartingPoint,
+    architectureSpecific,
+    nonRepetitive,
+  };
+  const score = Object.values(checks).filter(Boolean).length / Object.keys(checks).length;
+  return { score, passed: score >= 0.8 && grounded && primaryScopeOnly, checks };
 }

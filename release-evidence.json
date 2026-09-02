@@ -1,6 +1,11 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "targetVersion": "0.10.0",
+  "releaseArtifact": {
+    "codeAtlasVersion": "0.10.0",
+    "packageSha256": "0d30221e760300727da298b406b3807ac20a6e7c475e032f05c94f61f5c19fa3",
+    "packedFileCount": 502
+  },
   "independentRepositories": [
     {
       "id": "ajv-linux",
@@ -268,6 +273,8 @@
   "largeRepositoryBenchmark": {
     "repository": "freeCodeCamp/freeCodeCamp",
     "commit": "6d0d89755eb233631adfdb5d44596339c5bbe97b",
+    "validatedAt": "2026-09-01T02:31:33.000Z",
+    "codeAtlasVersion": "0.10.0-beta.3",
     "trackedLoc": 220775,
     "coldIndexMs": 405400,
     "peakRssMiB": 4300.8,

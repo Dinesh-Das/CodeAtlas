@@ -34,6 +34,18 @@ All notable changes follow semantic versioning.
 
 ### Fixed
 
+- Replaced keyword-driven architecture narration with production-scoped domain and entrypoint
+  synthesis, added a deterministic relevance/grounding evaluator, and made package/repository
+  validation reject empty, repetitive, fixture-backed, or architecture-irrelevant agent answers.
+- Prevented direct overviews from promoting tests, fixtures, examples, or tooling as major systems,
+  entrypoints, or hotspots.
+- Recorded TypeScript call-resolution and public-API extraction failures with bounded diagnostic
+  samples, exposed them through `codeatlas doctor`, and reused one project resolver across public
+  API and relationship analysis.
+- Rebalanced impact scoring with logarithmic, decimal components so large dependency graphs retain
+  useful ordering instead of saturating broad groups at the same score.
+- Bound the stable manifest to the exact packed artifact SHA-256 and file count, added benchmark
+  version/timestamp expiry checks, and made CodeAtlas enforce its own architecture boundaries.
 - Corrected stable relationship-quality accounting to assess production/configuration source
   relationships, report dynamic uncertainty in its own bucket, and reserve actionable unresolved
   counts for ambiguous or internal targets; explicit runtime imports now prefer the requested

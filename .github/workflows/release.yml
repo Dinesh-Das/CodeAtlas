@@ -106,3 +106,8 @@ jobs:
           version="$(node -p "require('./package.json').version")"
           published="$(npm view "@dinesh-das/codeatlas@$version" version)"
           test "$published" = "$version"
+          npm pack "@dinesh-das/codeatlas@$version" --silent --pack-destination "$RUNNER_TEMP"
+          artifact="$RUNNER_TEMP/dinesh-das-codeatlas-$version.tgz"
+          expected_sha="$(node -p "require('./release-evidence.json').releaseArtifact.packageSha256")"
+          actual_sha="$(sha256sum "$artifact" | cut -d' ' -f1)"
+          test "$actual_sha" = "$expected_sha"

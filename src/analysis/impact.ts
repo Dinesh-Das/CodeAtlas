@@ -319,6 +319,10 @@ export function describeImpact(
   };
 }
 
+function logarithmicContribution(value: number, weight: number, maximum: number): number {
+  return Number(Math.min(maximum, Math.log2(value + 1) * weight).toFixed(2));
+}
+
 export function buildImpactIndex(atlas: Atlas): AtlasImpactIndex {
   const { forward, reverse } = edgeMaps(atlas.relationships);
   const symbolById = new Map(atlas.symbols.map((symbol) => [symbol.id, symbol]));
@@ -356,18 +360,18 @@ export function buildImpactIndex(atlas: Atlas): AtlasImpactIndex {
       violation.path.some((id) => impactedIds.has(id)),
     ).map((violation) => violation.rule_id));
     const components = {
-      direct_callers: { value: directCallers, weight: 4, contribution: Math.min(20, directCallers * 4) },
-      transitive_reach: { value: paths.length, weight: 0.5, contribution: Math.min(20, Math.ceil(paths.length * 0.5)) },
-      affected_entrypoints: { value: affectedEntrypoints, weight: 10, contribution: Math.min(20, affectedEntrypoints * 10) },
-      cross_domain: { value: crossedDomains, weight: 5, contribution: Math.min(10, crossedDomains * 5) },
-      public_api: { value: affectedApis, weight: 5, contribution: Math.min(10, affectedApis * 5) },
+      direct_callers: { value: directCallers, weight: 5, contribution: logarithmicContribution(directCallers, 5, 20) },
+      transitive_reach: { value: paths.length, weight: 2.2, contribution: logarithmicContribution(paths.length, 2.2, 20) },
+      affected_entrypoints: { value: affectedEntrypoints, weight: 10, contribution: logarithmicContribution(affectedEntrypoints, 10, 20) },
+      cross_domain: { value: crossedDomains, weight: 4, contribution: logarithmicContribution(crossedDomains, 4, 10) },
+      public_api: { value: affectedApis, weight: 5, contribution: logarithmicContribution(affectedApis, 5, 10) },
       database_schema: { value: databaseSchemaImpact ? 1 : 0, weight: 8, contribution: databaseSchemaImpact ? 8 : 0 },
       missing_test_coverage: { value: paths.length > 0 && affectedTests === 0 ? 1 : 0, weight: 8, contribution: paths.length > 0 && affectedTests === 0 ? 8 : 0 },
-      centrality: { value: centrality, weight: 1, contribution: Math.min(8, centrality) },
-      architecture_rules: { value: ruleIds.size, weight: 5, contribution: Math.min(10, ruleIds.size * 5) },
+      centrality: { value: centrality, weight: 1.5, contribution: logarithmicContribution(centrality, 1.5, 8) },
+      architecture_rules: { value: ruleIds.size, weight: 5, contribution: logarithmicContribution(ruleIds.size, 5, 10) },
     };
     const rawScore = Object.values(components).reduce((sum, factor) => sum + factor.contribution, 0);
-    const score = Math.max(0, Math.min(100, Math.round(rawScore)));
+    const score = Math.max(0, Math.min(100, Number(rawScore.toFixed(1))));
     const reasons = [
       directCallers > 0 ? `${directCallers} direct dependents` : null,
       paths.length > 0 ? `${paths.length} transitive dependents` : null,

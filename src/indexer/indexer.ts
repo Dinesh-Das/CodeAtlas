@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { runArchitectureAnalysis } from "../analysis/architecture.js";
@@ -7,9 +7,13 @@ import {
   supportsArchitecturalIntent,
 } from "../analysis/intent.js";
 import type { ArchitectureAnalysisResult } from "../analysis/types.js";
+import {
+  classifyArchitecturalScope,
+  isPrimaryArchitectureScope,
+} from "../analysis/scope.js";
 import { mapWithConcurrency } from "../core/async.js";
 import { loadConfig } from "../core/config.js";
-import { discoverFiles, type DiscoveredFile } from "../core/discovery.js";
+import { discoverFiles } from "../core/discovery.js";
 import {
   computeWorktreeSignature,
   repositoryFingerprintFromWorktree,
@@ -26,10 +30,8 @@ import {
   detectLanguage,
   isLanguageEnabled,
   isSourceLanguage,
-  type DetectedLanguage,
 } from "../core/languages.js";
 import { acquireIndexLock, workspacePaths, writeJsonAtomic } from "../core/workspace.js";
-import { workspaceManifestPaths } from "../core/workspace-packages.js";
 import {
   availableFrameworkAdapters,
   extractFrameworkGraph,
@@ -48,7 +50,6 @@ import {
   TypeScriptProjectResolver,
   type CompilerPublicApiFacts,
 } from "../graph/typescript-resolution.js";
-import type { GraphEdge, GraphNode } from "../graph/types.js";
 import type { RepositoryInfo } from "../git/repository.js";
 import { detectRepository } from "../git/repository.js";
 import { detectGitState, type GitState } from "../git/changes.js";
@@ -107,10 +108,21 @@ import {
   buildFileSemanticFacts,
   classifySemanticDelta,
   isModuleResolutionConfiguration,
-  type FileSemanticFacts,
   type SemanticChangeClass,
   type SemanticDelta,
 } from "./semantic-delta.js";
+import {
+  discoverFromManifest,
+  getDirectoryPaths,
+  graphEdge,
+  graphNode,
+  initialParseStatus,
+  loadWorkspacePackages,
+  owningPackage,
+  readCreatedAt,
+  statusMatches,
+  type IndexedCandidate,
+} from "./index-support.js";
 
 export interface IndexOptions {
   startPath?: string;
@@ -178,227 +190,6 @@ export interface IndexResult {
     architecture: number;
     total: number;
   };
-}
-
-interface IndexedCandidate {
-  absolutePath: string;
-  relativePath: string;
-  sizeBytes: number;
-  mtimeMs: number;
-  ctimeMs: number;
-  language: DetectedLanguage | null;
-  contentHash: string;
-  parseStatus: string;
-  adapterVersion: string;
-  parsedFile: ParsedFile | null;
-  content: string | null;
-  semanticFacts: FileSemanticFacts | null;
-  detectedFrameworks: string[];
-}
-
-interface WorkspacePackage {
-  directory: string;
-  manifestPath: string;
-  name: string;
-  version: string | null;
-  isPrivate: boolean;
-  dependencies: string[];
-  hasExports: boolean;
-}
-
-async function loadWorkspacePackages(
-  candidates: readonly IndexedCandidate[],
-  repositoryRoot: string,
-): Promise<WorkspacePackage[]> {
-  const indexedPaths = new Set(candidates.map((candidate) => candidate.relativePath));
-  const manifestsInWorkspace = workspaceManifestPaths(repositoryRoot, indexedPaths);
-  const manifests = candidates.filter((candidate) =>
-    manifestsInWorkspace.has(candidate.relativePath),
-  );
-  const packages = await mapWithConcurrency(manifests, 16, async (candidate) => {
-    try {
-      const value = JSON.parse(await readFile(candidate.absolutePath, "utf8")) as {
-        name?: unknown;
-        version?: unknown;
-        private?: unknown;
-        exports?: unknown;
-        dependencies?: unknown;
-        devDependencies?: unknown;
-        peerDependencies?: unknown;
-        optionalDependencies?: unknown;
-      };
-      if (typeof value.name !== "string" || value.name.trim() === "") return null;
-      const dependencyNames = [
-        value.dependencies,
-        value.devDependencies,
-        value.peerDependencies,
-        value.optionalDependencies,
-      ].flatMap((dependencies) =>
-        typeof dependencies === "object" && dependencies !== null
-          ? Object.keys(dependencies)
-          : [],
-      );
-      return {
-        directory: path.posix.dirname(candidate.relativePath),
-        manifestPath: candidate.relativePath,
-        name: value.name,
-        version: typeof value.version === "string" ? value.version : null,
-        isPrivate: value.private === true,
-        dependencies: [...new Set(dependencyNames)].sort((left, right) =>
-          left.localeCompare(right),
-        ),
-        hasExports: value.exports !== undefined,
-      } satisfies WorkspacePackage;
-    } catch {
-      return null;
-    }
-  });
-  return packages
-    .filter((entry): entry is WorkspacePackage => entry !== null)
-    .sort((left, right) => left.manifestPath.localeCompare(right.manifestPath));
-}
-
-function owningPackage(
-  filePath: string,
-  packageByDirectory: ReadonlyMap<string, WorkspacePackage>,
-): WorkspacePackage | null {
-  let current = path.posix.dirname(filePath);
-  while (true) {
-    const owner = packageByDirectory.get(current);
-    if (owner !== undefined) return owner;
-    if (current === ".") return null;
-    current = path.posix.dirname(current);
-  }
-}
-
-function initialParseStatus(
-  language: DetectedLanguage | null,
-  enabled: { typescript: boolean; javascript: boolean; python: boolean },
-  hasAdapter: boolean,
-  hasFrameworkAdapter: boolean,
-  hasIntentAdapter: boolean,
-): string {
-  if (hasIntentAdapter && language === null) return "pending_intent";
-  if (
-    hasFrameworkAdapter &&
-    (language === null || isLanguageEnabled(language, enabled)) &&
-    !isSourceLanguage(language)
-  ) {
-    return "pending_framework";
-  }
-  if (language === null) return "unsupported";
-  if (!isLanguageEnabled(language, enabled)) return "disabled";
-  if (isSourceLanguage(language)) return hasAdapter ? "pending_parse" : "unsupported_parser";
-  if (language !== null) return "metadata_only";
-  return "unsupported";
-}
-
-function statusMatches(previous: string, current: string): boolean {
-  if (current === "pending_parse") {
-    return (
-      previous === "parsed" ||
-      previous === "parsed_with_errors" ||
-      previous === "parse_error"
-    );
-  }
-  if (current === "pending_framework") {
-    return previous === "parsed" || previous === "metadata_only" || previous === "parse_error";
-  }
-  if (current === "pending_intent") return previous === "parsed_intent";
-  return previous === current;
-}
-
-function graphNode(input: Partial<GraphNode> & Pick<GraphNode, "id" | "kind" | "name">): GraphNode {
-  return {
-    qualifiedName: null,
-    filePath: null,
-    language: null,
-    startLine: null,
-    startColumn: null,
-    endLine: null,
-    endColumn: null,
-    signature: null,
-    visibility: null,
-    contentHash: null,
-    sourceType: "git",
-    provenance: "git",
-    confidence: 1,
-    metadata: {},
-    ...input,
-  };
-}
-
-function graphEdge(
-  input: Partial<GraphEdge> &
-    Pick<GraphEdge, "id" | "sourceNodeId" | "targetNodeId" | "edgeType">,
-): GraphEdge {
-  return {
-    sourceType: "git",
-    provenance: "git",
-    confidence: 1,
-    filePath: null,
-    line: null,
-    metadata: {},
-    ...input,
-  };
-}
-
-function getDirectoryPaths(files: readonly IndexedCandidate[]): string[] {
-  const directories = new Set<string>();
-  for (const file of files) {
-    let current = path.posix.dirname(file.relativePath);
-    while (current !== ".") {
-      directories.add(current);
-      current = path.posix.dirname(current);
-    }
-  }
-  return [...directories].sort((left, right) => left.localeCompare(right));
-}
-
-async function readCreatedAt(manifestPath: string, fallback: string): Promise<string> {
-  try {
-    const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as { createdAt?: unknown };
-    return typeof manifest.createdAt === "string" ? manifest.createdAt : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-async function discoverFromManifest(
-  repositoryRoot: string,
-  existing: ReadonlyMap<string, FileRecord>,
-  changedPaths: ReadonlySet<string>,
-  ignoreRules: { ignores(relativePath: string, isDirectory?: boolean): boolean },
-): Promise<DiscoveredFile[]> {
-  const result = new Map<string, DiscoveredFile>();
-  for (const previous of existing.values()) {
-    if (changedPaths.has(previous.path)) continue;
-    result.set(previous.path, {
-      absolutePath: path.join(repositoryRoot, ...previous.path.split("/")),
-      relativePath: previous.path,
-      sizeBytes: previous.sizeBytes,
-      mtimeMs: previous.mtimeMs ?? 0,
-      ctimeMs: previous.ctimeMs ?? 0,
-    });
-  }
-  await mapWithConcurrency([...changedPaths], 32, async (relativePath) => {
-    if (ignoreRules.ignores(relativePath)) return;
-    const absolutePath = path.join(repositoryRoot, ...relativePath.split("/"));
-    try {
-      const metadata = await stat(absolutePath);
-      if (!metadata.isFile()) return;
-      result.set(relativePath, {
-        absolutePath,
-        relativePath,
-        sizeBytes: metadata.size,
-        mtimeMs: metadata.mtimeMs,
-        ctimeMs: metadata.ctimeMs,
-      });
-    } catch {
-      result.delete(relativePath);
-    }
-  });
-  return [...result.values()].sort((left, right) => left.relativePath.localeCompare(right.relativePath));
 }
 
 export async function runIndex(options: IndexOptions = {}): Promise<IndexResult> {
@@ -787,6 +578,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       );
       const compilerPublicApiByPath = new Map<string, CompilerPublicApiFacts>();
       const compilerCandidates: IndexedCandidate[] = [];
+      let sharedTypeScriptResolver: TypeScriptProjectResolver | null = null;
       for (const candidate of changed) {
         const shouldPersistFacts =
           candidate.parsedFile !== null ||
@@ -843,12 +635,12 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       }
 
       if (compilerCandidates.length > 0) {
-        const compilerApiResolver = new TypeScriptProjectResolver(
+        sharedTypeScriptResolver = new TypeScriptProjectResolver(
           repository.root,
           new Set(candidates.map((candidate) => candidate.relativePath)),
         );
         for (const candidate of compilerCandidates) {
-          const facts = compilerApiResolver.publicApiFacts(candidate.relativePath);
+          const facts = sharedTypeScriptResolver.publicApiFacts(candidate.relativePath);
           if (facts !== null) compilerPublicApiByPath.set(candidate.relativePath, facts);
           candidate.semanticFacts = buildFileSemanticFacts(
             candidate.relativePath,
@@ -1413,6 +1205,7 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
             resolutionInputs,
             indexedAt,
             (completed, total) => telemetry.progress("graph_resolution", completed, total),
+            sharedTypeScriptResolver ?? undefined,
           );
         }
         refreshArchitectureEdgeLocationsForFiles(
@@ -1446,6 +1239,10 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           replaceGitHistoryCache(database, history);
         }
 
+        const latestTypeScriptMetrics = resolutionResult.value?.typescript ??
+          sharedTypeScriptResolver?.metrics() ?? null;
+        const primarySemanticFailureFiles = (latestTypeScriptMetrics?.failedFiles ?? [])
+          .filter((file) => isPrimaryArchitectureScope(classifyArchitecturalScope(file)));
         const repositoryStates: Record<string, string> = {
           schema_version: String(SCHEMA_VERSION),
           codeatlas_version: CODEATLAS_VERSION,
@@ -1471,6 +1268,17 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
           semantic_status: "current",
           search_status: "current",
           architecture_status: analysisRequired ? "pending" : "current",
+          semantic_resolution_failures: String(
+            latestTypeScriptMetrics?.semanticResolutionFailures ?? 0,
+          ),
+          semantic_public_api_failures: String(
+            latestTypeScriptMetrics?.publicApiExtractionFailures ?? 0,
+          ),
+          semantic_failure_samples: JSON.stringify([
+            ...(latestTypeScriptMetrics?.failures ?? []),
+          ].slice(0, 20)),
+          semantic_primary_failure_file_count: String(primarySemanticFailureFiles.length),
+          semantic_primary_failure_files: JSON.stringify(primarySemanticFailureFiles.slice(0, 20)),
           ...(repository.gitAvailable && config.analysis.gitHistory
             ? { git_history_head: repository.headCommit }
             : {}),
@@ -1511,23 +1319,43 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
         itemsProcessed: sqliteMutations,
         inclusive: true,
       });
-      if (resolution !== null) {
-        telemetry.record("typescript_project_discovery", resolution.typescript.projectDiscoveryMs, {
-          itemsProcessed: resolution.typescript.projectsDiscovered,
-          cacheHits: resolution.typescript.projectCacheHits,
-        });
-        telemetry.record("typescript_program_creation", resolution.typescript.programCreationMs, {
-          itemsProcessed: resolution.typescript.programsCreated,
-        });
+      const graphTypeScriptMetrics = resolution?.typescript ?? sharedTypeScriptResolver?.metrics();
+      if (graphTypeScriptMetrics !== undefined) {
         telemetry.record(
-          "typescript_semantic_resolution",
-          resolution.typescript.semanticResolutionMs,
+          "typescript_project_discovery",
+          graphTypeScriptMetrics.projectDiscoveryMs,
           {
-            itemsProcessed: resolution.typescript.semanticSourcesIndexed,
-            cacheHits: resolution.typescript.semanticCacheHits,
-            cacheMisses: resolution.typescript.semanticCacheMisses,
+            itemsProcessed:
+              graphTypeScriptMetrics.projectsDiscovered,
+            cacheHits:
+              graphTypeScriptMetrics.projectCacheHits,
           },
         );
+        telemetry.record(
+          "typescript_program_creation",
+          graphTypeScriptMetrics.programCreationMs,
+          {
+            itemsProcessed:
+              graphTypeScriptMetrics.programsCreated,
+          },
+        );
+        telemetry.record(
+          "typescript_semantic_resolution",
+          graphTypeScriptMetrics.semanticResolutionMs,
+          {
+            itemsProcessed:
+              graphTypeScriptMetrics.semanticSourcesIndexed,
+            cacheHits:
+              graphTypeScriptMetrics.semanticCacheHits,
+            cacheMisses:
+              graphTypeScriptMetrics.semanticCacheMisses,
+            itemsSkipped:
+              graphTypeScriptMetrics.semanticResolutionFailures +
+              graphTypeScriptMetrics.publicApiExtractionFailures,
+          },
+        );
+      }
+      if (resolution !== null) {
         telemetry.record("module_import_resolution", resolution.typescript.moduleResolutionMs, {
           itemsProcessed: resolution.typescript.moduleCacheMisses,
           cacheHits: resolution.typescript.moduleCacheHits,
@@ -1691,7 +1519,8 @@ export async function runIndex(options: IndexOptions = {}): Promise<IndexResult>
       const work = {
         filesRead: fingerprintCacheMisses + parsingReadCount,
         filesParsed: parsedItems,
-        filesSemanticallyAnalyzed: resolution?.typescript.semanticSourcesIndexed ?? 0,
+        filesSemanticallyAnalyzed:
+          (resolution?.typescript ?? sharedTypeScriptResolver?.metrics())?.semanticSourcesIndexed ?? 0,
         dependentFilesInvalidated: invalidatedPaths.size,
         symbolsRewritten: changed.flatMap((candidate) => candidate.parsedFile?.nodes ?? []).length,
         referencesRewritten: resolutionInputs.reduce(

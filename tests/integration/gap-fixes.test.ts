@@ -114,6 +114,11 @@ describe("gap-fix evidence and resilience", () => {
           severity: "info",
         }),
         expect.objectContaining({
+          name: "Semantic resolution diagnostics",
+          ok: true,
+          detail: "no compiler-resolution failures in the latest index",
+        }),
+        expect.objectContaining({
           name: "Relationship quality",
           detail: expect.stringMatching(/dynamic=[1-9]\d* .*actionable_unresolved=0 /u),
         }),

@@ -62,6 +62,10 @@ describe("setup and direct overview", () => {
     const repository = await createTestRepository();
     repositories.push(repository);
     await repository.write("src/index.ts", "export function main(): boolean { return true; }\n");
+    await repository.write(
+      "tests/fixtures/v2-architecture/src/app.ts",
+      "export function main(): boolean { return false; }\n",
+    );
     await repository.git("add", ".");
     await repository.git("commit", "-m", "overview fixture");
     await initializeRepository(repository.root);
@@ -76,7 +80,9 @@ describe("setup and direct overview", () => {
       ],
     });
     const overview = await getOverview(repository.root);
-    expect(overview).toMatchObject({ files: 1 });
+    expect(overview).toMatchObject({ files: 2 });
+    expect(overview.entrypoints.map((entrypoint) => entrypoint.file)).toEqual(["src/index.ts"]);
+    expect(overview.majorSystems.map((system) => system.name)).not.toContain("Tests");
     expect(formatOverview(overview)).toContain("Ask your coding agent");
   });
 

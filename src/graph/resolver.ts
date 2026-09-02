@@ -944,6 +944,7 @@ export function resolveReferences(
   parsedInputs: readonly ParsedInput[],
   timestamp: string,
   onProgress?: (completed: number, total: number) => void,
+  sharedProjectResolver?: TypeScriptProjectResolver,
 ): ResolutionResult {
   const resolutionStartedAt = performance.now();
   let candidateGenerationMs = 0;
@@ -964,7 +965,7 @@ export function resolveReferences(
   for (const node of moduleNodes) {
     if (node.kind === "file" && node.filePath !== null) modulesByFile.set(node.filePath, node);
   }
-  const projectResolver = new TypeScriptProjectResolver(
+  const projectResolver = sharedProjectResolver ?? new TypeScriptProjectResolver(
     repositoryRoot,
     new Set(modulesByFile.keys()),
   );

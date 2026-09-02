@@ -3,7 +3,12 @@ import { registerLanguageAdapter } from "./parser/registry.js";
 import type { LanguageAdapter } from "./parser/parser.js";
 
 export { buildRepository, type BuildResult, type BuildTimings } from "./compiler/build.js";
-export { answerFromAtlas, type AtlasAnswer } from "./ai/answering.js";
+export {
+  answerFromAtlas,
+  evaluateArchitectureAnswer,
+  type ArchitectureAnswerQuality,
+  type AtlasAnswer,
+} from "./ai/answering.js";
 export { renderAtlasHtml, exportAtlasHtml } from "./export/html.js";
 export { renderAtlasMarkdown, exportAtlasMarkdown } from "./export/markdown.js";
 export { renderAtlasMermaid, exportAtlasMermaid } from "./export/mermaid.js";

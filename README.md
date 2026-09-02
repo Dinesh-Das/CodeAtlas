@@ -1,6 +1,6 @@
 # CodeAtlas
 
-[![npm beta version](https://img.shields.io/npm/v/@dinesh-das/codeatlas/beta?label=npm&color=cb3837)](https://www.npmjs.com/package/@dinesh-das/codeatlas)
+[![npm version](https://img.shields.io/npm/v/@dinesh-das/codeatlas?label=npm&color=cb3837)](https://www.npmjs.com/package/@dinesh-das/codeatlas)
 [![npm downloads](https://img.shields.io/npm/dm/@dinesh-das/codeatlas?color=cb3837)](https://www.npmjs.com/package/@dinesh-das/codeatlas)
 [![CI](https://github.com/Dinesh-Das/CodeAtlas/actions/workflows/ci.yml/badge.svg)](https://github.com/Dinesh-Das/CodeAtlas/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/node/v/@dinesh-das/codeatlas)](https://www.npmjs.com/package/@dinesh-das/codeatlas)
@@ -40,7 +40,7 @@ separate analysis pipeline.
 - Keep source code on your machine.
 
 ```bash
-npm install --global @dinesh-das/codeatlas@beta
+npm install --global @dinesh-das/codeatlas
 codeatlas init
 codeatlas setup
 ```
@@ -110,7 +110,7 @@ Results are hardware- and repository-dependent. Reproduce them with
 `npm run benchmark:real -- --repository PATH`; generated 100k–1M LOC profiles are also included.
 The raw packet rows run against an already-open graph context and exclude freshness checks, MCP
 transport, the coding-agent host, and model latency. The freshness row measures the separate
-working-tree synchronization gate. CodeAtlas is a beta: the benchmark is evidence, not a promise
+working-tree synchronization gate. This benchmark is release evidence, not a promise
 that every repository has the same shape or compiler cost.
 
 ## Trust model
@@ -124,7 +124,7 @@ Source snippets are read from the current working tree, bounded by configuration
 untrusted repository content. CodeAtlas does not expose or require a model's private chain of
 thought; it gives the model—and you—the evidence needed to evaluate the answer.
 
-## What ships in the beta
+## What ships
 
 - TypeScript/Node.js CLI with `init`, `overview`, `setup`, `index`, `status`, `doctor`, and safe
   `clean` commands.
@@ -222,12 +222,12 @@ database service are not required.
 Install the scoped npm package globally. The installed executable remains `codeatlas`:
 
 ```bash
-npm install --global @dinesh-das/codeatlas@beta
+npm install --global @dinesh-das/codeatlas
 codeatlas --version
 ```
 
-The unscoped npm name `codeatlas` belongs to an unrelated package; use the scoped beta package
-shown above. Stable releases will not require the `@beta` dist-tag.
+The unscoped npm name `codeatlas` belongs to an unrelated package; use the scoped package shown
+above.
 
 ## Getting started
 
@@ -683,17 +683,19 @@ are in use, then retry from a clean npm cache.
 
 ## Project status
 
-CodeAtlas is in public beta and is distributed through the
+CodeAtlas 0.10 is a stable, local-first release distributed through the
 [official npm package](https://www.npmjs.com/package/@dinesh-das/codeatlas). Possible future
 distribution work includes Homebrew, standalone binaries, and Windows package-manager support.
 
-Stable publication is mechanically blocked until `release-evidence.json` records at least ten
+Stable publication remains mechanically blocked unless `release-evidence.json` records at least ten
 independent repository validations across Linux, macOS, Windows, TypeScript, JavaScript, and Python,
-and the documented large-repository performance budgets pass. `npm run release:check` validates a
-prerelease; `npm run stable:check` deliberately fails until all stable evidence is present.
+the documented large-repository performance budgets pass, and the SHA-256/file manifest of the exact
+packed release artifact matches the evidence manifest. Repository and benchmark evidence expires
+after 90 days.
 Generate an auditable repository record with
 `npm run validate:repository -- --repository /absolute/path --id UNIQUE_AUDIT_ID`; the command tests
-the packed artifact in an isolated consumer and emits commit-, version-, timestamp-, and
+the packed artifact in an isolated consumer, evaluates whether the architecture answer is grounded,
+relevant, non-repetitive, and production-scoped, and emits commit-, version-, timestamp-, and
 atlas-hash-bound JSON for review before it is added to the manifest.
 Maintainers can collect the same record on Linux, macOS, or Windows through the manual
 `Stable Release Evidence` GitHub workflow.

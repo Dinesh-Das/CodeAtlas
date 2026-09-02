@@ -40,6 +40,8 @@ export const repositoryValidationSchema = z.object({
 const benchmarkSchema = z.object({
   repository: z.string().trim().min(1),
   commit: z.string().regex(/^[0-9a-f]{7,64}$/iu),
+  validatedAt: z.string().datetime({ offset: true }),
+  codeAtlasVersion: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u),
   trackedLoc: z.number().int().positive(),
   coldIndexMs: z.number().positive(),
   peakRssMiB: z.number().positive(),
@@ -49,9 +51,18 @@ const benchmarkSchema = z.object({
   freshnessP95Ms: z.number().positive(),
 }).strict();
 
+export const releaseArtifactSchema = z.object({
+  codeAtlasVersion: z.string().regex(/^\d+\.\d+\.\d+$/u),
+  packageSha256: z.string().regex(/^[0-9a-f]{64}$/iu),
+  packedFileCount: z.number().int().positive(),
+}).strict();
+
+export type ReleaseArtifactIdentity = z.infer<typeof releaseArtifactSchema>;
+
 export const releaseEvidenceSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   targetVersion: z.string().regex(/^\d+\.\d+\.\d+$/u),
+  releaseArtifact: releaseArtifactSchema,
   independentRepositories: z.array(repositoryValidationSchema),
   largeRepositoryBenchmark: benchmarkSchema.nullable(),
 }).strict();
@@ -75,6 +86,7 @@ function normalizedRepository(repository: string): string {
 export function validateStableReleaseEvidence(
   version: string,
   input: unknown,
+  expectedArtifact: ReleaseArtifactIdentity,
 ): ReleaseEvidenceResult {
   const parsed = releaseEvidenceSchema.safeParse(input);
   if (!parsed.success) {
@@ -91,6 +103,24 @@ export function validateStableReleaseEvidence(
   if (evidence.targetVersion !== stableVersion(version)) {
     errors.push(
       `Evidence targets ${evidence.targetVersion}, but the release base version is ${stableVersion(version)}.`,
+    );
+  }
+  if (evidence.releaseArtifact.codeAtlasVersion !== version) {
+    errors.push(
+      `Release artifact reports ${evidence.releaseArtifact.codeAtlasVersion}, not ${version}.`,
+    );
+  }
+  if (expectedArtifact.codeAtlasVersion !== version) {
+    errors.push(
+      `Produced package reports ${expectedArtifact.codeAtlasVersion}, not ${version}.`,
+    );
+  }
+  if (evidence.releaseArtifact.packageSha256 !== expectedArtifact.packageSha256) {
+    errors.push("Release artifact SHA-256 does not match the package produced by this source tree.");
+  }
+  if (evidence.releaseArtifact.packedFileCount !== expectedArtifact.packedFileCount) {
+    errors.push(
+      `Release artifact file count is ${evidence.releaseArtifact.packedFileCount}, not ${expectedArtifact.packedFileCount}.`,
     );
   }
   const uniqueRepositories = new Set(
@@ -157,6 +187,18 @@ export function validateStableReleaseEvidence(
   if (benchmark === null) {
     errors.push("A large-repository benchmark is required.");
   } else {
+    const benchmarkAgeMs = Date.now() - Date.parse(benchmark.validatedAt);
+    const maximumAgeMs = STABLE_RELEASE_BUDGETS.maximumEvidenceAgeDays * 86_400_000;
+    if (benchmarkAgeMs > maximumAgeMs || benchmarkAgeMs < -86_400_000) {
+      errors.push(
+        `Large-repository benchmark is outside the ${STABLE_RELEASE_BUDGETS.maximumEvidenceAgeDays}-day evidence window.`,
+      );
+    }
+    if (stableVersion(benchmark.codeAtlasVersion) !== stableVersion(version)) {
+      errors.push(
+        `Large-repository benchmark used ${benchmark.codeAtlasVersion}, not the ${stableVersion(version)} release line.`,
+      );
+    }
     if (benchmark.trackedLoc < STABLE_RELEASE_BUDGETS.minimumTrackedLoc) {
       errors.push(
         `tracked LOC minimum failed: ${benchmark.trackedLoc} < ${STABLE_RELEASE_BUDGETS.minimumTrackedLoc}.`,

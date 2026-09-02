@@ -22,13 +22,16 @@ owned by an unrelated project. The installed executable is still `codeatlas`.
 2. Run `npm ci` followed by `npm run release:check`. For a stable version, populate
    `release-evidence.json` and run `npm run stable:check`; the stable gate requires at least ten
    independent repositories, all supported operating systems and languages, clean install/index/
-   overview/agent-question paths, relationship-quality thresholds, and the large-repository budget.
+   overview/agent-question paths, relationship-quality thresholds, a benchmark less than 90 days
+   old, and the large-repository budget. It also packs the current tree and verifies that the exact
+   tarball SHA-256 and file count match `releaseArtifact` in the evidence manifest.
    Generate each repository record from a clean committed checkout with
    `npm run validate:repository -- --repository /absolute/path --id UNIQUE_AUDIT_ID`, then review
    and append its JSON output to `independentRepositories`. The validator packs the current
    CodeAtlas artifact, installs that exact tarball in a disposable consumer, clones the target,
-   exercises the installed CLI and public agent API, and records the target commit, CodeAtlas
-   version, validation time, and atlas SHA-256. Never count CodeAtlas itself or a development
+   exercises the installed CLI and public agent API, applies semantic answer-quality checks, and
+   records the target commit, CodeAtlas version, validation time, and atlas SHA-256. Never count
+   CodeAtlas itself or a development
    fixture as an independent repository.
    Maintainers can run the same operation from **Actions → Stable Release Evidence**. Select an
    independent HTTPS repository, immutable branch/tag, unique audit ID, and runner; the pinned,
@@ -38,7 +41,7 @@ owned by an unrelated project. The installed executable is still `codeatlas`.
 4. Before a prerelease, verify that npm's `latest` tag is absent or points to a stable version. If
    an older prerelease was accidentally published to `latest`, remove that dist-tag in npm before
    continuing; the release workflow blocks instead of silently preserving an unsafe default channel.
-5. Create and push a tag named exactly `v<package version>`, such as `v0.10.0-beta.1`.
+5. Create and push a tag named exactly `v<package version>`, such as `v0.10.0`.
 6. Confirm the `npm Release` workflow succeeds and verify the published package metadata and
    provenance on npm.
 7. Verify the public artifact directly with

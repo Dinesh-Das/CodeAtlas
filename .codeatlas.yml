@@ -1,0 +1,62 @@
+version: 1
+
+domains:
+  core:
+    include:
+      - src/core/**
+  analysis:
+    include:
+      - src/analysis/**
+  graph:
+    include:
+      - src/graph/**
+  indexing:
+    include:
+      - src/indexer/**
+  agent-interface:
+    include:
+      - src/ai/**
+      - src/mcp/**
+  persistence:
+    include:
+      - src/storage/**
+  release:
+    include:
+      - src/release/**
+
+architecture:
+  rules:
+    - id: core-must-not-depend-on-agent-interface
+      severity: error
+      description: Core infrastructure must remain independent of MCP and agent presentation layers.
+      source:
+        matches_path: src/core/
+      forbid:
+        depends_on:
+          matches_path: src/mcp/
+    - id: analysis-must-not-depend-on-cli
+      severity: error
+      description: Architecture analysis must remain reusable outside the CLI.
+      source:
+        matches_path: src/analysis/
+      forbid:
+        depends_on:
+          matches_path: src/cli/
+    - id: storage-must-not-depend-on-cli
+      severity: error
+      description: Persistence must not depend on command-line presentation code.
+      source:
+        matches_path: src/storage/
+      forbid:
+        depends_on:
+          matches_path: src/cli/
+
+analysis:
+  max_call_depth: 8
+  max_impact_depth: 10
+
+html:
+  mode: single-file
+
+ai:
+  enabled: false

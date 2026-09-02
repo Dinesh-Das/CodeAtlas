@@ -175,6 +175,14 @@ export interface TypeScriptResolutionMetrics {
   moduleCacheMisses: number;
   semanticCacheHits: number;
   semanticCacheMisses: number;
+  semanticResolutionFailures: number;
+  publicApiExtractionFailures: number;
+  failures: Array<{
+    operation: "call_resolution" | "public_api_extraction";
+    file: string;
+    message: string;
+  }>;
+  failedFiles: string[];
 }
 
 export type UnresolvedImportCategory =
@@ -227,6 +235,7 @@ export class TypeScriptProjectResolver {
   readonly #moduleCache = new Map<string, string[]>();
   readonly #relativePathCache = new Map<string, string | null>();
   readonly #workspacePackages = new Map<string, { directory: string; manifest: PackageManifest }>();
+  readonly #failedFiles = new Set<string>();
   readonly #metrics: TypeScriptResolutionMetrics = {
     projectDiscoveryMs: 0,
     programCreationMs: 0,
@@ -240,6 +249,10 @@ export class TypeScriptProjectResolver {
     moduleCacheMisses: 0,
     semanticCacheHits: 0,
     semanticCacheMisses: 0,
+    semanticResolutionFailures: 0,
+    publicApiExtractionFailures: 0,
+    failures: [],
+    failedFiles: [],
   };
 
   constructor(repositoryRoot: string, indexedPaths: ReadonlySet<string>) {
@@ -490,6 +503,7 @@ export class TypeScriptProjectResolver {
       return null;
     }
     const semanticStartedAt = performance.now();
+    let programCreationMs = 0;
     try {
       const project = this.#loadProject(reference.evidence.file);
       if (project.program === undefined) {
@@ -501,12 +515,21 @@ export class TypeScriptProjectResolver {
             ? {}
             : { projectReferences: project.projectReferences }),
         });
-        this.#metrics.programCreationMs += performance.now() - programStartedAt;
+        programCreationMs = performance.now() - programStartedAt;
+        this.#metrics.programCreationMs += programCreationMs;
         this.#metrics.programsCreated += 1;
       }
       project.checker ??= project.program.getTypeChecker();
       const source = this.#sourceFile(project, reference.evidence.file);
-      if (source === undefined) return null;
+      if (source === undefined) {
+        this.#metrics.semanticResolutionFailures += 1;
+        this.#recordFailure(
+          "call_resolution",
+          reference.evidence.file,
+          new Error("The TypeScript program did not contain the indexed source file."),
+        );
+        return null;
+      }
       const position = source.getPositionOfLineAndCharacter(
         Math.max(0, reference.evidence.line - 1),
         Math.max(0, reference.evidence.column),
@@ -553,17 +576,24 @@ export class TypeScriptProjectResolver {
           (call.expressionText === reference.name || call.lastName === lastName),
       );
       const target = current?.target ?? null;
-      this.#metrics.semanticResolutionMs += performance.now() - semanticStartedAt;
       return target;
-    } catch {
-      this.#metrics.semanticResolutionMs += performance.now() - semanticStartedAt;
+    } catch (error) {
+      this.#metrics.semanticResolutionFailures += 1;
+      this.#recordFailure("call_resolution", reference.evidence.file, error);
       return null;
+    } finally {
+      this.#metrics.semanticResolutionMs += Math.max(
+        0,
+        performance.now() - semanticStartedAt - programCreationMs,
+      );
     }
   }
 
   /** Returns compiler-resolved exported types, including inferred return/value and JSDoc types. */
   publicApiFacts(sourceFile: string): CompilerPublicApiFacts | null {
     if (!/\.[cm]?[jt]sx?$/u.test(sourceFile)) return null;
+    const semanticStartedAt = performance.now();
+    let programCreationMs = 0;
     try {
       const project = this.#loadProject(sourceFile);
       if (project.program === undefined) {
@@ -577,12 +607,22 @@ export class TypeScriptProjectResolver {
             ? {}
             : { projectReferences: project.projectReferences }),
         });
-        this.#metrics.programCreationMs += performance.now() - programStartedAt;
+        programCreationMs = performance.now() - programStartedAt;
+        this.#metrics.programCreationMs += programCreationMs;
         this.#metrics.programsCreated += 1;
       }
       project.checker ??= project.program.getTypeChecker();
       const source = this.#sourceFile(project, sourceFile);
-      if (source === undefined) return null;
+      if (source === undefined) {
+        this.#metrics.publicApiExtractionFailures += 1;
+        this.#recordFailure(
+          "public_api_extraction",
+          sourceFile,
+          new Error("The TypeScript program did not contain the indexed source file."),
+        );
+        return null;
+      }
+      this.#metrics.semanticSourcesIndexed += 1;
       const sourceSymbol = project.checker.getSymbolAtLocation(source) ??
         (source as ts.SourceFile & { symbol?: ts.Symbol }).symbol;
       if (sourceSymbol === undefined) {
@@ -649,17 +689,42 @@ export class TypeScriptProjectResolver {
           entries.map((entry) => [entry.name, JSON.stringify(entry)]),
         ),
       };
-    } catch {
+    } catch (error) {
+      this.#metrics.publicApiExtractionFailures += 1;
+      this.#recordFailure("public_api_extraction", sourceFile, error);
       return null;
+    } finally {
+      this.#metrics.semanticResolutionMs += Math.max(
+        0,
+        performance.now() - semanticStartedAt - programCreationMs,
+      );
     }
   }
 
   metrics(): TypeScriptResolutionMetrics {
-    return { ...this.#metrics };
+    return {
+      ...this.#metrics,
+      failures: [...this.#metrics.failures],
+      failedFiles: [...this.#failedFiles].sort((left, right) => left.localeCompare(right)),
+    };
   }
 
   compilerInfo(): SemanticCompilerInfo {
     return { ...this.#compilerInfo };
+  }
+
+  #recordFailure(
+    operation: "call_resolution" | "public_api_extraction",
+    file: string,
+    error: unknown,
+  ): void {
+    this.#failedFiles.add(file);
+    if (this.#metrics.failures.length >= 20) return;
+    this.#metrics.failures.push({
+      operation,
+      file,
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 
   #semanticTarget(

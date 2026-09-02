@@ -109,10 +109,10 @@ if (!source || !id) {
         atlas,
         "Explain the repository architecture and where an AI coding agent should start.",
       );
+      const quality = installedApi.evaluateArchitectureAnswer(atlas, answer);
       console.log(JSON.stringify({
         version: installedApi.CODEATLAS_VERSION,
-        hasClaims: answer.claims.length > 0,
-        hasEvidence: answer.evidence.length > 0,
+        quality,
       }));
     `;
     const { stdout: agentProbeOutput } = await execFile(
@@ -156,7 +156,7 @@ if (!source || !id) {
         install: true,
         index: atlas.statistics.files > 0,
         overview: atlas.domains.length > 0 && atlas.symbols.length > 0,
-        agentQuestion: agentResult.hasClaims && agentResult.hasEvidence,
+        agentQuestion: agentResult.quality.passed === true,
         noIndexingFailures: doctorOutput.includes("[OK] Indexing failures: none"),
       },
       verifiedRelationshipPercent: Number(quality[1]),

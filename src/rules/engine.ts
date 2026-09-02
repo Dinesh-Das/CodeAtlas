@@ -1,4 +1,5 @@
 import { sha256 } from "../core/hashing.js";
+import { isDefiniteImpactRelationship } from "../analysis/impact.js";
 import type { ArchitectureRule, Atlas, AtlasRelationship, AtlasSymbol, RuleViolation } from "../ir/models.js";
 
 const NON_DEPENDENCY_EDGES = new Set([
@@ -63,7 +64,9 @@ function directViolations(
   selector: Record<string, string>,
 ): RuleViolation[] {
   const symbols = new Map(atlas.symbols.map((symbol) => [symbol.id, symbol]));
-  return atlas.relationships.filter(matchesRelationship).flatMap((edge) => {
+  return atlas.relationships
+    .filter((edge) => isDefiniteImpactRelationship(edge) && matchesRelationship(edge))
+    .flatMap((edge) => {
     const source = symbols.get(edge.source);
     const target = symbols.get(edge.target);
     return source !== undefined && target !== undefined &&
@@ -90,6 +93,7 @@ function pathViolations(atlas: Atlas, rule: ArchitectureRule, selector: Record<s
       const current = queue.shift()!;
       if (current.path.length >= 12) continue;
       for (const edge of outgoing.get(current.id) ?? []) {
+        if (!isDefiniteImpactRelationship(edge)) continue;
         if (current.visited.has(edge.target)) continue;
         const target = symbols.get(edge.target);
         if (target === undefined) continue;
@@ -128,7 +132,7 @@ export function evaluateArchitectureRules(atlas: Atlas, rules: readonly Architec
     }
     if (forbid.crosses_domain === true) {
       for (const edge of atlas.relationships) {
-        if (NON_DEPENDENCY_EDGES.has(edge.type)) continue;
+        if (NON_DEPENDENCY_EDGES.has(edge.type) || !isDefiniteImpactRelationship(edge)) continue;
         const source = symbols.get(edge.source);
         const target = symbols.get(edge.target);
         if (source === undefined || target === undefined || !matchesSelector(atlas, source, rule.source)) continue;

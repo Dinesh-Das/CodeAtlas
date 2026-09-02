@@ -139,6 +139,23 @@ try {
   if (!overviewOutput.includes("Ask your coding agent")) {
     throw new Error("Installed CLI did not produce the direct architecture overview.");
   }
+  const { stdout: answerOutput } = await execute(
+    "ask",
+    "Explain the repository architecture and where an AI coding agent should start.",
+    fixtureRoot,
+    "--json",
+  );
+  const answer = JSON.parse(answerOutput);
+  if (
+    !answer.answer.includes("Start with") ||
+    !Array.isArray(answer.claims) ||
+    answer.claims.length === 0 ||
+    !Array.isArray(answer.evidence) ||
+    answer.evidence.length === 0 ||
+    answer.evidence.some((item) => /(?:^|\/)(?:tests?|fixtures?|examples?|scripts?)(?:\/|$)/iu.test(item.file))
+  ) {
+    throw new Error("Installed CLI did not produce a relevant, production-scoped architecture answer.");
+  }
   await execute("setup", "--all", "--dry-run", fixtureRoot);
 
   process.stdout.write(

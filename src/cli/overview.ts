@@ -1,6 +1,10 @@
 import { workspacePaths } from "../core/workspace.js";
 import { openDatabase } from "../storage/database.js";
 import { ensureFreshIndex } from "../mcp/freshness.js";
+import {
+  classifyArchitecturalScope,
+  isPrimaryArchitectureScope,
+} from "../analysis/scope.js";
 
 export interface CliOverview {
   repository: string;
@@ -22,21 +26,36 @@ export async function getOverview(startPath = process.cwd()): Promise<CliOvervie
   const context = await ensureFreshIndex(startPath);
   const database = openDatabase(workspacePaths(context.status.root).database, { readonly: true });
   try {
-    const majorSystems = database
+    const majorSystemRows = database
       .prepare(
         `SELECT kind, name,
                 coalesce(
                   json_extract(metadata_json, '$.member_file_count'),
                   json_extract(metadata_json, '$.semantic_member_count')
-                ) AS members
+                ) AS members,
+                metadata_json AS metadataJson
          FROM nodes
          WHERE kind IN ('domain', 'feature', 'package')
          ORDER BY CASE kind WHEN 'domain' THEN 1 WHEN 'feature' THEN 2 ELSE 3 END,
                   coalesce(members, 0) DESC, name
-         LIMIT 12`,
+         LIMIT 100`,
       )
-      .all() as Array<{ kind: string; name: string; members: number | null }>;
-    const entrypoints = database
+      .all() as Array<{
+        kind: string;
+        name: string;
+        members: number | null;
+        metadataJson: string | null;
+      }>;
+    const majorSystems = majorSystemRows.filter((system) => {
+      if (system.name === ".") return false;
+      const metadata = system.metadataJson === null
+        ? {}
+        : JSON.parse(system.metadataJson) as { evidence?: { file?: string } };
+      return isPrimaryArchitectureScope(
+        classifyArchitecturalScope(metadata.evidence?.file ?? null),
+      );
+    }).slice(0, 12).map(({ kind, name, members }) => ({ kind, name, members }));
+    const entrypointRows = database
       .prepare(
         `SELECT nodes.file_path AS file, coalesce(metrics.fan_out, 0) AS fanOut
          FROM nodes
@@ -48,19 +67,25 @@ export async function getOverview(startPath = process.cwd()): Promise<CliOvervie
            )
            AND length(nodes.file_path) - length(replace(nodes.file_path, '/', '')) <= 4
          ORDER BY fanOut DESC, nodes.file_path
-         LIMIT 8`,
+         LIMIT 100`,
       )
       .all() as Array<{ file: string; fanOut: number }>;
-    const hotspots = database
+    const entrypoints = entrypointRows
+      .filter((entrypoint) => classifyArchitecturalScope(entrypoint.file) === "production")
+      .slice(0, 8);
+    const hotspotRows = database
       .prepare(
         `SELECT file_path AS file, title, severity
          FROM architecture_findings
          WHERE finding_type = 'change_hotspot'
          ORDER BY CASE severity WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
                   confidence DESC, file_path
-         LIMIT 8`,
+         LIMIT 100`,
       )
       .all() as Array<{ file: string; title: string; severity: string }>;
+    const hotspots = hotspotRows
+      .filter((hotspot) => classifyArchitecturalScope(hotspot.file) === "production")
+      .slice(0, 8);
     return {
       repository: context.status.repository,
       root: context.status.root,

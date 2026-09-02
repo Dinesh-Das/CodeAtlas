@@ -91,7 +91,14 @@ function rule(id: string, source: Record<string, string>, forbid: Record<string,
 
 describe("architecture rules engine", () => {
   it("treats calls and imports as direct dependencies while excluding structural edges", () => {
-    const result = evaluateArchitectureRules(atlas(), [
+    const input = atlas();
+    input.relationships.push({
+      ...relationship("heuristic:controller-payments", "controller", "payments", "CALLS"),
+      confidence: 0.35,
+      provenance: "HEURISTIC",
+      fact_class: "INFERRED",
+    });
+    const result = evaluateArchitectureRules(input, [
       rule("dependency", { matches_path: "src/auth/controller" }, { depends_on: { layer: "repository" } }),
       rule("calls", { layer: "controller" }, { calls: { layer: "service" } }),
       rule("imports", { layer: "controller" }, { imports: { kind: "class", domain: "data" } }),
@@ -102,6 +109,7 @@ describe("architecture rules engine", () => {
     expect(result.some((item) => item.rule_id === "calls" &&
       item.relationship_ids[0] === "call:controller-service")).toBe(true);
     expect(result.find((item) => item.rule_id === "imports")?.relationship_ids).toEqual(["import:controller-repository"]);
+    expect(result.flatMap((item) => item.relationship_ids)).not.toContain("heuristic:controller-payments");
   });
 
   it("supports bounded paths, unless_via, domain crossing, membership, path matching, selectors, and evidence", () => {
