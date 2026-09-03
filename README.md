@@ -245,10 +245,15 @@ for compatibility.
 ## Development setup
 
 ```bash
-npm install
+npm ci
 npm run check
 npm link
 ```
+
+CI runs the checks on Ubuntu, macOS, and Windows with Node.js 22.12 and 24. Compiler-heavy test
+files use at most two Vitest workers so shared runners remain deterministic. Changes to packaging or
+release metadata must also pass `npm run stable:check`, which installs and queries the exact tarball
+and validates its recorded SHA-256 and file count.
 
 Then, from a Git repository you want to index:
 

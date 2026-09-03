@@ -16,7 +16,6 @@ import { workspaceExists, workspacePaths } from "../core/workspace.js";
 import { isWorkingTreeDirty } from "../git/diff.js";
 import { detectRepository, type RepositoryInfo } from "../git/repository.js";
 import { openDatabase, type AtlasDatabase } from "../storage/database.js";
-import { listFiles } from "../storage/files.js";
 import { TREE_SITTER_VERSION } from "../parser/registry.js";
 import {
   generationsFromState,
@@ -311,14 +310,14 @@ export async function getFastStatus(
   }
   const repository = await initializedRepository(startPath);
   const config = await loadConfig(repository.root);
-  let ignoreRules = forceReconcile
-    ? undefined
-    : fastIgnoreRules.get(repository.root);
+  let ignoreRules = fastIgnoreRules.get(repository.root);
   if (ignoreRules === undefined) {
     ignoreRules = await loadIgnoreRules(repository.root);
-    if (!forceReconcile) fastIgnoreRules.set(repository.root, ignoreRules);
+    fastIgnoreRules.set(repository.root, ignoreRules);
   }
-  const worktree = await computeWorktreeSignature(repository, ignoreRules);
+  const worktree = await computeWorktreeSignature(repository, ignoreRules, {
+    bypassHashCache: forceReconcile,
+  });
   const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
   try {
     const state = getRepositoryStates(database);
@@ -333,7 +332,7 @@ export async function getFastStatus(
       matches,
     );
     status.cacheInvalidated = cacheWasInvalidated;
-    if (!forceReconcile) cacheFastStatus(startPath, status, worktree);
+    cacheFastStatus(startPath, status, worktree);
     return status;
   } finally {
     database.close();
@@ -348,20 +347,9 @@ export async function getStatus(startPath = process.cwd()): Promise<StatusResult
   const discovered = await discoverFiles(repository.root, ignoreRules);
   const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
   const state = getRepositoryStates(database);
-  const existing = state.schema_version === String(SCHEMA_VERSION)
-    ? new Map(listFiles(database).map((file) => [file.path, file]))
-    : new Map();
   const hashed = await mapWithConcurrency(discovered, 32, async (file) => ({
     relativePath: file.relativePath,
-    contentHash: (() => {
-      const previous = existing.get(file.relativePath);
-      return previous !== undefined &&
-        previous.sizeBytes === file.sizeBytes &&
-        previous.mtimeMs === file.mtimeMs &&
-        previous.ctimeMs === file.ctimeMs
-        ? previous.contentHash
-        : null;
-    })() ?? await hashFile(file.absolutePath),
+    contentHash: await hashFile(file.absolutePath),
   }));
   const current = await computeRepositoryFingerprint(repository, hashed, ignoreRules);
   const dirty = repository.gitAvailable

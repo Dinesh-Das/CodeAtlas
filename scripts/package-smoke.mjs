@@ -49,9 +49,6 @@ try {
     "LICENSE",
     "SECURITY.md",
     "CHANGELOG.md",
-    "RELEASING.md",
-    "CODE_OF_CONDUCT.md",
-    "ROADMAP.md",
     "dist/cli/index.js",
     "dist/api.js",
     "dist/api.d.ts",
@@ -60,7 +57,15 @@ try {
   ]) {
     if (!paths.has(required)) throw new Error(`Packed package is missing ${required}.`);
   }
-  for (const forbidden of ["src/", "tests/", "Requirements_", "dist/mcp/packet."]) {
+  for (const forbidden of [
+    "src/",
+    "tests/",
+    "Requirements_",
+    "dist/mcp/packet.",
+    "RELEASING.md",
+    "CODE_OF_CONDUCT.md",
+    "ROADMAP.md",
+  ]) {
     if ([...paths].some((filePath) => filePath.startsWith(forbidden))) {
       throw new Error(`Packed package contains forbidden or stale path prefix ${forbidden}.`);
     }

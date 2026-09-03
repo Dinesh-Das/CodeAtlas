@@ -142,7 +142,9 @@ export async function indexRepository(
     const freshnessStartedAt = performance.now();
     let status: StatusResult;
     try {
-      status = await getFastStatus(startPath);
+      // Indexing is an explicit synchronization request. Always reconcile content here instead
+      // of trusting the short-lived watcher cache, whose event can arrive after an immediate edit.
+      status = await getFastStatus(startPath, { forceReconcile: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (!/(?:database|sqlite)/iu.test(message)) throw error;

@@ -37,6 +37,10 @@ owned by an unrelated project. The installed executable is still `codeatlas`.
    independent HTTPS repository, immutable branch/tag, unique audit ID, and runner; the pinned,
    least-privilege workflow uploads the validated JSON record for review. Use all three runners
    across the evidence set and never execute the target repository's install scripts.
+   The publishable tarball intentionally contains runtime output, public declarations, consumer
+   documentation, security guidance, changelog, license, and examples only. Maintainer-only files
+   such as `RELEASING.md`, `CODE_OF_CONDUCT.md`, and `ROADMAP.md` remain in GitHub and must not be
+   added to the npm artifact.
 3. Commit the release changes and push them through the normal review process.
 4. Before a prerelease, verify that npm's `latest` tag is absent or points to a stable version. If
    an older prerelease was accidentally published to `latest`, remove that dist-tag in npm before
@@ -58,3 +62,7 @@ uses pinned action commits. The package smoke test installs the exact npm tarbal
 Git repository, invokes the installed binary, initializes CodeAtlas, and verifies synchronized status.
 Prerelease versions publish under their prerelease identifier (`beta`, `rc`, and so on) rather
 than npm's `latest` dist-tag. Stable versions publish to `latest`.
+
+Before tagging, the latest push CI must show every Ubuntu/macOS/Windows and Node 22.12/24 check as
+green. Never treat the downstream package job being skipped as an independent defect: it is
+deliberately blocked when any check matrix entry fails.

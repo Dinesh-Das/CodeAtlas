@@ -272,7 +272,7 @@ describe("project-aware TypeScript resolution", () => {
     } finally {
       database.close();
     }
-  }, 30_000);
+  }, 60_000);
 
   it("resolves workspace package exports and persists package boundaries", async () => {
     const repository = await createTestRepository();

@@ -217,7 +217,7 @@ describe("semantic-delta invalidation", () => {
     } finally {
       afterDatabase.close();
     }
-  }, 30_000);
+  }, 60_000);
 
   it("keeps an implementation-only body change local", async () => {
     const repository = await initializedRepository({

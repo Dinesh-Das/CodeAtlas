@@ -92,10 +92,11 @@ function porcelainPaths(output: string): {
   return { changedPaths, untrackedPaths };
 }
 
-async function cachedFileHash(absolutePath: string): Promise<string> {
+async function cachedFileHash(absolutePath: string, bypassCache = false): Promise<string> {
   const metadata = await stat(absolutePath);
   const cached = worktreeHashCache.get(absolutePath);
   if (
+    !bypassCache &&
     cached !== undefined &&
     cached.size === metadata.size &&
     cached.mtimeMs === metadata.mtimeMs &&
@@ -123,12 +124,16 @@ async function cachedFileHash(absolutePath: string): Promise<string> {
 export async function computeWorktreeSignature(
   repository: RepositoryInfo,
   ignoreRules: IgnoreRules,
+  options: { bypassHashCache?: boolean } = {},
 ): Promise<WorktreeSignature> {
   if (!repository.gitAvailable) {
     const discovered = await discoverFiles(repository.root, ignoreRules);
     const trackedPaths = discovered.map((file) => file.relativePath);
     const entries = await Promise.all(discovered.map(async (file) =>
-      `${file.relativePath}:${await cachedFileHash(file.absolutePath)}`,
+      `${file.relativePath}:${await cachedFileHash(
+        file.absolutePath,
+        options.bypassHashCache === true,
+      )}`,
     ));
     const indexHash = hashSortedEntries(trackedPaths);
     return {
@@ -164,7 +169,10 @@ export async function computeWorktreeSignature(
   const entries = await Promise.all(changedPaths.map(async (filePath) => {
     const absolutePath = path.join(repository.root, ...filePath.split("/"));
     try {
-      return `${filePath}:${await cachedFileHash(absolutePath)}`;
+      return `${filePath}:${await cachedFileHash(
+        absolutePath,
+        options.bypassHashCache === true,
+      )}`;
     } catch {
       return `${filePath}:__deleted__`;
     }

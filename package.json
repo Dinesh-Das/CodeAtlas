@@ -22,9 +22,6 @@
     "LICENSE",
     "CHANGELOG.md",
     "SECURITY.md",
-    "RELEASING.md",
-    "CODE_OF_CONDUCT.md",
-    "ROADMAP.md",
     "examples"
   ],
   "scripts": {

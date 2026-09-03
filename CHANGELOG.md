@@ -4,6 +4,18 @@ All notable changes follow semantic versioning.
 
 ## Unreleased
 
+### Fixed
+
+- Made explicit indexing bypass the watcher and file-hash caches so immediate filesystem edits are
+  detected reliably on macOS and other platforms with delayed watcher delivery.
+- Bounded Vitest file concurrency and gave the large compiler stress fixtures an appropriate
+  timeout, preventing Node.js 24 Windows runners from starving concurrent tests and locking their
+  temporary directories during timeout cleanup.
+- Split CI type-check, lint, and test phases into named matrix steps, cancelled superseded branch
+  runs, and removed maintainer-only documents from the published npm artifact.
+- Updated the transitive `qs` dependency to 6.16.0, clearing the current npm audit findings without
+  changing CodeAtlas's public dependency surface.
+
 ## 0.10.0 - 2026-09-01
 
 ### Added
