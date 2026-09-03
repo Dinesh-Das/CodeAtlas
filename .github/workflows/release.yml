@@ -103,9 +103,23 @@ jobs:
       - name: Verify the immutable registry artifact
         shell: bash
         run: |
+          set -euo pipefail
           version="$(node -p "require('./package.json').version")"
-          published="$(npm view "@dinesh-das/codeatlas@$version" version)"
-          test "$published" = "$version"
+          # npm's metadata and tarball endpoints are eventually consistent immediately
+          # after a successful publish. Retry the exact version before failing the release.
+          published=""
+          for attempt in {1..12}; do
+            published="$(npm view "@dinesh-das/codeatlas@$version" version 2>/dev/null || true)"
+            if [[ "$published" == "$version" ]]; then
+              break
+            fi
+            if [[ "$attempt" == 12 ]]; then
+              echo "::error::npm did not expose @dinesh-das/codeatlas@$version after 120 seconds (last response: $published)"
+              exit 1
+            fi
+            echo "Registry metadata is not visible yet (attempt $attempt/12); retrying in 10 seconds"
+            sleep 10
+          done
           npm pack "@dinesh-das/codeatlas@$version" --silent --pack-destination "$RUNNER_TEMP"
           artifact="$RUNNER_TEMP/dinesh-das-codeatlas-$version.tgz"
           expected_sha="$(node -p "require('./release-evidence.json').releaseArtifact.packageSha256")"
