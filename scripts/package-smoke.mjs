@@ -21,6 +21,7 @@ async function run(command, args, cwd) {
     encoding: "utf8",
     windowsHide: true,
     maxBuffer: 10 * 1024 * 1024,
+    timeout: 180_000,
   });
 }
 
@@ -99,11 +100,13 @@ try {
     "--no-fund",
     tarballPath,
   ], fixtureRoot);
-  const execute = (...args) =>
-    runNpm(
+  const execute = (...args) => {
+    progress(`Running codeatlas ${args[0] ?? "command"}`);
+    return runNpm(
       ["exec", "--yes=false", "--", "codeatlas", ...args],
       fixtureRoot,
     );
+  };
   progress("Running the installed CLI");
   const { stdout: apiOutput } = await run(
     process.execPath,

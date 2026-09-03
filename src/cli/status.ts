@@ -310,10 +310,12 @@ export async function getFastStatus(
   }
   const repository = await initializedRepository(startPath);
   const config = await loadConfig(repository.root);
-  let ignoreRules = fastIgnoreRules.get(repository.root);
+  let ignoreRules = forceReconcile
+    ? undefined
+    : fastIgnoreRules.get(repository.root);
   if (ignoreRules === undefined) {
     ignoreRules = await loadIgnoreRules(repository.root);
-    fastIgnoreRules.set(repository.root, ignoreRules);
+    if (!forceReconcile) fastIgnoreRules.set(repository.root, ignoreRules);
   }
   const worktree = await computeWorktreeSignature(repository, ignoreRules, {
     bypassHashCache: forceReconcile,
@@ -332,7 +334,7 @@ export async function getFastStatus(
       matches,
     );
     status.cacheInvalidated = cacheWasInvalidated;
-    cacheFastStatus(startPath, status, worktree);
+    if (!forceReconcile) cacheFastStatus(startPath, status, worktree);
     return status;
   } finally {
     database.close();
