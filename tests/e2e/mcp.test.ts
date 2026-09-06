@@ -280,6 +280,25 @@ describe("MCP stdio contract", () => {
             dynamic_references: expect.any(Number),
             conditional_relationships: expect.any(Number),
           },
+          performance: {
+            timings_ms: {
+              freshness: expect.any(Number),
+              retrieval: expect.any(Number),
+              projection: expect.any(Number),
+              serialization: expect.any(Number),
+              transport: expect.any(Number),
+            },
+            transport_scope: "response_construction",
+          },
+        });
+        expect(canonicalSearchContent).toMatchObject({
+          retrieval: {
+            strategy: "sqlite_fts_name_path+generation_projection",
+            indexed_candidates: expect.any(Number),
+            projection_candidates: expect.any(Number),
+            ranked_candidates: expect.any(Number),
+            truncated: false,
+          },
         });
 
         const changeContext = await client.callTool({

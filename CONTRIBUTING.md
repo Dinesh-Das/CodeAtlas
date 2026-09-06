@@ -5,8 +5,8 @@ Thank you for helping make CodeAtlas more trustworthy. Please follow the
 forms for incorrect edges, missing framework coverage, or performance regressions.
 
 Preserve the core contract: deterministic analysis before heuristics, provenance on every graph
-fact, current-working-tree evidence, no secret values, and strict
-Parser/Graph/Storage/Git/MCP/CLI boundaries.
+fact, current-working-tree evidence, no secret values, and strict parser, graph, storage, Git,
+compiler, MCP, and CLI boundaries.
 
 Before submitting a change:
 
@@ -41,7 +41,10 @@ LLM call to derive a relationship that can be obtained from syntax, Git, configu
 or framework conventions.
 
 For an incorrect or missing relationship, include the smallest public reproduction you can and
-assert its edge type, target, confidence, provenance, evidence location, and conditional state.
+assert its edge type, target resolution, execution semantics, confidence, provenance, evidence
+location, and any resolution issue. Changes to the canonical IR must update schema validation,
+serialization, compatibility behavior, MCP output contracts, fixtures, the changelog, and the
+[compatibility note](docs/canonical-ir-compatibility.md) together.
 
 Keep `package.json`, `package-lock.json`, `src/version.ts`, and the changelog version aligned.
 Release maintainers should follow [RELEASING.md](RELEASING.md); normal contributions must not

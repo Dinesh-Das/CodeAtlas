@@ -12,7 +12,11 @@ import { createEvidenceId, EvidenceExcerptReader } from "../ir/evidence.js";
 import { loadIgnoreRules } from "../core/ignore.js";
 import { resolveExistingPathInside } from "../core/paths.js";
 import { workspaceExists, workspacePaths, writeJsonAtomic, writeTextAtomic } from "../core/workspace.js";
-import { exportAtlasHtml } from "../export/html.js";
+import {
+  estimateAtlasHtmlSize,
+  exportAtlasHtml,
+  type AtlasHtmlSizeEstimate,
+} from "../export/html.js";
 import { exportAtlasBundle, exportAtlasData } from "../export/json.js";
 import { exportAtlasMarkdown, renderAtlasMarkdown } from "../export/markdown.js";
 import { detectGitState } from "../git/changes.js";
@@ -22,7 +26,7 @@ import { exportAtlasMermaid } from "../export/mermaid.js";
 import { withDetachedWorktree } from "../git/worktree.js";
 import type { Atlas, AtlasGitChange, AtlasGitSymbolChange, AtlasSymbol } from "../ir/models.js";
 import { loadAtlasFromDatabase } from "../ir/loader.js";
-import { normalizeAtlas } from "../ir/serialization.js";
+import { normalizeAtlas, serializeAtlas } from "../ir/serialization.js";
 import { assertValidAtlas } from "../ir/validation.js";
 import { loadV2Config, v2ConfigFingerprint } from "../rules/config.js";
 import { applyDomainOverrides } from "../rules/domains.js";
@@ -56,6 +60,7 @@ export interface BuildResult {
     reviewFindings: number;
   };
   timingsMs: BuildTimings;
+  artifactEstimate: AtlasHtmlSizeEstimate | null;
 }
 
 export interface BuildTimings {
@@ -350,6 +355,7 @@ export async function buildRepository(
     gitHead?: string;
     bundle?: boolean;
     singleFile?: boolean;
+    artifacts?: "all" | "query";
     onProgress?: (progress: IndexProgress) => void;
   } = {},
 ): Promise<BuildResult> {
@@ -369,6 +375,7 @@ export async function buildRepository(
   const config = await loadConfig(index.repository.root);
   const v2Config = await loadV2Config(index.repository.root);
   const htmlMode = resolveHtmlMode(v2Config.html.mode, options);
+  const artifactMode = options.artifacts ?? "all";
 
   const irStarted = performance.now();
   const database = openDatabase(paths.database, { readonly: true });
@@ -489,43 +496,49 @@ export async function buildRepository(
   assertValidAtlas(atlas);
 
   const exportStarted = performance.now();
-  await exportAtlasData(atlas, paths.current);
+  const compiledDirectory = artifactMode === "query" ? paths.query : paths.current;
+  const artifactEstimate = artifactMode === "all" ? estimateAtlasHtmlSize(atlas) : null;
   const bundlePath = htmlMode === "bundle" ? path.join(index.repository.root, "codeatlas") : null;
   const htmlPath = bundlePath === null
     ? path.join(index.repository.root, "codeatlas.html")
     : path.join(bundlePath, "index.html");
   const markdownPath = path.join(index.repository.root, "CODEATLAS.md");
   const mermaidPath = path.join(index.repository.root, "CODEATLAS.mmd");
-  const commonExports = [
-    exportAtlasMarkdown(atlas, markdownPath),
-    exportAtlasMermaid(atlas, mermaidPath),
-    writeTextAtomic(path.join(paths.agent, "overview.md"), renderAtlasMarkdown(atlas)),
-    writeJsonAtomic(path.join(paths.agent, "manifest.json"), {
-      schema_version: atlas.schema_version,
-      snapshot_id: atlas.snapshot.id,
-      overview: "overview.md",
-      canonical_ir: "../current/atlas.json",
-      mcp_command: "codeatlas mcp",
-    }),
-  ];
   let htmlExportMs = 0;
-  const htmlExportTask = (async () => {
-    const htmlExportStarted = performance.now();
-    await exportAtlasHtml(atlas, htmlPath);
-    htmlExportMs = performance.now() - htmlExportStarted;
-  })();
-  if (bundlePath === null) {
-    await Promise.all([htmlExportTask, ...commonExports]);
+  if (artifactMode === "query") {
+    await writeTextAtomic(path.join(compiledDirectory, "atlas.json"), serializeAtlas(atlas));
   } else {
-    await Promise.all([
-      exportAtlasBundle(atlas, bundlePath),
-      htmlExportTask,
-      ...commonExports,
-    ]);
+    await exportAtlasData(atlas, paths.current);
+    const commonExports = [
+      exportAtlasMarkdown(atlas, markdownPath),
+      exportAtlasMermaid(atlas, mermaidPath),
+      writeTextAtomic(path.join(paths.agent, "overview.md"), renderAtlasMarkdown(atlas)),
+      writeJsonAtomic(path.join(paths.agent, "manifest.json"), {
+        schema_version: atlas.schema_version,
+        snapshot_id: atlas.snapshot.id,
+        overview: "overview.md",
+        canonical_ir: "../current/atlas.json",
+        mcp_command: "codeatlas mcp",
+      }),
+    ];
+    const htmlExportTask = (async () => {
+      const htmlExportStarted = performance.now();
+      await exportAtlasHtml(atlas, htmlPath);
+      htmlExportMs = performance.now() - htmlExportStarted;
+    })();
+    if (bundlePath === null) {
+      await Promise.all([htmlExportTask, ...commonExports]);
+    } else {
+      await Promise.all([
+        exportAtlasBundle(atlas, bundlePath),
+        htmlExportTask,
+        ...commonExports,
+      ]);
+    }
   }
   const exportMs = performance.now() - exportStarted;
   const snapshotStarted = performance.now();
-  const snapshotCreated = options.snapshot !== false;
+  const snapshotCreated = artifactMode === "all" && options.snapshot !== false;
   if (snapshotCreated) {
     await persistSnapshot(atlas, paths.snapshots);
     await pruneSnapshots(paths.snapshots, config.limits.maxSnapshots, atlas.snapshot.id);
@@ -553,7 +566,7 @@ export async function buildRepository(
     snapshot: roundedMs(snapshotMs),
     total: roundedMs(performance.now() - totalStarted),
   };
-  await writeJsonAtomic(path.join(paths.current, "build.json"), {
+  await writeJsonAtomic(path.join(compiledDirectory, "build.json"), {
     schema_version: atlas.schema_version,
     snapshot_id: atlas.snapshot.id,
     current_fingerprint: index.fingerprint,
@@ -564,6 +577,8 @@ export async function buildRepository(
     git_head: index.repository.gitAvailable ? headCommit : null,
     parsed_files: index.work.filesParsed,
     reused_files: Math.max(0, index.files - index.work.filesParsed),
+    artifact_mode: artifactMode,
+    artifact_estimate: artifactEstimate,
     timings_ms: timingsMs,
   });
   return {
@@ -572,7 +587,7 @@ export async function buildRepository(
     htmlMode,
     markdownPath,
     mermaidPath,
-    currentDirectory: paths.current,
+    currentDirectory: compiledDirectory,
     snapshotId: atlas.snapshot.id,
     snapshotCreated,
     bundlePath,
@@ -590,6 +605,7 @@ export async function buildRepository(
       ruleViolations: atlas.statistics.rule_violations,
       reviewFindings: atlas.statistics.review_findings,
     },
+    artifactEstimate,
     timingsMs,
   };
 }

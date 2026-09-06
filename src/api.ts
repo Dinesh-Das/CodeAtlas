@@ -9,7 +9,12 @@ export {
   type ArchitectureAnswerQuality,
   type AtlasAnswer,
 } from "./ai/answering.js";
-export { renderAtlasHtml, exportAtlasHtml } from "./export/html.js";
+export {
+  estimateAtlasHtmlSize,
+  renderAtlasHtml,
+  exportAtlasHtml,
+  type AtlasHtmlSizeEstimate,
+} from "./export/html.js";
 export { renderAtlasMarkdown, exportAtlasMarkdown } from "./export/markdown.js";
 export { renderAtlasMermaid, exportAtlasMermaid } from "./export/mermaid.js";
 export { createCodeAtlasServer } from "./mcp/server.js";

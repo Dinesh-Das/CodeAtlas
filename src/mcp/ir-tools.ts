@@ -1,5 +1,6 @@
+import { performance } from "node:perf_hooks";
+import { buildControlFlowForSymbol } from "../analysis/control-flow.js";
 import { describeImpact } from "../analysis/impact.js";
-import { rankSymbolSearch } from "../analysis/simplification.js";
 import { loadConfig } from "../core/config.js";
 import { CodeAtlasError } from "../core/errors.js";
 import { compileChangeContextFromAtlas } from "../context/planner.js";
@@ -11,6 +12,12 @@ import {
   architectureService,
   type ArchitectureContext,
 } from "../service/architecture-service.js";
+import {
+  projectionSearchCandidates,
+  rankProjectedSymbol,
+  type AtlasProjection,
+} from "../service/atlas-projection.js";
+import type { QueryProjectionRequest, QueryStore } from "../storage/query-store.js";
 
 export async function loadFreshIr(repositoryPath: string): Promise<Atlas> {
   return (await architectureService.load(repositoryPath)).atlas;
@@ -19,11 +26,21 @@ export async function loadFreshIr(repositoryPath: string): Promise<Atlas> {
 interface IrRuntime {
   repositoryRoot: string;
   atlas: Atlas;
+  projection: AtlasProjection;
+  queryStore: QueryStore;
   fingerprint: string;
   responseContext: CanonicalResponseContext;
   maxResultNodes: number;
   maxCallDepth: number;
   maxImpactDepth: number;
+}
+
+interface CanonicalQueryTimings {
+  freshness: number;
+  retrieval: number;
+  projection: number;
+  serialization: number;
+  transport: number;
 }
 
 interface CanonicalResponseContext {
@@ -38,9 +55,11 @@ interface CanonicalResponseContext {
     cache_hit: boolean;
     rebuilt: boolean;
   };
+  timingsMs: CanonicalQueryTimings;
 }
 
 const RESPONSE_CONTEXT = Symbol("codeatlas.canonical-response-context");
+const activeControlFlowLoads = new Map<string, Promise<Atlas["control_flows"][number] | null>>();
 
 type ContextualResult = Record<string, unknown> & {
   [RESPONSE_CONTEXT]?: CanonicalResponseContext;
@@ -60,19 +79,28 @@ interface PageRequest {
 
 async function loadIrRuntime(repositoryPath: string): Promise<IrRuntime> {
   const context = await architectureService.load(repositoryPath);
+  const configStartedAt = performance.now();
   const [config, v2Config] = await Promise.all([
     loadConfig(context.repositoryRoot),
     loadV2Config(context.repositoryRoot),
   ]);
+  const responseContext = responseContextFrom(context);
+  responseContext.timingsMs.retrieval += elapsed(configStartedAt);
   return {
     repositoryRoot: context.repositoryRoot,
     atlas: context.atlas,
+    projection: context.projection,
+    queryStore: context.queryStore,
     fingerprint: context.fingerprint,
-    responseContext: responseContextFrom(context),
+    responseContext,
     maxResultNodes: config.limits.maxMcpResultNodes,
     maxCallDepth: Math.min(config.limits.maxTraversalDepth, v2Config.analysis.max_call_depth),
     maxImpactDepth: Math.min(config.limits.maxTraversalDepth, v2Config.analysis.max_impact_depth),
   };
+}
+
+function elapsed(startedAt: number): number {
+  return Number((performance.now() - startedAt).toFixed(3));
 }
 
 function responseContextFrom(context: ArchitectureContext): CanonicalResponseContext {
@@ -88,7 +116,32 @@ function responseContextFrom(context: ArchitectureContext): CanonicalResponseCon
       cache_hit: context.cacheHit,
       rebuilt: context.rebuilt,
     },
+    timingsMs: {
+      freshness: context.timingsMs.freshness,
+      retrieval: context.timingsMs.retrieval,
+      projection: context.timingsMs.projection,
+      serialization: 0,
+      transport: 0,
+    },
   };
+}
+
+function measureProjection<T>(runtime: IrRuntime, operation: () => T): T {
+  const startedAt = performance.now();
+  try {
+    return operation();
+  } finally {
+    runtime.responseContext.timingsMs.projection += elapsed(startedAt);
+  }
+}
+
+function queryProjection(runtime: IrRuntime, request: QueryProjectionRequest) {
+  const startedAt = performance.now();
+  try {
+    return runtime.queryStore.queryProjection(request);
+  } finally {
+    runtime.responseContext.timingsMs.retrieval += elapsed(startedAt);
+  }
 }
 
 function withContext<T extends Record<string, unknown>>(
@@ -202,10 +255,11 @@ function validateDepth(depth: number, maximum: number, label: string): void {
   }
 }
 
-function resolve(atlas: Atlas, target: string) {
-  const exactId = atlas.symbols.find((symbol) => symbol.id === target);
+function resolve(projection: AtlasProjection, target: string) {
+  const exactId = projection.symbolById.get(target);
   if (exactId !== undefined) return exactId;
-  const exactQualified = atlas.symbols.filter((symbol) => symbol.qualified_name === target);
+  const needle = target.toLocaleLowerCase();
+  const exactQualified = projection.symbolsByQualifiedName.get(needle) ?? [];
   if (exactQualified.length === 1) return exactQualified[0]!;
   if (exactQualified.length > 1) {
     const candidates = exactQualified.slice(0, 10).map((symbol) =>
@@ -221,12 +275,7 @@ function resolve(atlas: Atlas, target: string) {
       },
     );
   }
-  const needle = target.toLocaleLowerCase();
-  const matches = atlas.symbols.filter((symbol) =>
-    symbol.name.toLocaleLowerCase().includes(needle) ||
-    symbol.qualified_name?.toLocaleLowerCase().includes(needle) ||
-    symbol.file?.toLocaleLowerCase().includes(needle),
-  );
+  const matches = projectionSearchCandidates(projection, target);
   if (matches.length !== 1) throw new CodeAtlasError(matches.length === 0
     ? `Symbol not found: ${target}`
     : `Ambiguous symbol: ${target}. Use an exact ID from find_symbol.`, matches.length === 0
@@ -244,14 +293,22 @@ function resolve(atlas: Atlas, target: string) {
   return matches[0]!;
 }
 
-function resolutionIssuesFor(atlas: Atlas, symbolIds: ReadonlySet<string>, limit: number) {
-  const matches = atlas.resolution_issues.filter((issue) =>
-    symbolIds.has(issue.source_id) || issue.candidate_ids.some((id) => symbolIds.has(id))
-  );
+function resolutionIssuesFor(
+  projection: AtlasProjection,
+  symbolIds: ReadonlySet<string>,
+  limit: number,
+) {
+  const matches = new Map<string, Atlas["resolution_issues"][number]>();
+  for (const symbolId of symbolIds) {
+    for (const issue of projection.resolutionIssuesBySymbolId.get(symbolId) ?? []) {
+      matches.set(issue.id, issue);
+    }
+  }
+  const items = [...matches.values()].sort((left, right) => left.id.localeCompare(right.id));
   return {
-    items: matches.slice(0, limit),
-    total: matches.length,
-    truncated: matches.length > limit,
+    items: items.slice(0, limit),
+    total: items.length,
+    truncated: items.length > limit,
   };
 }
 
@@ -259,26 +316,51 @@ export async function findSymbolIr(repositoryPath: string, query: string, limit:
   const runtime = await loadIrRuntime(repositoryPath);
   const atlas = runtime.atlas;
   const needle = query.toLocaleLowerCase();
-  const matches = atlas.symbols
-    .map((symbol) => ({ symbol, score: rankSymbolSearch(symbol, query, atlas) }))
+  const retrievalStartedAt = performance.now();
+  const indexed = runtime.queryStore.searchSymbols(query, 10_000);
+  runtime.responseContext.timingsMs.retrieval += elapsed(retrievalStartedAt);
+  const projectedCandidates = projectionSearchCandidates(runtime.projection, query);
+  const candidateIds = new Set(indexed.items.map((item) => item.id));
+  for (const symbol of projectedCandidates) candidateIds.add(symbol.id);
+  const candidateLimit = 10_000;
+  const matches = measureProjection(runtime, () => [...candidateIds].slice(0, candidateLimit)
+    .flatMap((id) => {
+      const symbol = runtime.projection.symbolById.get(id);
+      if (symbol === undefined) return [];
+      return [{ symbol, score: rankProjectedSymbol(runtime.projection, symbol, query) }];
+    })
     .filter((item) => item.score > 0)
     .sort((left, right) => right.score - left.score || left.symbol.id.localeCompare(right.symbol.id))
-    .map((item) => item.symbol);
+    .map((item) => item.symbol));
   const result = page(matches, { limit, ...(cursor === undefined ? {} : { cursor }) }, `find_symbol:${needle}`, runtime);
   return withRuntime({
     schema_version: atlas.schema_version,
     derivation: "canonical_ir",
     results: result.items,
+    retrieval: {
+      strategy: "sqlite_fts_name_path+generation_projection",
+      indexed_candidates: indexed.items.length,
+      projection_candidates: projectedCandidates.length,
+      ranked_candidates: matches.length,
+      truncated: indexed.truncated || candidateIds.size > candidateLimit,
+    },
     pagination: result.pagination,
   }, runtime);
 }
 
 export async function callersIr(repositoryPath: string, target: string, limit: number, cursor?: string) {
   const runtime = await loadIrRuntime(repositoryPath);
-  const atlas = runtime.atlas;
-  const symbol = resolve(atlas, target);
-  const matches = atlas.relationships.filter((edge) =>
-    edge.target === symbol.id && ["CALLS", "HANDLES", "TRIGGERS", "MAY_CONTINUE_TO"].includes(edge.type),
+  const symbol = resolve(runtime.projection, target);
+  const projection = queryProjection(runtime, {
+    relationships: {
+      symbolIds: [symbol.id],
+      direction: "incoming",
+      types: ["CALLS", "HANDLES", "TRIGGERS", "MAY_CONTINUE_TO"],
+    },
+    limit: 10_000,
+  });
+  const matches = projection.relationships.items.flatMap((item) =>
+    runtime.projection.relationshipById.get(item.id) ?? []
   );
   const result = page(matches, { limit, ...(cursor === undefined ? {} : { cursor }) }, `callers:${symbol.id}`, runtime);
   const relationships = result.items;
@@ -287,26 +369,41 @@ export async function callersIr(repositoryPath: string, target: string, limit: n
   return withRuntime({
     symbol,
     direct_callers: relationships.length,
-    callers: atlas.symbols.filter((item) => ids.has(item.id)),
+    callers: [...ids].flatMap((id) => runtime.projection.symbolById.get(id) ?? []),
     relationships,
-    resolution_issues: resolutionIssuesFor(atlas, relatedIds, runtime.maxResultNodes),
+    resolution_issues: resolutionIssuesFor(runtime.projection, relatedIds, runtime.maxResultNodes),
     pagination: result.pagination,
   }, runtime);
 }
 
 export async function symbolIr(repositoryPath: string, target: string) {
   const runtime = await loadIrRuntime(repositoryPath);
-  const atlas = runtime.atlas;
-  const symbol = resolve(atlas, target);
-  const evidenceIds = new Set(symbol.evidence_ids);
-  const relationships = atlas.relationships.filter((edge) => edge.source === symbol.id || edge.target === symbol.id);
+  const symbol = resolve(runtime.projection, target);
+  const projection = queryProjection(runtime, {
+    symbolIds: [symbol.id],
+    relationships: { symbolIds: [symbol.id], direction: "both" },
+    evidence: { symbolIds: [symbol.id] },
+    limit: runtime.maxResultNodes + 1,
+  });
+  if (!projection.symbols.items.some((item) => item.id === symbol.id)) {
+    throw new CodeAtlasError(`Symbol is not present in the current query generation: ${target}`, {
+      code: "stale_projection",
+      recoverable: true,
+      nextActions: ["Retry the query so CodeAtlas can reconcile the current generation."],
+    });
+  }
+  const relationships = projection.relationships.items.flatMap((item) =>
+    runtime.projection.relationshipById.get(item.id) ?? []
+  );
   const result = page(relationships, { limit: runtime.maxResultNodes }, `symbol:${symbol.id}:relationships`, runtime);
   return withRuntime({
     symbol,
     relationships: result.items,
     pagination: result.pagination,
-    evidence: atlas.evidence.filter((item) => evidenceIds.has(item.id)),
-    resolution_issues: resolutionIssuesFor(atlas, new Set([symbol.id]), runtime.maxResultNodes),
+    evidence: projection.evidence.items.flatMap((item) =>
+      runtime.projection.evidenceById.get(item.id) ?? []
+    ),
+    resolution_issues: resolutionIssuesFor(runtime.projection, new Set([symbol.id]), runtime.maxResultNodes),
   }, runtime);
 }
 
@@ -338,15 +435,22 @@ export async function repositoryOverviewIr(repositoryPath: string) {
 
 export async function changeContextIr(repositoryPath: string, task: string, budget: number) {
   const runtime = await loadIrRuntime(repositoryPath);
-  const packet = compileChangeContextFromAtlas(runtime.atlas, runtime.repositoryRoot, {
-    id: runtime.atlas.snapshot.id,
-    fingerprint: runtime.fingerprint,
-    generations: runtime.responseContext.generations,
-  }, task, {
-    budget,
-    format: "json",
-    envelopeReserve: 1_400,
-  });
+  const packet = measureProjection(runtime, () => compileChangeContextFromAtlas(
+    runtime.atlas,
+    runtime.repositoryRoot,
+    {
+      id: runtime.atlas.snapshot.id,
+      fingerprint: runtime.fingerprint,
+      generations: runtime.responseContext.generations,
+    },
+    task,
+    {
+      budget,
+      format: "json",
+      envelopeReserve: 1_400,
+    },
+    { projection: runtime.projection, queryStore: runtime.queryStore },
+  ));
   return withRuntime(packet as unknown as Record<string, unknown>, runtime);
 }
 
@@ -358,10 +462,13 @@ export async function neighborhoodIr(
   cursor?: string,
 ) {
   const runtime = await loadIrRuntime(repositoryPath);
-  const atlas = runtime.atlas;
-  const symbol = resolve(atlas, target);
-  const matches = atlas.relationships.filter((edge) =>
-    direction === "outgoing" ? edge.source === symbol.id : edge.target === symbol.id,
+  const symbol = resolve(runtime.projection, target);
+  const projection = queryProjection(runtime, {
+    relationships: { symbolIds: [symbol.id], direction },
+    limit: 10_000,
+  });
+  const matches = projection.relationships.items.flatMap((item) =>
+    runtime.projection.relationshipById.get(item.id) ?? []
   );
   const result = page(
     matches,
@@ -375,8 +482,8 @@ export async function neighborhoodIr(
     symbol,
     direction,
     relationships,
-    symbols: atlas.symbols.filter((item) => ids.has(item.id)),
-    resolution_issues: resolutionIssuesFor(atlas, new Set([symbol.id, ...ids]), runtime.maxResultNodes),
+    symbols: [...ids].flatMap((id) => runtime.projection.symbolById.get(id) ?? []),
+    resolution_issues: resolutionIssuesFor(runtime.projection, new Set([symbol.id, ...ids]), runtime.maxResultNodes),
     pagination: result.pagination,
   }, runtime);
 }
@@ -384,16 +491,9 @@ export async function neighborhoodIr(
 export async function tracePathIr(repositoryPath: string, from: string, to: string, depth: number) {
   const runtime = await loadIrRuntime(repositoryPath);
   validateDepth(depth, runtime.maxCallDepth, "depth");
-  const atlas = runtime.atlas;
-  const source = resolve(atlas, from);
-  const target = resolve(atlas, to);
-  const outgoing = new Map<string, Atlas["relationships"]>();
-  for (const edge of atlas.relationships) {
-    if (["CONTAINS", "BELONGS_TO_DOMAIN", "BELONGS_TO_FEATURE"].includes(edge.type)) continue;
-    const edges = outgoing.get(edge.source) ?? [];
-    edges.push(edge);
-    outgoing.set(edge.source, edges);
-  }
+  const source = resolve(runtime.projection, from);
+  const target = resolve(runtime.projection, to);
+  const outgoing = runtime.projection.outgoingBySymbolId;
   const queue = [{ id: source.id, symbols: [source.id], relationships: [] as string[] }];
   const visited = new Set([source.id]);
   let truncated = false;
@@ -406,7 +506,7 @@ export async function tracePathIr(repositoryPath: string, from: string, to: stri
         path: current,
         depth_limit: depth,
         truncated,
-        resolution_issues: resolutionIssuesFor(atlas, new Set(current.symbols), runtime.maxResultNodes),
+        resolution_issues: resolutionIssuesFor(runtime.projection, new Set(current.symbols), runtime.maxResultNodes),
       }, runtime);
     }
     if (current.relationships.length >= depth) {
@@ -414,6 +514,7 @@ export async function tracePathIr(repositoryPath: string, from: string, to: stri
       continue;
     }
     for (const edge of outgoing.get(current.id) ?? []) {
+      if (["CONTAINS", "BELONGS_TO_DOMAIN", "BELONGS_TO_FEATURE"].includes(edge.type)) continue;
       if (visited.has(edge.target)) continue;
       visited.add(edge.target);
       queue.push({
@@ -429,7 +530,7 @@ export async function tracePathIr(repositoryPath: string, from: string, to: stri
     path: null,
     depth_limit: depth,
     truncated,
-    resolution_issues: resolutionIssuesFor(atlas, new Set([source.id, target.id]), runtime.maxResultNodes),
+    resolution_issues: resolutionIssuesFor(runtime.projection, new Set([source.id, target.id]), runtime.maxResultNodes),
   }, runtime);
 }
 
@@ -445,7 +546,7 @@ export async function impactIr(repositoryPath: string, target: string, depth: nu
     });
   }
   const atlas = runtime.atlas;
-  const symbol = resolve(atlas, target);
+  const symbol = resolve(runtime.projection, target);
   const analysis = describeImpact(atlas, symbol.id, { depth, limit });
   const truncated = [
     analysis.paths,
@@ -457,7 +558,7 @@ export async function impactIr(repositoryPath: string, target: string, depth: nu
     symbol,
     ...analysis,
     query: { depth_limit: depth, result_limit: limit, truncated },
-    resolution_issues: resolutionIssuesFor(atlas, new Set([
+    resolution_issues: resolutionIssuesFor(runtime.projection, new Set([
       symbol.id,
       ...analysis.paths.flatMap((path) => path.path),
       ...analysis.dependency_paths.flatMap((path) => path.path),
@@ -470,13 +571,13 @@ export async function impactIr(repositoryPath: string, target: string, depth: nu
 export async function flowIr(repositoryPath: string, target: string) {
   const runtime = await loadIrRuntime(repositoryPath);
   const atlas = runtime.atlas;
-  const symbol = resolve(atlas, target);
+  const symbol = resolve(runtime.projection, target);
   const flow = atlas.flows.find((candidate) => candidate.entrypoint_id === symbol.id || candidate.id === target) ?? null;
   return withRuntime(
     {
       flow,
       resolution_issues: resolutionIssuesFor(
-        atlas,
+        runtime.projection,
         new Set([symbol.id, ...(flow?.steps.map((step) => step.symbol_id) ?? [])]),
         runtime.maxResultNodes,
       ),
@@ -487,13 +588,36 @@ export async function flowIr(repositoryPath: string, target: string) {
 
 export async function controlFlowIr(repositoryPath: string, target: string) {
   const runtime = await loadIrRuntime(repositoryPath);
-  const atlas = runtime.atlas;
-  const symbol = resolve(atlas, target);
+  const symbol = resolve(runtime.projection, target);
+  let controlFlow = runtime.projection.controlFlowBySymbolId.get(symbol.id) ?? null;
+  let generation: "precomputed" | "on_demand" | "unavailable" = controlFlow === null
+    ? "unavailable"
+    : "precomputed";
+  if (controlFlow === null && ["function", "method"].includes(symbol.kind)) {
+    const key = `${runtime.repositoryRoot}\0${runtime.fingerprint}\0${symbol.id}`;
+    let active = activeControlFlowLoads.get(key);
+    if (active === undefined) {
+      active = buildControlFlowForSymbol(runtime.atlas, runtime.repositoryRoot, symbol);
+      activeControlFlowLoads.set(key, active);
+    }
+    const startedAt = performance.now();
+    try {
+      controlFlow = await active;
+    } finally {
+      runtime.responseContext.timingsMs.projection += elapsed(startedAt);
+      if (activeControlFlowLoads.get(key) === active) activeControlFlowLoads.delete(key);
+    }
+    if (controlFlow !== null) {
+      runtime.projection.registerControlFlow(controlFlow);
+      generation = "on_demand";
+    }
+  }
   return withRuntime(
     {
       symbol,
-      control_flow: atlas.control_flows.find((flow) => flow.symbol_id === symbol.id) ?? null,
-      resolution_issues: resolutionIssuesFor(atlas, new Set([symbol.id]), runtime.maxResultNodes),
+      control_flow: controlFlow,
+      generation,
+      resolution_issues: resolutionIssuesFor(runtime.projection, new Set([symbol.id]), runtime.maxResultNodes),
     },
     runtime,
   );
@@ -504,21 +628,49 @@ export async function evidenceIr(repositoryPath: string, target: string) {
   const atlas = runtime.atlas;
   const issue = atlas.resolution_issues.find((candidate) => candidate.id === target);
   if (issue !== undefined) {
-    const ids = new Set(issue.evidence_ids);
+    const projection = queryProjection(runtime, {
+      evidence: { resolutionIssueIds: [issue.id] },
+      limit: runtime.maxResultNodes,
+    });
     return withRuntime({
       resolution_issue: issue,
-      evidence: atlas.evidence.filter((evidence) => ids.has(evidence.id)),
+      evidence: projection.evidence.items.flatMap((item) =>
+        runtime.projection.evidenceById.get(item.id) ?? []
+      ),
     }, runtime);
   }
-  const direct = atlas.evidence.find((evidence) => evidence.id === target);
-  if (direct !== undefined) return withRuntime({ evidence: [direct] }, runtime);
-  const symbol = resolve(atlas, target);
-  const ids = new Set(symbol.evidence_ids);
+  const direct = runtime.projection.evidenceById.get(target);
+  if (direct !== undefined) {
+    if (
+      direct.symbol_id === null && direct.relationship_id === null &&
+      direct.resolution_issue_id === null
+    ) return withRuntime({ evidence: [direct] }, runtime);
+    const projection = queryProjection(runtime, {
+      evidence: {
+        ...(direct.symbol_id === null ? {} : { symbolIds: [direct.symbol_id] }),
+        ...(direct.relationship_id === null ? {} : { relationshipIds: [direct.relationship_id] }),
+        ...(direct.resolution_issue_id === null ? {} : { resolutionIssueIds: [direct.resolution_issue_id] }),
+      },
+      limit: runtime.maxResultNodes,
+    });
+    const projected = projection.evidence.items.some((item) => item.id === direct.id);
+    return withRuntime({
+      evidence: [direct],
+      retrieval: { source: projected ? "sqlite_projection" : "generation_projection" },
+    }, runtime);
+  }
+  const symbol = resolve(runtime.projection, target);
+  const projection = queryProjection(runtime, {
+    evidence: { symbolIds: [symbol.id] },
+    limit: runtime.maxResultNodes,
+  });
   return withRuntime(
     {
       symbol,
-      evidence: atlas.evidence.filter((evidence) => ids.has(evidence.id)),
-      resolution_issues: resolutionIssuesFor(atlas, new Set([symbol.id]), runtime.maxResultNodes),
+      evidence: projection.evidence.items.flatMap((item) =>
+        runtime.projection.evidenceById.get(item.id) ?? []
+      ),
+      resolution_issues: resolutionIssuesFor(runtime.projection, new Set([symbol.id]), runtime.maxResultNodes),
     },
     runtime,
   );
@@ -789,7 +941,30 @@ function responseEnvelope(value: Record<string, unknown>, context?: CanonicalRes
     },
     coverage: coverageEnvelope(value),
     uncertainty: uncertaintyEnvelope(value),
+    performance: context === undefined ? null : {
+      timings_ms: context.timingsMs,
+      transport_scope: "response_construction",
+    },
   };
+}
+
+function serializeCanonicalResponse(
+  enriched: Record<string, unknown>,
+  context?: CanonicalResponseContext,
+): { serialized: string; serializedBytes: number } {
+  if (context === undefined) {
+    const serialized = JSON.stringify(enriched);
+    return { serialized, serializedBytes: Buffer.byteLength(serialized, "utf8") };
+  }
+  const serializationStartedAt = performance.now();
+  const provisional = JSON.stringify(enriched);
+  context.timingsMs.serialization += elapsed(serializationStartedAt);
+  const transportStartedAt = performance.now();
+  const provisionalContent = [{ type: "text" as const, text: provisional }];
+  Buffer.byteLength(provisionalContent[0]!.text, "utf8");
+  context.timingsMs.transport += elapsed(transportStartedAt);
+  const serialized = JSON.stringify(enriched);
+  return { serialized, serializedBytes: Buffer.byteLength(serialized, "utf8") };
 }
 
 export function irResult(value: ContextualResult) {
@@ -805,9 +980,8 @@ export function irResult(value: ContextualResult) {
       "Use get_evidence for source-backed details and analyze_impact for blast-radius paths.",
     ],
   };
-  const serialized = JSON.stringify(enriched);
+  const { serialized, serializedBytes } = serializeCanonicalResponse(enriched, context);
   const maximumBytes = 2_000_000;
-  const serializedBytes = Buffer.byteLength(serialized, "utf8");
   if (serializedBytes > maximumBytes) {
     throw new CodeAtlasError(
       `Canonical-IR response is ${serializedBytes} bytes; reduce the requested limit to stay below ${maximumBytes} bytes.`,
@@ -854,7 +1028,7 @@ export async function irErrorResult(error: unknown, repositoryPath: string) {
     codeatlas: responseEnvelope(value, context),
     next_actions: nextActions,
   };
-  const serialized = JSON.stringify(enriched);
+  const { serialized } = serializeCanonicalResponse(enriched, context);
   return {
     content: [{ type: "text" as const, text: serialized }],
     structuredContent: enriched,

@@ -200,6 +200,21 @@ export const canonicalResultSchema = z
             conditional_relationships: z.number().int().nonnegative(),
           })
           .strict(),
+        performance: z
+          .object({
+            timings_ms: z
+              .object({
+                freshness: z.number().nonnegative(),
+                retrieval: z.number().nonnegative(),
+                projection: z.number().nonnegative(),
+                serialization: z.number().nonnegative(),
+                transport: z.number().nonnegative(),
+              })
+              .strict(),
+            transport_scope: z.literal("response_construction"),
+          })
+          .strict()
+          .nullable(),
       })
       .strict(),
     next_actions: z.array(z.string()),

@@ -7,6 +7,7 @@ export { buildRepository, type BuildResult };
 
 export function formatBuildResult(result: BuildResult): string {
   const stats = result.statistics;
+  const estimate = result.artifactEstimate;
   return [
     "[OK] Repository detected",
     `[OK] ${result.parsedFiles} files parsed, ${result.reusedFiles} reused`,
@@ -22,6 +23,9 @@ export function formatBuildResult(result: BuildResult): string {
     `  ${result.mermaidPath}`,
     `  ${result.currentDirectory}`,
     result.bundlePath === null ? null : `  ${result.bundlePath}`,
+    estimate === null ? null :
+      `  Estimated single-file size: ${(estimate.estimated_single_file_bytes / 1024 / 1024).toFixed(2)} MiB ` +
+      `(${estimate.method}; ${(estimate.embedded_source_bytes / 1024 / 1024).toFixed(2)} MiB source evidence)`,
     "",
     `Performance (ms): collect ${result.timingsMs.fileCollection.toFixed(0)}, parse ${result.timingsMs.parsing.toFixed(0)}, symbols ${result.timingsMs.symbolExtraction.toFixed(0)}, resolve ${result.timingsMs.relationshipResolution.toFixed(0)}, domains ${result.timingsMs.domainAnalysis.toFixed(0)}, flows ${result.timingsMs.flowGeneration.toFixed(0)}, CFG ${result.timingsMs.cfgGeneration.toFixed(0)}, impact ${result.timingsMs.impactIndexing.toFixed(0)}, Git ${result.timingsMs.gitAnalysis.toFixed(0)}, HTML ${result.timingsMs.htmlExport.toFixed(0)}, snapshot ${result.timingsMs.snapshotPersistence.toFixed(0)}`,
     `Total ${result.timingsMs.total.toFixed(0)} ms; parsed ${result.parsedFiles} files; reused ${result.reusedFiles} files`,

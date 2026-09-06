@@ -45,7 +45,7 @@ owned by an unrelated project. The installed executable is still `codeatlas`.
 4. Before a prerelease, verify that npm's `latest` tag is absent or points to a stable version. If
    an older prerelease was accidentally published to `latest`, remove that dist-tag in npm before
    continuing; the release workflow blocks instead of silently preserving an unsafe default channel.
-5. Create and push a tag named exactly `v<package version>`, such as `v0.10.0`.
+5. Create and push a tag named exactly `v<package version>`, such as `v1.2.3`.
 6. Confirm the `npm Release` workflow succeeds and verify the published package metadata and
    provenance on npm.
 7. Verify the public artifact directly with

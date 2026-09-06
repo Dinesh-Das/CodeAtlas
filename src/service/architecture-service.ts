@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { buildRepository } from "../compiler/build.js";
 import { getFastStatus, type StatusResult } from "../cli/status.js";
 import { workspaceExists, workspacePaths } from "../core/workspace.js";
@@ -8,7 +9,9 @@ import type { Atlas } from "../ir/models.js";
 import { assertValidAtlas } from "../ir/validation.js";
 import { loadV2Config, v2ConfigFingerprint } from "../rules/config.js";
 import type { RepositoryGenerations } from "../storage/state.js";
+import { SqliteQueryStore, type QueryStore } from "../storage/query-store.js";
 import { CODEATLAS_VERSION, INDEXER_VERSION } from "../version.js";
+import { createAtlasProjection, type AtlasProjection } from "./atlas-projection.js";
 import { ensureFreshIndex } from "./freshness.js";
 
 interface CurrentBuildMetadata {
@@ -24,16 +27,32 @@ interface CurrentBuildMetadata {
 interface CachedArchitecture {
   key: string;
   atlas: Atlas;
+  projection: AtlasProjection;
+  queryStore: QueryStore;
   status: StatusResult;
+}
+
+export interface ArchitectureLoadTimings {
+  freshness: number;
+  retrieval: number;
+  projection: number;
+  total: number;
 }
 
 export interface ArchitectureContext {
   repositoryRoot: string;
   atlas: Atlas;
+  projection: AtlasProjection;
+  queryStore: QueryStore;
   status: StatusResult;
   fingerprint: string;
   cacheHit: boolean;
   rebuilt: boolean;
+  timingsMs: ArchitectureLoadTimings;
+}
+
+function elapsed(startedAt: number): number {
+  return Number((performance.now() - startedAt).toFixed(3));
 }
 
 function expectedSnapshotId(status: StatusResult): string {
@@ -72,35 +91,35 @@ async function readReusableAtlas(
   status: StatusResult,
   configFingerprint: string,
 ): Promise<Atlas | null> {
-  const current = workspacePaths(repositoryRoot).current;
-  try {
-    const [atlasText, buildText] = await Promise.all([
-      readFile(path.join(current, "atlas.json"), "utf8"),
-      readFile(path.join(current, "build.json"), "utf8"),
-    ]);
-    const atlas = JSON.parse(atlasText) as Atlas;
-    const build = JSON.parse(buildText) as CurrentBuildMetadata;
-    assertValidAtlas(atlas);
-    const expectedSnapshot = expectedSnapshotId(status);
-    const expectedGitCommit = status.gitAvailable ? status.headCommit : null;
-    if (
-      atlas.snapshot.id !== expectedSnapshot ||
-      atlas.generator.version !== CODEATLAS_VERSION ||
-      atlas.generator.indexer_version !== INDEXER_VERSION ||
-      build.snapshot_id !== expectedSnapshot ||
-      build.current_fingerprint !== status.currentFingerprint ||
-      !sameGenerations(build.generations, status.generations) ||
-      build.v2_config_fingerprint !== configFingerprint ||
-      build.git_available !== status.gitAvailable ||
-      build.git_base !== expectedGitCommit ||
-      build.git_head !== expectedGitCommit
-    ) {
-      return null;
+  const paths = workspacePaths(repositoryRoot);
+  for (const directory of [paths.query, paths.current]) {
+    try {
+      const [atlasText, buildText] = await Promise.all([
+        readFile(path.join(directory, "atlas.json"), "utf8"),
+        readFile(path.join(directory, "build.json"), "utf8"),
+      ]);
+      const atlas = JSON.parse(atlasText) as Atlas;
+      const build = JSON.parse(buildText) as CurrentBuildMetadata;
+      assertValidAtlas(atlas);
+      const expectedSnapshot = expectedSnapshotId(status);
+      const expectedGitCommit = status.gitAvailable ? status.headCommit : null;
+      if (
+        atlas.snapshot.id === expectedSnapshot &&
+        atlas.generator.version === CODEATLAS_VERSION &&
+        atlas.generator.indexer_version === INDEXER_VERSION &&
+        build.snapshot_id === expectedSnapshot &&
+        build.current_fingerprint === status.currentFingerprint &&
+        sameGenerations(build.generations, status.generations) &&
+        build.v2_config_fingerprint === configFingerprint &&
+        build.git_available === status.gitAvailable &&
+        build.git_base === expectedGitCommit &&
+        build.git_head === expectedGitCommit
+      ) return atlas;
+    } catch {
+      // Try the exported snapshot after the query-only cache.
     }
-    return atlas;
-  } catch {
-    return null;
   }
+  return null;
 }
 
 async function readBuiltAtlas(currentDirectory: string): Promise<Atlas> {
@@ -122,18 +141,23 @@ export class ArchitectureService {
   }
 
   async load(startPath = process.cwd()): Promise<ArchitectureContext> {
+    const totalStartedAt = performance.now();
     const repository = await detectRepository(startPath);
+    const freshnessStartedAt = performance.now();
     let status: StatusResult;
     let initializedByBuild = false;
     if (await workspaceExists(repository.root)) {
       status = (await ensureFreshIndex(repository.root, "architecture")).status;
     } else {
-      await buildRepository(repository.root, { snapshot: false });
+      await buildRepository(repository.root, { snapshot: false, artifacts: "query" });
       initializedByBuild = true;
       status = await getFastStatus(repository.root, { forceReconcile: true });
     }
+    const freshness = elapsed(freshnessStartedAt);
 
+    const retrievalStartedAt = performance.now();
     const configFingerprint = v2ConfigFingerprint(await loadV2Config(repository.root));
+    let retrieval = elapsed(retrievalStartedAt);
     const key = cacheKey(status, configFingerprint);
     const cached = this.cache.get(repository.root);
     if (cached?.key === key) {
@@ -141,10 +165,18 @@ export class ArchitectureService {
       return {
         repositoryRoot: repository.root,
         atlas: cached.atlas,
+        projection: cached.projection,
+        queryStore: cached.queryStore,
         status,
         fingerprint: status.currentFingerprint,
         cacheHit: true,
         rebuilt: false,
+        timingsMs: {
+          freshness,
+          retrieval,
+          projection: 0,
+          total: elapsed(totalStartedAt),
+        },
       };
     }
 
@@ -153,21 +185,35 @@ export class ArchitectureService {
     if (active !== undefined) return active;
 
     const load = (async (): Promise<ArchitectureContext> => {
+      const atlasRetrievalStartedAt = performance.now();
       let atlas = await readReusableAtlas(repository.root, status, configFingerprint);
       let rebuilt = initializedByBuild;
       if (atlas === null) {
-        const build = await buildRepository(repository.root, { snapshot: false });
+        const build = await buildRepository(repository.root, { snapshot: false, artifacts: "query" });
         atlas = await readBuiltAtlas(build.currentDirectory);
         rebuilt = true;
       }
-      this.cache.set(repository.root, { key, atlas, status });
+      retrieval += elapsed(atlasRetrievalStartedAt);
+      const projectionStartedAt = performance.now();
+      const projection = createAtlasProjection(atlas);
+      const projectionMs = elapsed(projectionStartedAt);
+      const queryStore = new SqliteQueryStore(workspacePaths(repository.root).database);
+      this.cache.set(repository.root, { key, atlas, projection, queryStore, status });
       return {
         repositoryRoot: repository.root,
         atlas,
+        projection,
+        queryStore,
         status,
         fingerprint: status.currentFingerprint,
         cacheHit: false,
         rebuilt,
+        timingsMs: {
+          freshness,
+          retrieval,
+          projection: projectionMs,
+          total: elapsed(totalStartedAt),
+        },
       };
     })();
     this.activeLoads.set(activeKey, load);

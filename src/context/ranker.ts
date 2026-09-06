@@ -8,6 +8,7 @@ import type { RankedContextSymbol } from "./packet.js";
 export interface ContextRetrievalInput {
   fts: readonly SearchResult[];
   changedSymbolIds: ReadonlySet<string>;
+  searchTextBySymbolId?: ReadonlyMap<string, string>;
 }
 
 function roleScore(symbol: AtlasSymbol, intent: ChangeTaskIntent): number {
@@ -47,7 +48,11 @@ export function rankChangeCandidates(
     if (symbol.file === null || symbol.location === null || symbol.evidence_ids.length === 0) return [];
     const symbolFile = symbol.file;
     const reasons: string[] = [];
-    let score = Math.max(0, rankSymbolSearch(symbol, task, atlas));
+    let score = Math.max(0, rankSymbolSearch(
+      symbol,
+      task,
+      retrieval.searchTextBySymbolId?.get(symbol.id) ?? atlas,
+    ));
     const exact = exactReferences(symbol, intent);
     if (exact.length > 0) {
       score += 1_500;
@@ -58,7 +63,11 @@ export function rankChangeCandidates(
       reasons.push("explicit file");
     }
     if (intent.explicit_endpoints.some((endpoint) =>
-      rankSymbolSearch(symbol, endpoint, atlas) > 0 && symbol.kind === "endpoint"
+      rankSymbolSearch(
+        symbol,
+        endpoint,
+        retrieval.searchTextBySymbolId?.get(symbol.id) ?? atlas,
+      ) > 0 && symbol.kind === "endpoint"
     )) {
       score += 1_300;
       reasons.push("explicit endpoint");

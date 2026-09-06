@@ -18,6 +18,7 @@ export interface WorkspacePaths {
   current: string;
   snapshots: string;
   cache: string;
+  query: string;
   agent: string;
 }
 
@@ -36,6 +37,7 @@ export function workspacePaths(repositoryRoot: string): WorkspacePaths {
     current: path.join(directory, "current"),
     snapshots: path.join(directory, "snapshots"),
     cache: path.join(directory, "cache"),
+    query: path.join(directory, "cache", "query"),
     agent: path.join(directory, "agent"),
   };
 }
@@ -47,6 +49,7 @@ export async function ensureWorkspaceDirectories(repositoryRoot: string): Promis
     mkdir(paths.current, { recursive: true }),
     mkdir(paths.snapshots, { recursive: true }),
     mkdir(paths.cache, { recursive: true }),
+    mkdir(paths.query, { recursive: true }),
     mkdir(paths.agent, { recursive: true }),
   ]);
   return paths;

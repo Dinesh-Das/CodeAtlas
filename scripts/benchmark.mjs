@@ -9,8 +9,11 @@ import { promisify } from "node:util";
 import { initializeRepository } from "../dist/cli/init.js";
 import { indexRepository } from "../dist/cli/index-command.js";
 import { searchPacket } from "../dist/mcp/graph-tools.js";
+import { changeContextIr, findSymbolIr, irResult } from "../dist/mcp/ir-tools.js";
 import { ensureFreshIndex } from "../dist/mcp/freshness.js";
 import { clearFastStatusCache } from "../dist/cli/status.js";
+import { findSymbols, loadCurrentAtlas } from "../dist/cli/v2-query.js";
+import { architectureService } from "../dist/service/architecture-service.js";
 import { workspacePaths } from "../dist/core/workspace.js";
 
 const execFile = promisify(execFileCallback);
@@ -296,7 +299,18 @@ async function benchmarkSize(loc) {
 
     const context = await ensureFreshIndex(fixture.root);
     const queryLatencies = [];
+    const canonicalQueryLatencies = [];
+    const changeContextLatencies = [];
+    const canonicalPhaseTimings = {
+      freshness: [],
+      retrieval: [],
+      projection: [],
+      serialization: [],
+      transport: [],
+    };
     const freshnessLatencies = [];
+    const canonicalStartup = await timedLight(async () =>
+      irResult(await findSymbolIr(fixture.root, "checkout feature", 20)));
     for (let iteration = 0; iteration < 25; iteration += 1) {
       const query = await timedLight(async () => searchPacket(context, {
         query: "How does checkout work?",
@@ -304,8 +318,40 @@ async function benchmarkSize(loc) {
         limit: 20,
       }));
       queryLatencies.push(query.durationMs);
+      const canonical = await timedLight(async () =>
+        irResult(await findSymbolIr(fixture.root, "checkout feature", 20)));
+      canonicalQueryLatencies.push(canonical.durationMs);
+      const timings = canonical.value.structuredContent.codeatlas.performance.timings_ms;
+      for (const phase of Object.keys(canonicalPhaseTimings)) {
+        canonicalPhaseTimings[phase].push(timings[phase]);
+      }
       const freshness = await timedLight(() => ensureFreshIndex(fixture.root));
       freshnessLatencies.push(freshness.durationMs);
+    }
+    for (let iteration = 0; iteration < 5; iteration += 1) {
+      const changeContext = await timedLight(async () =>
+        irResult(await changeContextIr(
+          fixture.root,
+          "Change checkoutFeature0 and identify affected tests",
+          6_000,
+        )));
+      changeContextLatencies.push(changeContext.durationMs);
+    }
+    const atlas = await loadCurrentAtlas(fixture.root);
+    const parityQueries = ["checkoutFeature0", "src/module-0.ts", "checkout feature"];
+    const searchParity = [];
+    for (const parityQuery of parityQueries) {
+      const expected = findSymbols(atlas, parityQuery, 20).map((symbol) => symbol.id);
+      const actual = (await findSymbolIr(fixture.root, parityQuery, 20)).results
+        .map((symbol) => symbol.id);
+      const identical = JSON.stringify(actual) === JSON.stringify(expected);
+      if (!identical) {
+        throw new Error(
+          `Canonical indexed search changed result ordering for ${parityQuery}. ` +
+          `Expected ${JSON.stringify(expected)}, received ${JSON.stringify(actual)}.`,
+        );
+      }
+      searchParity.push({ query: parityQuery, identical, results: actual.length });
     }
     const database = await stat(workspacePaths(fixture.root).database);
     return {
@@ -317,11 +363,26 @@ async function benchmarkSize(loc) {
       coldPhaseMetrics: cold.value.phaseMetrics,
       incremental,
       incrementalScenarios: scenarios,
+      canonicalStartupMs: canonicalStartup.durationMs,
       warmSearchMs: {
         p50: percentile(queryLatencies, 0.5),
         p95: percentile(queryLatencies, 0.95),
         p99: percentile(queryLatencies, 0.99),
       },
+      warmCanonicalSearchMs: {
+        p50: percentile(canonicalQueryLatencies, 0.5),
+        p95: percentile(canonicalQueryLatencies, 0.95),
+        p99: percentile(canonicalQueryLatencies, 0.99),
+      },
+      warmChangeContextMs: {
+        p50: percentile(changeContextLatencies, 0.5),
+        p95: percentile(changeContextLatencies, 0.95),
+        p99: percentile(changeContextLatencies, 0.99),
+      },
+      canonicalPhaseP95Ms: Object.fromEntries(
+        Object.entries(canonicalPhaseTimings).map(([phase, values]) => [phase, percentile(values, 0.95)]),
+      ),
+      canonicalSearchParity: searchParity,
       freshnessAwareMs: {
         p50: percentile(freshnessLatencies, 0.5),
         p95: percentile(freshnessLatencies, 0.95),
@@ -333,6 +394,7 @@ async function benchmarkSize(loc) {
       databaseMb: Number((database.size / 1024 / 1024).toFixed(2)),
     };
   } finally {
+    architectureService.clear(fixture.root);
     clearFastStatusCache(fixture.root);
     await rm(fixture.root, { recursive: true, force: true, maxRetries: 5 });
   }

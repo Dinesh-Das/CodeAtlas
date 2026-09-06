@@ -6,10 +6,18 @@ All notable changes follow semantic versioning.
 
 ### Added
 
-- Added canonical IR 1.1 evidence scopes, excerpt status, CFG capability metadata, and an in-memory
-  compatibility reader for persistent 1.0 snapshots.
+- Added canonical IR 1.2 evidence scopes, excerpt status, first-class resolution diagnostics,
+  relationship uncertainty, CFG capability metadata, and an in-memory compatibility reader for
+  persistent 1.0 and 1.1 snapshots.
 - Added validated trust, freshness, generation, snapshot, and coverage envelopes plus read-only
   annotations to all 19 default canonical MCP tools.
+- Added typed, recoverable error packets and explicit uncertainty counts to canonical MCP results.
+
+### Changed
+
+- Reworked current documentation around the build-first workflow, filesystem mode, canonical IR
+  1.2, the 19-tool MCP surface, and the actual generated artifacts; consolidated future work into
+  the root roadmap and removed superseded audit, implementation-plan, and historical-spec files.
 
 ### Fixed
 

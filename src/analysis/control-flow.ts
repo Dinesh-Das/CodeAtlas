@@ -382,50 +382,64 @@ export async function buildControlFlows(
   const flows: AtlasControlFlow[] = [];
 
   for (const symbol of symbols) {
-    const file = symbol.file!;
-    let source = files.get(file);
-    if (source === undefined) {
-      try {
-        source = await readFile(path.join(repositoryRoot, file), "utf8");
-      } catch {
-        continue;
-      }
-      files.set(file, source);
-    }
-    let root = trees.get(file);
-    if (root === undefined) {
-      const adapter = getLanguageAdapter(symbol.language as Parameters<typeof getLanguageAdapter>[0]);
-      if (adapter === null) continue;
-      root = adapter.createSyntaxTree(source);
-      trees.set(file, root);
-    }
-    const syntax = containingFunction(
-      root,
-      symbol.location!.start_line,
-      symbol.location!.end_line,
-    );
-    if (syntax === null) continue;
-    const startId = `cfg-node:${sha256(`${symbol.id}:START`)}`;
-    const endId = `cfg-node:${sha256(`${symbol.id}:END`)}`;
-    const builder = new StructuredControlFlowBuilder(
-      atlas,
-      symbol,
-      source,
+    const flow = await buildControlFlowForSymbol(atlas, repositoryRoot, symbol, {
       maxNodesPerFunction,
-      startId,
-      endId,
-    );
-    builder.compileFunction(syntax);
-    flows.push({
-      id: `cfg:${sha256(symbol.id)}`,
-      symbol_id: symbol.id,
-      nodes: builder.nodes,
-      edges: builder.edges,
-      truncated: builder.truncated,
-      analysis_kind: "structured_ast_approximation",
-      supported_constructs: [...builder.supported].sort((left, right) => left.localeCompare(right)),
-      unsupported_constructs: [...builder.unsupported].sort((left, right) => left.localeCompare(right)),
+      files,
+      trees,
     });
+    if (flow !== null) flows.push(flow);
   }
   return flows;
+}
+
+export async function buildControlFlowForSymbol(
+  atlas: Atlas,
+  repositoryRoot: string,
+  symbol: AtlasSymbol,
+  options: {
+    maxNodesPerFunction?: number;
+    files?: Map<string, string>;
+    trees?: Map<string, SyntaxNode>;
+  } = {},
+): Promise<AtlasControlFlow | null> {
+  if (!FUNCTION_KINDS.has(symbol.kind) || symbol.file === null || symbol.location === null) return null;
+  const files = options.files ?? new Map<string, string>();
+  const trees = options.trees ?? new Map<string, SyntaxNode>();
+  let source = files.get(symbol.file);
+  if (source === undefined) {
+    try {
+      source = await readFile(path.join(repositoryRoot, symbol.file), "utf8");
+    } catch {
+      return null;
+    }
+    files.set(symbol.file, source);
+  }
+  let root = trees.get(symbol.file);
+  if (root === undefined) {
+    const adapter = getLanguageAdapter(symbol.language as Parameters<typeof getLanguageAdapter>[0]);
+    if (adapter === null) return null;
+    root = adapter.createSyntaxTree(source);
+    trees.set(symbol.file, root);
+  }
+  const syntax = containingFunction(root, symbol.location.start_line, symbol.location.end_line);
+  if (syntax === null) return null;
+  const builder = new StructuredControlFlowBuilder(
+    atlas,
+    symbol,
+    source,
+    options.maxNodesPerFunction ?? 60,
+    `cfg-node:${sha256(`${symbol.id}:START`)}`,
+    `cfg-node:${sha256(`${symbol.id}:END`)}`,
+  );
+  builder.compileFunction(syntax);
+  return {
+    id: `cfg:${sha256(symbol.id)}`,
+    symbol_id: symbol.id,
+    nodes: builder.nodes,
+    edges: builder.edges,
+    truncated: builder.truncated,
+    analysis_kind: "structured_ast_approximation",
+    supported_constructs: [...builder.supported].sort((left, right) => left.localeCompare(right)),
+    unsupported_constructs: [...builder.unsupported].sort((left, right) => left.localeCompare(right)),
+  };
 }

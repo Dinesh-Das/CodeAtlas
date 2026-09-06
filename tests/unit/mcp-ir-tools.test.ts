@@ -36,6 +36,7 @@ describe("canonical IR MCP result bounds", () => {
           dynamic_references: 0,
           conditional_relationships: 0,
         },
+        performance: null,
       },
     });
   });

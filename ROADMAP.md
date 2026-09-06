@@ -1,40 +1,55 @@
 # CodeAtlas roadmap
 
-CodeAtlas is an evidence-first code intelligence layer for AI coding agents. Roadmap priority is
-driven by incorrect or missing evidence on real repositories, not by raw language-count growth.
+CodeAtlas prioritizes incorrect or missing evidence on real repositories over feature count. This
+file is the single source for planned work; completed behavior belongs in the README and changelog.
 
-## Beta exit criteria
+## Release-readiness criteria
 
-- Validate on 10–20 repositories not used during development.
-- Publish accuracy fixtures for every corrected graph edge and framework gap.
-- Keep cold, incremental, query-latency, peak-memory, and database-size benchmark history.
-- Document known compiler/framework coverage limits and surface them through `doctor`.
-- Prove the install → index → overview → agent-question path on all supported operating systems.
+- Validate the packed artifact on at least ten independent repositories across Linux, macOS,
+  Windows, TypeScript, JavaScript, and Python.
+- Keep a regression fixture for every corrected graph edge, control-flow case, and framework gap.
+- Track cold/incremental build time, query latency, peak memory, and database size.
+- Report known compiler, parser, and framework limits through `codeatlas doctor` and canonical
+  uncertainty records.
+- Prove install → build → overview → MCP-question workflows on every supported operating system.
 
-## Completed in the current development release
+## Completed in the current working tree
 
-- Interactive offline architecture, sequence, and CFG diagrams with SVG export and Mermaid output.
-- Stable public registration APIs for third-party language and framework adapters.
-- Scope-aware production architecture, branch-preserving flow/impact paths, and explicit
-  definite-versus-potential impact.
-- Coverage, lint, dependency-audit, CodeQL, package-smoke, and multi-OS CI gates.
-- A stable-release evidence gate with an independent-repository/OS/language matrix, explicit
-  performance budgets, tag-time multi-OS revalidation, pinned actions, OIDC, and npm provenance.
-- Cached compiler path and source-file normalization, reducing CodeAtlas's self-index candidate
-  generation from about 68 seconds to about 2.3 seconds on the measured Windows environment.
+- Canonical IR 1.2 with scoped evidence hashes, excerpt status, resolution issues, relationship
+  uncertainty, CFG capability metadata, and in-memory compatibility for IR 1.0 and 1.1 snapshots.
+- A 19-tool canonical MCP surface with validated read-only contracts, bounded pagination, typed
+  recoverable errors, freshness/generation metadata, and explicit uncertainty counts.
+- Structured control-flow lowering for supported JavaScript, TypeScript, and Python branches,
+  loops, abrupt exits, and try/catch/finally paths.
+- Interactive offline architecture, sequence, and control-flow diagrams with SVG export plus
+  deterministic Markdown and Mermaid projections.
+- Public registration APIs for third-party language and framework adapters.
+- Scope-aware architecture, branch-preserving execution/impact paths, architecture rules, Git
+  changes, snapshots, and deterministic review findings.
+- Type checking, linting, coverage, dependency audit, CodeQL, package smoke tests, multi-OS CI, and
+  a release-evidence gate tied to the exact packed artifact.
 
 ## Next
 
-- Broaden production Fastify and Prisma fixtures from public issue reports.
-- Add optional local semantic candidate retrieval; graph/compiler evidence remains the validator.
-- Improve framework projection incrementality and large-monorepo compiler memory reuse.
-- Add benchmark comparisons across several large TypeScript, JavaScript, and Python repositories.
-- Improve architecture names and starting-point recommendations using deterministic repository
-  evidence and explicit confidence.
+- Build an outcome-evaluation harness and a pinned development corpus that measures whether
+  evidence improves architecture discovery, change planning, and impact analysis.
+- Add a task-context compiler that returns the smallest evidence-complete packet for a requested
+  change, including relevant tests, rules, unresolved boundaries, and token/byte budgets.
+- Query large canonical artifacts from indexes and projections without loading the entire atlas for
+  every request.
+- Improve framework projection incrementality and TypeScript compiler memory reuse in large
+  monorepos.
+- Broaden Fastify, Prisma, and cross-language contract fixtures from real public repositories.
+- Improve deterministic architecture naming and recommended starting points with explicit
+  confidence and evidence.
 
 ## Later
 
-- Additional language and framework adapters based on demonstrated demand.
-- Extension hooks for third-party retrieval strategies.
+- Add system/contract projections for HTTP schemas, queues/events, dependency injection, and data
+  stores where the source provides enough evidence.
+- Add optional local semantic candidate retrieval while keeping graph/compiler evidence as the
+  relationship validator.
+- Expand language and framework adapters based on demonstrated demand.
+- Add extension hooks for third-party retrieval strategies.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) before proposing or implementing a roadmap item.

@@ -60,6 +60,14 @@ describe("codeatlas build v2", () => {
   it("creates a valid offline IR/HTML, flows, CFGs, impact, rules, and a snapshot", async () => {
     const root = await repositoryFixture();
     const first = await buildRepository(root);
+    expect(first.artifactEstimate).toMatchObject({
+      method: "uncompressed-json-upper-bound/v1",
+      canonical_json_bytes: expect.any(Number),
+      embedded_source_bytes: expect.any(Number),
+      estimated_single_file_bytes: expect.any(Number),
+    });
+    expect(first.artifactEstimate!.estimated_single_file_bytes)
+      .toBeGreaterThan(first.artifactEstimate!.canonical_json_bytes);
     const atlas = JSON.parse(await readFile(path.join(first.currentDirectory, "atlas.json"), "utf8")) as Atlas;
     expect(validateAtlas(atlas)).toEqual({ valid: true, errors: [] });
     expect(atlas.schema_version).toBe("1.2");
@@ -206,10 +214,12 @@ describe("codeatlas build v2", () => {
     ) as {
       parsed_files?: number;
       reused_files?: number;
+      artifact_estimate?: typeof first.artifactEstimate;
       timings_ms?: Record<string, number>;
     };
     expect(buildMetadata.parsed_files).toBe(first.parsedFiles);
     expect(buildMetadata.reused_files).toBe(first.reusedFiles);
+    expect(buildMetadata.artifact_estimate).toEqual(first.artifactEstimate);
     for (const key of requiredTimingKeys) {
       expect(buildMetadata.timings_ms?.[key]).toBe(first.timingsMs[key]);
     }
@@ -227,6 +237,7 @@ describe("codeatlas build v2", () => {
     const root = await repositoryFixture();
     const single = await buildRepository(root, { snapshot: false });
     expect(single.htmlMode).toBe("single-file");
+    expect(single.artifactEstimate?.estimated_single_file_bytes).toBeGreaterThan(0);
     expect(single.bundlePath).toBeNull();
     expect(single.htmlPath).toBe(path.join(root, "codeatlas.html"));
     const singleHtml = await readFile(single.htmlPath, "utf8");

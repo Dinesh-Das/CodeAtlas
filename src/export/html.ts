@@ -58,6 +58,32 @@ function selectSymbol(id){const s=byId.get(id);if(!s)return;rememberNavigation()
 backButton.onclick=goBack;document.getElementById('search').addEventListener('input',e=>search(e.target.value));render('Overview');
 })();`;
 
+export interface AtlasHtmlSizeEstimate {
+  method: "uncompressed-json-upper-bound/v1";
+  canonical_json_bytes: number;
+  embedded_source_bytes: number;
+  estimated_single_file_bytes: number;
+}
+
+export function estimateAtlasHtmlSize(atlas: Atlas): AtlasHtmlSizeEstimate {
+  const normalized = normalizeAtlas(atlas);
+  const projection = buildDefaultProjection(normalized);
+  const hubs = detectHighDegreeHubs(normalized);
+  const canonicalJsonBytes = Buffer.byteLength(JSON.stringify(normalized), "utf8");
+  const payloadBytes = canonicalJsonBytes +
+    Buffer.byteLength(JSON.stringify(projection), "utf8") +
+    Buffer.byteLength(JSON.stringify(hubs), "utf8");
+  const embeddedSourceBytes = normalized.evidence.reduce((total, evidence) =>
+    total + Buffer.byteLength(evidence.excerpt ?? "", "utf8"), 0);
+  const staticBytes = Buffer.byteLength(STYLES, "utf8") + Buffer.byteLength(SCRIPT, "utf8") + 4_096;
+  return {
+    method: "uncompressed-json-upper-bound/v1",
+    canonical_json_bytes: canonicalJsonBytes,
+    embedded_source_bytes: embeddedSourceBytes,
+    estimated_single_file_bytes: staticBytes + payloadBytes * 2,
+  };
+}
+
 export function renderAtlasHtml(atlas: Atlas): string {
   const normalized = normalizeAtlas(atlas);
   const projection = buildDefaultProjection(normalized);

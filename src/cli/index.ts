@@ -20,7 +20,7 @@ export function createProgram(): Command {
   const program = new Command();
   program
     .name("codeatlas")
-    .description("Build a local structural knowledge graph for a Git repository.")
+    .description("Build a local structural knowledge graph for a repository or directory.")
     .version(CODEATLAS_VERSION);
 
   program
@@ -244,7 +244,7 @@ export function createProgram(): Command {
 
   program
     .command("init")
-    .description("Initialize CodeAtlas in the current Git repository.")
+    .description("Initialize CodeAtlas in the current repository or directory.")
     .argument("[path]", "A path inside the repository", process.cwd())
     .option("--shared-ignore", "Add .codeatlas/ to the repository .gitignore", false)
     .action(async (targetPath: string, options: { sharedIgnore: boolean }) => {

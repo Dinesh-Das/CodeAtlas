@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createNodeId } from "../../src/graph/ids.js";
 import { getJournalMode, openDatabase, verifyDatabase } from "../../src/storage/database.js";
 import { upsertNode } from "../../src/storage/nodes.js";
-import { searchNodes } from "../../src/storage/search.js";
+import { searchNodeCandidates, searchNodes } from "../../src/storage/search.js";
 
 const roots: string[] = [];
 
@@ -62,7 +62,10 @@ describe("SQLite storage", () => {
       );
 
       expect(searchNodes(database, "payment")).toEqual([
-        expect.objectContaining({ id, filePath: "src/payment.ts" }),
+        expect.objectContaining({ id, filePath: "src/payment.ts", match: "fts" }),
+      ]);
+      expect(searchNodeCandidates(database, "src/payment.ts")).toEqual([
+        expect.objectContaining({ id, filePath: "src/payment.ts", match: "exact" }),
       ]);
     } finally {
       database.close();

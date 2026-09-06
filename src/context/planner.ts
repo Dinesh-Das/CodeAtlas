@@ -11,7 +11,9 @@ import type {
   ImpactPath,
 } from "../ir/models.js";
 import { architectureService } from "../service/architecture-service.js";
+import { createAtlasProjection, type AtlasProjection } from "../service/atlas-projection.js";
 import { openDatabase } from "../storage/database.js";
+import type { QueryStore } from "../storage/query-store.js";
 import { searchNodes, type SearchResult } from "../storage/search.js";
 import { fitChangeContextToBudget } from "./budgeter.js";
 import { classifyChangeTask, ftsTaskQuery } from "./intent.js";
@@ -37,6 +39,11 @@ export interface CompileChangeContextOptions {
   format?: ChangeContextFormat;
   envelopeReserve?: number;
   gitBase?: string;
+}
+
+export interface ChangeContextResources {
+  projection?: AtlasProjection;
+  queryStore?: QueryStore;
 }
 
 const TEST_PATTERN = /(?:^|\/)(?:tests?|__tests__)(?:\/|$)|\.(?:spec|test)\.[^/]+$/iu;
@@ -229,6 +236,7 @@ export function compileChangeContextFromAtlas(
   snapshot: ContextPlannerSnapshot,
   task: string,
   options: Omit<CompileChangeContextOptions, "gitBase"> = {},
+  resources: ChangeContextResources = {},
 ): ChangeContext {
   const trimmedTask = task.trim();
   if (trimmedTask === "") {
@@ -240,9 +248,17 @@ export function compileChangeContextFromAtlas(
   }
   const intent = classifyChangeTask(trimmedTask, atlas);
   const changedSymbolIds = new Set(atlas.git_changes.flatMap((change) => change.symbol_ids));
-  const fts = ftsCandidates(repositoryRoot, ftsTaskQuery(intent));
-  const ranked = rankChangeCandidates(atlas, trimmedTask, intent, { fts, changedSymbolIds });
-  const symbolById = new Map(atlas.symbols.map((symbol) => [symbol.id, symbol]));
+  const ftsQuery = ftsTaskQuery(intent);
+  const fts = ftsQuery === null ? [] : resources.queryStore === undefined
+    ? ftsCandidates(repositoryRoot, ftsQuery)
+    : resources.queryStore.searchSymbols(intent.terms.join(" "), 100).items;
+  const projection = resources.projection ?? createAtlasProjection(atlas);
+  const ranked = rankChangeCandidates(atlas, trimmedTask, intent, {
+    fts,
+    changedSymbolIds,
+    searchTextBySymbolId: projection.searchTextBySymbolId,
+  });
+  const symbolById = projection.symbolById;
   let selectedSymbols = ranked.slice(0, 12).flatMap((item) => {
     const symbol = symbolById.get(item.symbolId);
     return symbol === undefined ? [] : [{ symbol, ranked: item }];
@@ -372,7 +388,7 @@ export function compileChangeContextFromAtlas(
       : []),
     ...(potentialPaths.length > 0 ? ["Potential relationships are separated from verified paths."] : []),
   ];
-  const evidenceById = new Map(atlas.evidence.map((item) => [item.id, item]));
+  const evidenceById = projection.evidenceById;
   const validEvidence = (ids: readonly string[]): AtlasEvidence[] => ids.flatMap((id) => {
     const evidence = evidenceById.get(id);
     return evidence === undefined ? [] : [evidence];
@@ -441,12 +457,12 @@ export async function compileChangeContext(
       id: atlas.snapshot.id,
       fingerprint: current.fingerprint,
       generations: current.status.generations,
-    }, task, options);
+    }, task, options, { projection: createAtlasProjection(atlas) });
   }
   const context = await architectureService.load(startPath);
   return compileChangeContextFromAtlas(context.atlas, context.repositoryRoot, {
     id: context.atlas.snapshot.id,
     fingerprint: context.fingerprint,
     generations: context.status.generations,
-  }, task, options);
+  }, task, options, { projection: context.projection, queryStore: context.queryStore });
 }

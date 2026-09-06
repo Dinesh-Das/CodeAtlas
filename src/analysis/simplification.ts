@@ -212,14 +212,47 @@ function searchableMetadata(metadata: Readonly<Record<string, unknown>>): string
   });
 }
 
-export function symbolSearchText(symbol: AtlasSymbol, atlas?: Atlas): string {
-  const domainNames = atlas === undefined
-    ? []
-    : symbol.domain_ids.flatMap((id) => atlas.domains.find((domain) => domain.id === id)?.name ?? []);
-  const evidenceText = atlas === undefined
-    ? []
-    : symbol.evidence_ids.flatMap((id) => atlas.evidence.find((evidence) => evidence.id === id)?.excerpt ?? []);
-  return [
+export interface SymbolSearchLookups {
+  domainById: ReadonlyMap<string, Atlas["domains"][number]>;
+  evidenceById: ReadonlyMap<string, Atlas["evidence"][number]>;
+}
+
+const searchLookupsByAtlas = new WeakMap<Atlas, SymbolSearchLookups>();
+const searchTextByAtlas = new WeakMap<Atlas, Map<string, string>>();
+
+function searchLookups(atlas: Atlas): SymbolSearchLookups {
+  const cached = searchLookupsByAtlas.get(atlas);
+  if (cached !== undefined) return cached;
+  const created = {
+    domainById: new Map(atlas.domains.map((domain) => [domain.id, domain])),
+    evidenceById: new Map(atlas.evidence.map((evidence) => [evidence.id, evidence])),
+  };
+  searchLookupsByAtlas.set(atlas, created);
+  return created;
+}
+
+export function symbolSearchTerms(value: string): string[] {
+  return [...new Set(value.toLocaleLowerCase().split(/[^\p{L}\p{N}_$-]+/u)
+    .filter((term) => term.length > 1))];
+}
+
+export function symbolSearchText(
+  symbol: AtlasSymbol,
+  atlasOrLookups?: Atlas | SymbolSearchLookups,
+): string {
+  const atlas = atlasOrLookups !== undefined && "symbols" in atlasOrLookups
+    ? atlasOrLookups
+    : undefined;
+  const cachedText = atlas === undefined ? undefined : searchTextByAtlas.get(atlas)?.get(symbol.id);
+  if (cachedText !== undefined) return cachedText;
+  let lookups: SymbolSearchLookups | undefined;
+  if (atlas !== undefined) lookups = searchLookups(atlas);
+  else if (atlasOrLookups !== undefined && !("symbols" in atlasOrLookups)) {
+    lookups = atlasOrLookups;
+  }
+  const domainNames = symbol.domain_ids.flatMap((id) => lookups?.domainById.get(id)?.name ?? []);
+  const evidenceText = symbol.evidence_ids.flatMap((id) => lookups?.evidenceById.get(id)?.excerpt ?? []);
+  const text = [
     symbol.name,
     symbol.qualified_name,
     symbol.file,
@@ -233,6 +266,12 @@ export function symbolSearchText(symbol: AtlasSymbol, atlas?: Atlas): string {
     .filter((value): value is string => value !== null)
     .join(" ")
     .toLocaleLowerCase();
+  if (atlas !== undefined) {
+    const values = searchTextByAtlas.get(atlas) ?? new Map<string, string>();
+    values.set(symbol.id, text);
+    searchTextByAtlas.set(atlas, values);
+  }
+  return text;
 }
 
 const SEARCH_KIND_WEIGHT: Readonly<Record<string, number>> = {
@@ -250,14 +289,20 @@ const SEARCH_KIND_WEIGHT: Readonly<Record<string, number>> = {
   variable: 0,
 };
 
-export function rankSymbolSearch(symbol: AtlasSymbol, query: string, atlas?: Atlas): number {
+export function rankSymbolSearch(
+  symbol: AtlasSymbol,
+  query: string,
+  atlasOrSearchText?: Atlas | string,
+): number {
   const needle = query.trim().toLocaleLowerCase();
   if (needle === "") return 0;
   const name = symbol.name.toLocaleLowerCase();
   const qualified = symbol.qualified_name?.toLocaleLowerCase() ?? "";
   const file = symbol.file?.toLocaleLowerCase() ?? "";
-  const text = symbolSearchText(symbol, atlas);
-  const terms = [...new Set(needle.split(/[^a-z0-9_]+/u).filter((term) => term.length > 1))];
+  const text = typeof atlasOrSearchText === "string"
+    ? atlasOrSearchText
+    : symbolSearchText(symbol, atlasOrSearchText);
+  const terms = symbolSearchTerms(needle);
   if (!text.includes(needle) && !terms.some((term) => text.includes(term))) return 0;
   let score = SEARCH_KIND_WEIGHT[symbol.kind] ?? 24;
   if (name === needle) score += 1_000;

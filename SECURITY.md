@@ -58,9 +58,10 @@ the bounded source tool remains the explicit path for retrieving repository text
 Architecture history analysis never stores commit diffs or contributor identities. It persists
 only bounded aggregate churn, commit/contributor counts, and the latest commit hash/date per file.
 
-Users should still protect `.codeatlas/` with normal filesystem permissions. Although the
-database is automatically ignored by Git, it contains repository names, paths, symbol metadata
-and structural relationships.
+Users should still protect `.codeatlas/` with normal filesystem permissions. In a Git repository,
+CodeAtlas excludes the directory locally by default; in filesystem mode there is no Git ignore
+boundary. The database contains repository names, paths, symbol metadata, structural
+relationships, and bounded evidence metadata.
 
 When a compatible `typescript` package with the required compiler API is installed in the target
 repository, CodeAtlas loads that compiler to honor the repository's own resolution semantics.
