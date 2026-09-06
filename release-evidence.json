@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "targetVersion": "0.10.0",
   "releaseArtifact": {
     "codeAtlasVersion": "0.10.0",
@@ -23,7 +23,7 @@
         "install": true,
         "index": true,
         "overview": true,
-        "agentQuestion": true,
+        "architectureAnswerGrounded": true,
         "noIndexingFailures": true
       },
       "verifiedRelationshipPercent": 73.1,
@@ -45,7 +45,7 @@
         "install": true,
         "index": true,
         "overview": true,
-        "agentQuestion": true,
+        "architectureAnswerGrounded": true,
         "noIndexingFailures": true
       },
       "verifiedRelationshipPercent": 89.4,
@@ -67,7 +67,7 @@
         "install": true,
         "index": true,
         "overview": true,
-        "agentQuestion": true,
+        "architectureAnswerGrounded": true,
         "noIndexingFailures": true
       },
       "verifiedRelationshipPercent": 72.3,
@@ -88,7 +88,7 @@
         "install": true,
         "index": true,
         "overview": true,
-        "agentQuestion": true,
+        "architectureAnswerGrounded": true,
         "noIndexingFailures": true
       },
       "verifiedRelationshipPercent": 86.8,
@@ -110,7 +110,7 @@
         "install": true,
         "index": true,
         "overview": true,
-        "agentQuestion": true,
+        "architectureAnswerGrounded": true,
         "noIndexingFailures": true
       },
       "verifiedRelationshipPercent": 76.4,
@@ -132,7 +132,7 @@
         "install": true,
         "index": true,
         "overview": true,
-        "agentQuestion": true,
+        "architectureAnswerGrounded": true,
         "noIndexingFailures": true
       },
       "verifiedRelationshipPercent": 85.5,
@@ -154,7 +154,7 @@
         "install": true,
         "index": true,
         "overview": true,
-        "agentQuestion": true,
+        "architectureAnswerGrounded": true,
         "noIndexingFailures": true
       },
       "verifiedRelationshipPercent": 85.2,
@@ -176,7 +176,7 @@
         "install": true,
         "index": true,
         "overview": true,
-        "agentQuestion": true,
+        "architectureAnswerGrounded": true,
         "noIndexingFailures": true
       },
       "verifiedRelationshipPercent": 76.2,
@@ -198,7 +198,7 @@
         "install": true,
         "index": true,
         "overview": true,
-        "agentQuestion": true,
+        "architectureAnswerGrounded": true,
         "noIndexingFailures": true
       },
       "verifiedRelationshipPercent": 83,
@@ -219,7 +219,7 @@
         "install": true,
         "index": true,
         "overview": true,
-        "agentQuestion": true,
+        "architectureAnswerGrounded": true,
         "noIndexingFailures": true
       },
       "verifiedRelationshipPercent": 52.9,
@@ -241,7 +241,7 @@
         "install": true,
         "index": true,
         "overview": true,
-        "agentQuestion": true,
+        "architectureAnswerGrounded": true,
         "noIndexingFailures": true
       },
       "verifiedRelationshipPercent": 90.5,
@@ -263,7 +263,7 @@
         "install": true,
         "index": true,
         "overview": true,
-        "agentQuestion": true,
+        "architectureAnswerGrounded": true,
         "noIndexingFailures": true
       },
       "verifiedRelationshipPercent": 65.5,

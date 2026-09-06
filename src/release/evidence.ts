@@ -30,7 +30,7 @@ export const repositoryValidationSchema = z.object({
     install: z.literal(true),
     index: z.literal(true),
     overview: z.literal(true),
-    agentQuestion: z.literal(true),
+    architectureAnswerGrounded: z.literal(true),
     noIndexingFailures: z.literal(true),
   }).strict(),
   verifiedRelationshipPercent: z.number().min(0).max(100),
@@ -60,7 +60,7 @@ export const releaseArtifactSchema = z.object({
 export type ReleaseArtifactIdentity = z.infer<typeof releaseArtifactSchema>;
 
 export const releaseEvidenceSchema = z.object({
-  schemaVersion: z.literal(2),
+  schemaVersion: z.literal(3),
   targetVersion: z.string().regex(/^\d+\.\d+\.\d+$/u),
   releaseArtifact: releaseArtifactSchema,
   independentRepositories: z.array(repositoryValidationSchema),

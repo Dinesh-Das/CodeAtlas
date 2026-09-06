@@ -1,0 +1,470 @@
+{
+  "schema_version": 1,
+  "id": "codeatlas-development-v1",
+  "title": "CodeAtlas paired agent development evaluation",
+  "visibility": "development",
+  "minimum_repeats": 3,
+  "repositories": [
+    {
+      "id": "architecture-typescript",
+      "fixture_root": "tests/fixtures/v2-architecture",
+      "content_sha256": "5ee71a410649f4b525298a20795aac80bdb73f8666376a88abe557a5855e057e",
+      "license": "Apache-2.0",
+      "languages": ["typescript"],
+      "negative_coverage": false
+    },
+    {
+      "id": "relationships-typescript",
+      "fixture_root": "tests/fixtures/relationships/typescript",
+      "content_sha256": "896e60ef573f04fa3f1ed356e6eefb350faa3be69b07990adbc57f6587c508a8",
+      "license": "Apache-2.0",
+      "languages": ["typescript", "javascript"],
+      "negative_coverage": false
+    },
+    {
+      "id": "relationships-python",
+      "fixture_root": "tests/fixtures/relationships/python",
+      "content_sha256": "40539c17c4b7fc78a0b36538227ae885b0710530012a47726cdb9f764ada7fe7",
+      "license": "Apache-2.0",
+      "languages": ["python"],
+      "negative_coverage": false
+    },
+    {
+      "id": "express-typescript",
+      "fixture_root": "tests/fixtures/frameworks/express",
+      "content_sha256": "0f5063719be6b8fc0c2feff789db67e4b8ed0a499a53da0f0cdb646c1de34643",
+      "license": "Apache-2.0",
+      "languages": ["typescript"],
+      "negative_coverage": false
+    },
+    {
+      "id": "fastify-typescript",
+      "fixture_root": "tests/fixtures/frameworks/fastify",
+      "content_sha256": "145a14965fe60fb7434413fd10df26ecef6560c6893b4f9364ff69dff356b84e",
+      "license": "Apache-2.0",
+      "languages": ["typescript"],
+      "negative_coverage": false
+    },
+    {
+      "id": "unsupported-rust",
+      "fixture_root": "evals/fixtures/unsupported-rust",
+      "content_sha256": "005983f5a996b3fe67468110c370d3d478e34733840a7a28443eae6b23f642c0",
+      "license": "Apache-2.0",
+      "languages": ["unsupported"],
+      "negative_coverage": true
+    }
+  ],
+  "tasks": [
+    {
+      "id": "arch-ts-architecture",
+      "repository_id": "architecture-typescript",
+      "category": "architecture_explanation",
+      "prompt": "Explain the main request entry point and the authentication architecture.",
+      "answerability": "answerable",
+      "context_token_budget": 1600,
+      "acceptable_evidence": [{
+        "description": "The HTTP entry point and authentication controller show the flow boundary.",
+        "files": ["src/app.ts", "src/auth/controller.ts"]
+      }],
+      "expected_behavior": "Identify app.post as the entry point and follow it into the authentication controller with citations.",
+      "patch_test": null
+    },
+    {
+      "id": "arch-ts-change-auth-policy",
+      "repository_id": "architecture-typescript",
+      "category": "change_location",
+      "prompt": "Where should password acceptance policy be changed?",
+      "answerability": "answerable",
+      "context_token_budget": 900,
+      "acceptable_evidence": [{
+        "description": "The password policy is implemented in the authentication service.",
+        "files": ["src/auth/service.ts"]
+      }],
+      "expected_behavior": "Point to authenticate and explain the current whitespace and length checks.",
+      "patch_test": "npm test -- tests/e2e/build-v2.test.ts"
+    },
+    {
+      "id": "arch-ts-cross-file-auth",
+      "repository_id": "architecture-typescript",
+      "category": "cross_file_bug_fix",
+      "prompt": "A valid user is looked up twice during login. Locate the cross-file change needed to remove the duplicate lookup without changing the endpoint.",
+      "answerability": "answerable",
+      "context_token_budget": 1400,
+      "acceptable_evidence": [{
+        "description": "The controller performs a lookup before the service performs another lookup.",
+        "files": ["src/auth/controller.ts", "src/auth/service.ts", "src/auth/repository.ts"]
+      }],
+      "expected_behavior": "Trace both calls to findUserRepository and propose a consistent controller/service contract.",
+      "patch_test": "npm test -- tests/e2e/build-v2.test.ts"
+    },
+    {
+      "id": "arch-ts-refactor-audit",
+      "repository_id": "architecture-typescript",
+      "category": "refactoring",
+      "prompt": "Refactor the login audit boundary while preserving authentication behavior. Which files define that boundary?",
+      "answerability": "answerable",
+      "context_token_budget": 1300,
+      "acceptable_evidence": [{
+        "description": "The controller invokes the audit function defined by the repository module.",
+        "files": ["src/auth/controller.ts", "src/auth/repository.ts"]
+      }],
+      "expected_behavior": "Keep the endpoint stable and identify the controller-to-repository audit call.",
+      "patch_test": "npm test -- tests/e2e/build-v2.test.ts"
+    },
+    {
+      "id": "arch-ts-affected-tests",
+      "repository_id": "architecture-typescript",
+      "category": "affected_tests",
+      "prompt": "Which existing test should run after changing authenticate?",
+      "answerability": "answerable",
+      "context_token_budget": 900,
+      "acceptable_evidence": [{
+        "description": "The authentication fixture imports and exercises authenticate.",
+        "files": ["tests/auth.fixture.ts", "src/auth/service.ts"]
+      }],
+      "expected_behavior": "Name the authentication fixture and ground the import relationship.",
+      "patch_test": "npm test -- tests/e2e/build-v2.test.ts"
+    },
+
+    {
+      "id": "rel-ts-architecture",
+      "repository_id": "relationships-typescript",
+      "category": "architecture_explanation",
+      "prompt": "Explain how Worker obtains and uses behavior from the base module.",
+      "answerability": "answerable",
+      "context_token_budget": 1200,
+      "acceptable_evidence": [{
+        "description": "Worker imports, extends, implements, calls, and reads declarations from base.",
+        "files": ["consumer.ts", "base.ts"]
+      }],
+      "expected_behavior": "Cover the import, inheritance, interface implementation, shared call, and value read without inventing runtime behavior.",
+      "patch_test": null
+    },
+    {
+      "id": "rel-ts-change-worker-run",
+      "repository_id": "relationships-typescript",
+      "category": "change_location",
+      "prompt": "Where should Worker run sequencing be changed?",
+      "answerability": "answerable",
+      "context_token_budget": 700,
+      "acceptable_evidence": [{
+        "description": "Worker.run owns the sequence.",
+        "files": ["consumer.ts"]
+      }],
+      "expected_behavior": "Locate Worker.run in consumer.ts.",
+      "patch_test": "npm test -- tests/integration/relationships.test.ts"
+    },
+    {
+      "id": "rel-ts-cross-file-shared",
+      "repository_id": "relationships-typescript",
+      "category": "cross_file_bug_fix",
+      "prompt": "Changing shared breaks Worker. Which definition and caller must be inspected?",
+      "answerability": "answerable",
+      "context_token_budget": 1000,
+      "acceptable_evidence": [{
+        "description": "shared is declared in base and called by Worker.run.",
+        "files": ["base.ts", "consumer.ts"]
+      }],
+      "expected_behavior": "Return both the definition and caller with the verified import/call evidence.",
+      "patch_test": "npm test -- tests/integration/relationships.test.ts"
+    },
+    {
+      "id": "rel-ts-ambiguous-duplicate",
+      "repository_id": "relationships-typescript",
+      "category": "refactoring",
+      "prompt": "Which duplicate function does invoke call, and is it safe to rename that target?",
+      "answerability": "unanswerable",
+      "context_token_budget": 1000,
+      "acceptable_evidence": [],
+      "expected_behavior": "Report the ambiguous target and candidates instead of choosing one duplicate.",
+      "patch_test": null
+    },
+    {
+      "id": "rel-ts-unanswerable-database",
+      "repository_id": "relationships-typescript",
+      "category": "unanswerable",
+      "prompt": "Which database transaction retries Worker failures?",
+      "answerability": "unanswerable",
+      "context_token_budget": 700,
+      "acceptable_evidence": [],
+      "expected_behavior": "Abstain because this fixture contains no database or retry behavior.",
+      "patch_test": null
+    },
+
+    {
+      "id": "rel-py-architecture",
+      "repository_id": "relationships-python",
+      "category": "architecture_explanation",
+      "prompt": "Explain Worker inheritance and its dependencies on the base module.",
+      "answerability": "answerable",
+      "context_token_budget": 1100,
+      "acceptable_evidence": [{
+        "description": "Worker aliases Base and imports shared and value from the base module.",
+        "files": ["consumer.py", "base.py"]
+      }],
+      "expected_behavior": "Explain the alias, inheritance, call, and value read using both files.",
+      "patch_test": null
+    },
+    {
+      "id": "rel-py-change-finish",
+      "repository_id": "relationships-python",
+      "category": "change_location",
+      "prompt": "Where should Worker completion behavior be implemented?",
+      "answerability": "answerable",
+      "context_token_budget": 700,
+      "acceptable_evidence": [{
+        "description": "Worker.finish is declared next to Worker.run.",
+        "files": ["consumer.py"]
+      }],
+      "expected_behavior": "Locate Worker.finish and its call from run.",
+      "patch_test": "npm test -- tests/integration/relationships.test.ts"
+    },
+    {
+      "id": "rel-py-cross-file-shared",
+      "repository_id": "relationships-python",
+      "category": "cross_file_bug_fix",
+      "prompt": "A shared helper change affects Worker. Locate the definition and use site.",
+      "answerability": "answerable",
+      "context_token_budget": 900,
+      "acceptable_evidence": [{
+        "description": "shared is defined in base.py and called in consumer.py.",
+        "files": ["base.py", "consumer.py"]
+      }],
+      "expected_behavior": "Identify both files and the resolved import/call path.",
+      "patch_test": "npm test -- tests/integration/relationships.test.ts"
+    },
+    {
+      "id": "rel-py-refactor-parent",
+      "repository_id": "relationships-python",
+      "category": "refactoring",
+      "prompt": "What must be updated if the imported Parent alias is renamed?",
+      "answerability": "answerable",
+      "context_token_budget": 900,
+      "acceptable_evidence": [{
+        "description": "The alias and Worker base expression are in consumer.py; the source declaration is in base.py.",
+        "files": ["consumer.py", "base.py"]
+      }],
+      "expected_behavior": "Distinguish the local Parent alias from the Base declaration.",
+      "patch_test": "npm test -- tests/integration/relationships.test.ts"
+    },
+    {
+      "id": "rel-py-affected-tests",
+      "repository_id": "relationships-python",
+      "category": "affected_tests",
+      "prompt": "Which repository test directly exercises Worker.run?",
+      "answerability": "unanswerable",
+      "context_token_budget": 700,
+      "acceptable_evidence": [],
+      "expected_behavior": "Abstain because the fixture contains no direct test file.",
+      "patch_test": null
+    },
+
+    {
+      "id": "express-architecture",
+      "repository_id": "express-typescript",
+      "category": "architecture_explanation",
+      "prompt": "Explain the Express HTTP surface and its handlers.",
+      "answerability": "answerable",
+      "context_token_budget": 900,
+      "acceptable_evidence": [{
+        "description": "Both routes and handlers are declared in routes.ts.",
+        "files": ["routes.ts"]
+      }],
+      "expected_behavior": "Identify GET /users/:userId and POST /users with their handlers.",
+      "patch_test": null
+    },
+    {
+      "id": "express-change-create-user",
+      "repository_id": "express-typescript",
+      "category": "change_location",
+      "prompt": "Where should user creation behavior be changed?",
+      "answerability": "answerable",
+      "context_token_budget": 650,
+      "acceptable_evidence": [{
+        "description": "createUser and its POST registration are in routes.ts.",
+        "files": ["routes.ts"]
+      }],
+      "expected_behavior": "Locate createUser and distinguish it from getUser.",
+      "patch_test": "npm test -- tests/integration/frameworks.test.ts"
+    },
+    {
+      "id": "express-refactor-routes",
+      "repository_id": "express-typescript",
+      "category": "refactoring",
+      "prompt": "Which file must change to split Express route registration from handler implementation?",
+      "answerability": "answerable",
+      "context_token_budget": 700,
+      "acceptable_evidence": [{
+        "description": "Registration and implementation are currently colocated.",
+        "files": ["routes.ts"]
+      }],
+      "expected_behavior": "Identify the colocation and avoid claiming another module already exists.",
+      "patch_test": "npm test -- tests/integration/frameworks.test.ts"
+    },
+    {
+      "id": "express-affected-tests",
+      "repository_id": "express-typescript",
+      "category": "affected_tests",
+      "prompt": "Which fixture-local test covers the POST users route?",
+      "answerability": "unanswerable",
+      "context_token_budget": 600,
+      "acceptable_evidence": [],
+      "expected_behavior": "Abstain because no test is present in the pinned fixture.",
+      "patch_test": null
+    },
+    {
+      "id": "express-unanswerable-rate-limit",
+      "repository_id": "express-typescript",
+      "category": "unanswerable",
+      "prompt": "What rate limit applies to POST /users?",
+      "answerability": "unanswerable",
+      "context_token_budget": 600,
+      "acceptable_evidence": [],
+      "expected_behavior": "State that no rate-limit configuration is evidenced.",
+      "patch_test": null
+    },
+
+    {
+      "id": "fastify-architecture",
+      "repository_id": "fastify-typescript",
+      "category": "architecture_explanation",
+      "prompt": "Explain the Fastify plugin route surface and completion callback.",
+      "answerability": "answerable",
+      "context_token_budget": 900,
+      "acceptable_evidence": [{
+        "description": "The plugin, two registrations, shared handler, and done call are in routes.ts.",
+        "files": ["routes.ts"]
+      }],
+      "expected_behavior": "Describe both registration styles and note that route execution is conditional runtime behavior.",
+      "patch_test": null
+    },
+    {
+      "id": "fastify-change-submit",
+      "repository_id": "fastify-typescript",
+      "category": "change_location",
+      "prompt": "Where is the POST submit route configured?",
+      "answerability": "answerable",
+      "context_token_budget": 600,
+      "acceptable_evidence": [{
+        "description": "The route object is declared in routes.ts.",
+        "files": ["routes.ts"]
+      }],
+      "expected_behavior": "Locate the fastify.route object and its getStatus handler.",
+      "patch_test": "npm test -- tests/integration/frameworks.test.ts"
+    },
+    {
+      "id": "fastify-cross-file-storage",
+      "repository_id": "fastify-typescript",
+      "category": "cross_file_bug_fix",
+      "prompt": "The submit endpoint loses database writes. Which storage module should be fixed?",
+      "answerability": "unanswerable",
+      "context_token_budget": 650,
+      "acceptable_evidence": [],
+      "expected_behavior": "Abstain because the fixture has no storage module or database write.",
+      "patch_test": null
+    },
+    {
+      "id": "fastify-refactor-handler",
+      "repository_id": "fastify-typescript",
+      "category": "refactoring",
+      "prompt": "Where is one handler shared by two Fastify routes?",
+      "answerability": "answerable",
+      "context_token_budget": 650,
+      "acceptable_evidence": [{
+        "description": "Both registrations reference getStatus in routes.ts.",
+        "files": ["routes.ts"]
+      }],
+      "expected_behavior": "Identify getStatus as the shared handler with both route registrations.",
+      "patch_test": "npm test -- tests/integration/frameworks.test.ts"
+    },
+    {
+      "id": "fastify-affected-tests",
+      "repository_id": "fastify-typescript",
+      "category": "affected_tests",
+      "prompt": "Which fixture-local test validates the statusRoutes completion callback?",
+      "answerability": "unanswerable",
+      "context_token_budget": 600,
+      "acceptable_evidence": [],
+      "expected_behavior": "Abstain because the pinned fixture includes no test file.",
+      "patch_test": null
+    },
+
+    {
+      "id": "rust-architecture-fallback",
+      "repository_id": "unsupported-rust",
+      "category": "architecture_explanation",
+      "prompt": "Explain how the cyfriflyfr processing flow accumulates and returns values.",
+      "answerability": "answerable",
+      "codeatlas_coverage": "out_of_coverage",
+      "context_token_budget": 900,
+      "acceptable_evidence": [{
+        "description": "The unsupported Rust source contains the complete processing flow.",
+        "files": ["src/lib.rs"]
+      }],
+      "expected_behavior": "Use native source evidence, explain prosesu through cofnodi to cyfanswm, and state the CodeAtlas coverage gap.",
+      "patch_test": null
+    },
+    {
+      "id": "rust-change-cyfanswm",
+      "repository_id": "unsupported-rust",
+      "category": "change_location",
+      "prompt": "Where should the Cyfriflyfr total calculation be changed?",
+      "answerability": "answerable",
+      "codeatlas_coverage": "out_of_coverage",
+      "context_token_budget": 650,
+      "acceptable_evidence": [{
+        "description": "cyfanswm performs the total calculation in the unsupported source.",
+        "files": ["src/lib.rs"]
+      }],
+      "expected_behavior": "Locate cyfanswm through native search and disclose that CodeAtlas does not parse Rust.",
+      "patch_test": null
+    },
+    {
+      "id": "rust-cross-file-storage",
+      "repository_id": "unsupported-rust",
+      "category": "cross_file_bug_fix",
+      "prompt": "Which storage module persists Cyfriflyfr entries across restarts?",
+      "answerability": "unanswerable",
+      "codeatlas_coverage": "out_of_coverage",
+      "context_token_budget": 650,
+      "acceptable_evidence": [],
+      "expected_behavior": "Abstain because no persistence module exists, while separately reporting the Rust coverage limitation.",
+      "patch_test": null
+    },
+    {
+      "id": "rust-refactor-cofnodi",
+      "repository_id": "unsupported-rust",
+      "category": "refactoring",
+      "prompt": "What source locations must change if cofnodi is renamed?",
+      "answerability": "answerable",
+      "codeatlas_coverage": "out_of_coverage",
+      "context_token_budget": 750,
+      "acceptable_evidence": [{
+        "description": "The method declaration and its call from prosesu share one Rust source file.",
+        "files": ["src/lib.rs"]
+      }],
+      "expected_behavior": "Find the declaration and call with native tools and avoid claiming graph-backed rename coverage.",
+      "patch_test": null
+    },
+    {
+      "id": "rust-affected-tests",
+      "repository_id": "unsupported-rust",
+      "category": "affected_tests",
+      "prompt": "Which test exercises prosesu and its total calculation?",
+      "answerability": "answerable",
+      "codeatlas_coverage": "out_of_coverage",
+      "context_token_budget": 700,
+      "acceptable_evidence": [{
+        "description": "The inline Rust test calls prosesu and checks its total.",
+        "files": ["src/lib.rs"]
+      }],
+      "expected_behavior": "Locate cyfanswm_yw_cywir using native tools and state that it was not retrieved from CodeAtlas.",
+      "patch_test": null
+    }
+  ],
+  "launch_gate": {
+    "primary_outcome": "context_tokens",
+    "minimum_relative_improvement": 0.2,
+    "maximum_task_success_regression": 0.02
+  }
+}

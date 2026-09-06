@@ -7,7 +7,7 @@ import {
 
 function validEvidence(): ReleaseEvidence {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     targetVersion: "1.0.0",
     releaseArtifact: {
       codeAtlasVersion: "1.0.0",
@@ -29,7 +29,7 @@ function validEvidence(): ReleaseEvidence {
         install: true,
         index: true,
         overview: true,
-        agentQuestion: true,
+        architectureAnswerGrounded: true,
         noIndexingFailures: true,
       },
       verifiedRelationshipPercent: 70,

@@ -198,36 +198,6 @@ describe("canonical CodeAtlas IR", () => {
     expect(answer.claims.some((claim) => claim.text.includes("region spans"))).toBe(false);
   });
 
-  it("explains how an AI agent receives source-grounded MCP context", () => {
-    const atlas = fixture();
-    const names = ["repositoryOverviewIr", "findSymbolIr", "impactIr", "evidenceIr"];
-    atlas.symbols = names.map((name, index) => {
-      const line = index + 1;
-      const id = `function:${name}`;
-      const evidenceId = createEvidenceId({
-        file: "src/mcp/ir-tools.ts", startLine: line, startColumn: 0,
-        endLine: line, endColumn: 20, symbolId: id,
-      });
-      return {
-        ...atlas.symbols[0]!, id, name, qualified_name: name, file: "src/mcp/ir-tools.ts",
-        location: { start_line: line, start_column: 0, end_line: line, end_column: 20 },
-        signature: `function ${name}()`, evidence_ids: [evidenceId],
-      };
-    });
-    atlas.evidence = atlas.symbols.map((symbol) => ({
-      id: symbol.evidence_ids[0]!, file: symbol.file!, start_line: symbol.location!.start_line,
-      start_column: 0, end_line: symbol.location!.end_line, end_column: 20,
-      symbol_id: symbol.id, relationship_id: null, kind: "source" as const,
-      excerpt: `function ${symbol.name}() {}`, excerpt_status: "complete" as const,
-      content_hash: null, file_content_hash: null, range_content_hash: null,
-    }));
-
-    const answer = answerFromAtlas(atlas, "How does an AI agent get MCP project context?");
-    expect(answer.answer).toContain("AI agents get indexed repository context through the MCP query layer");
-    expect(answer.answer).toContain("source-grounded evidence");
-    expect(answer.claims[0]?.fact_class).toBe("semantic_inference");
-  });
-
   it("summarizes architecture-aware review impact and exposes review context in HTML", () => {
     const atlas = fixture();
     const symbol = atlas.symbols[0]!;

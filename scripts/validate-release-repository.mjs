@@ -156,7 +156,7 @@ if (!source || !id) {
         install: true,
         index: atlas.statistics.files > 0,
         overview: atlas.domains.length > 0 && atlas.symbols.length > 0,
-        agentQuestion: agentResult.quality.passed === true,
+        architectureAnswerGrounded: agentResult.quality.passed === true,
         noIndexingFailures: doctorOutput.includes("[OK] Indexing failures: none"),
       },
       verifiedRelationshipPercent: Number(quality[1]),

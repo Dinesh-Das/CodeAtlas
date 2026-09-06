@@ -15,6 +15,22 @@ export { renderAtlasMermaid, exportAtlasMermaid } from "./export/mermaid.js";
 export { createCodeAtlasServer } from "./mcp/server.js";
 export { CODEATLAS_VERSION } from "./version.js";
 export { registerFrameworkAdapter } from "./framework/registry.js";
+export {
+  EVALUATION_HARNESS_VERSION,
+  EVALUATION_SCHEMA_VERSION,
+  evaluationObservationSchema,
+  evaluationRunSchema,
+  evaluationSuiteSchema,
+  type EvaluationObservation,
+  type EvaluationRun,
+  type EvaluationSuite,
+} from "./evaluation/models.js";
+export {
+  evaluateRun,
+  fixtureContentSha256,
+  validatePinnedFixtures,
+  type EvaluationReport,
+} from "./evaluation/runner.js";
 export type { FrameworkAdapter, FrameworkEntities, RepositoryContext } from "./framework/types.js";
 export type { Atlas, AtlasSymbol, AtlasRelationship, AtlasFlow, ImpactResult } from "./ir/models.js";
 export type { LanguageAdapter } from "./parser/parser.js";

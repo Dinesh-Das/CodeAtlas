@@ -178,20 +178,6 @@ export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
       });
     }
   }
-  if (asksForAgentContext) {
-    const contextComponents = ["repositoryOverviewIr", "findSymbolIr", "impactIr", "evidenceIr"]
-      .map((name) => atlas.symbols.find((symbol) =>
-        symbol.name === name && isPrimaryArchitectureSymbol(symbol),
-      ))
-      .filter((symbol): symbol is AtlasSymbol => symbol !== undefined);
-    if (contextComponents.length === 4) {
-      claims.push({
-        text: "AI agents get indexed repository context through the MCP query layer: repositoryOverviewIr provides the repository view, findSymbolIr locates code entities, impactIr traces change reach, and evidenceIr returns source-grounded evidence.",
-        fact_class: "semantic_inference",
-        evidence_ids: boundedEvidence(...contextComponents.map((symbol) => symbol.evidence_ids)),
-      });
-    }
-  }
   if (asksForArchitectureOverview) {
     const detectedEntrypoints = primaryEntrypoints(atlas).slice(0, 5);
     const startingPoints = detectedEntrypoints.length > 0
@@ -318,10 +304,19 @@ export function evaluateArchitectureAnswer(
   const primaryScopeOnly = answer.evidence.length > 0 && answer.evidence.every((item) =>
     isPrimaryArchitectureScope(classifyArchitecturalScope(item.file))
   );
-  const normalized = answer.answer.toLocaleLowerCase();
-  const identifiesStartingPoint = /\bstart with\b|\bentrypoints?\b/u.test(normalized);
-  const architectureSpecific = /\barchitecture regions?\b|\bmcp query layer\b|\bproduction entrypoints?\b/u
-    .test(normalized);
+  const citedSymbols = atlas.symbols.filter((symbol) =>
+    symbol.evidence_ids.some((id) => citedEvidence.has(id))
+  );
+  const entrypoints = new Set(atlas.entrypoint_ids);
+  const primaryEntrypoints = atlas.symbols.filter((symbol) =>
+    entrypoints.has(symbol.id) && isPrimaryArchitectureSymbol(symbol)
+  );
+  const identifiesStartingPoint = primaryEntrypoints.length > 0
+    ? primaryEntrypoints.some((symbol) => symbol.evidence_ids.some((id) => citedEvidence.has(id)))
+    : citedSymbols.some(isPrimaryArchitectureSymbol);
+  const architectureSpecific = answer.claims.some((claim) =>
+    claim.fact_class === "graph_inference" || claim.fact_class === "semantic_inference"
+  ) && citedSymbols.some(isPrimaryArchitectureSymbol);
   const normalizedClaims = answer.claims.map((claim) =>
     claim.text.toLocaleLowerCase().replace(/\s+/gu, " ").trim()
   );
