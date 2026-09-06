@@ -58,6 +58,23 @@ export function validateAtlas(atlas: Atlas): AtlasValidationResult {
   for (const entrypointId of atlas.entrypoint_ids) {
     if (!symbolIds.has(entrypointId)) errors.push(`Missing entrypoint symbol ${entrypointId}`);
   }
+  unique("control-flow", atlas.control_flows.map((flow) => flow.id));
+  for (const flow of atlas.control_flows) {
+    if (!symbolIds.has(flow.symbol_id)) {
+      errors.push(`Control flow ${flow.id} has missing symbol ${flow.symbol_id}`);
+    }
+    const nodeIds = unique(`control-flow node in ${flow.id}`, flow.nodes.map((node) => node.id));
+    unique(`control-flow edge in ${flow.id}`, flow.edges.map((edge) => edge.id));
+    for (const node of flow.nodes) {
+      for (const id of node.evidence_ids) {
+        if (!evidenceIds.has(id)) errors.push(`Control-flow node ${node.id} has missing evidence ${id}`);
+      }
+    }
+    for (const edge of flow.edges) {
+      if (!nodeIds.has(edge.source)) errors.push(`Control-flow edge ${edge.id} has missing source ${edge.source}`);
+      if (!nodeIds.has(edge.target)) errors.push(`Control-flow edge ${edge.id} has missing target ${edge.target}`);
+    }
+  }
   for (const finding of atlas.review_findings) {
     if (finding.evidence_ids.length === 0) errors.push(`Review finding ${finding.id} has no evidence`);
     for (const id of finding.evidence_ids) {

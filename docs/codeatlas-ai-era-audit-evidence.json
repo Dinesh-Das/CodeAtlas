@@ -1,0 +1,322 @@
+{
+  "audit_date": "2026-09-05",
+  "version": "0.10.0",
+  "source_commit": "9517fc428e7e2d1d0013f2a663f0354fb792a3d5",
+  "environment": {
+    "os": "Windows",
+    "node": "24.12.0",
+    "npm": "10.5.2"
+  },
+  "limitations": [
+    "Local measurements are individual calls, not statistical p95 results.",
+    "No hosted model benchmark or competitor performance run was performed.",
+    "The self-index used a fresh local clone without installing target dependencies.",
+    "The fake secret is a synthetic audit canary; no real credential was used.",
+    "Source excerpts in local artifacts are documented existing behavior, not evidence of outbound transmission."
+  ],
+  "checks": {
+    "typecheck": "passed",
+    "lint": "passed",
+    "test_files": 36,
+    "tests": 153,
+    "package_smoke": "passed; 499-file tarball installed and CLI exercised"
+  },
+  "reproduction": {
+    "fixture": "Copy tests/fixtures/v2-architecture into a temporary directory, add src/probes.ts below, initialize and commit a disposable Git repository, then run the compiled CLI build with --bundle --no-snapshot. Inspect the generated canonical atlas and the decompressed atlas-data HTML payload. Use an MCP SDK stdio client to call find_symbol with login and get_symbol with target login.",
+    "source": "export function callBeforeReturn(): number {\n  return calculate();\n}\nfunction calculate(): number { return 1; }\nexport function choose(flag: boolean): void {\n  if (flag) { left(); } else { right(); }\n  done();\n}\nfunction left(): void {}\nfunction right(): void {}\nfunction done(): void {}\nexport function cleanup(): number {\n  try { return calculate(); } finally { done(); }\n}\nexport function settings(): string {\n  const apiKey = \"CODEATLAS_AUDIT_FAKE_SECRET_DO_NOT_USE_7b21\";\n  return apiKey;\n}\r\n",
+    "functions_to_inspect": [
+      "callBeforeReturn",
+      "choose",
+      "cleanup"
+    ],
+    "grounding_check": "Call validateEvidenceIds(atlas, cfg.nodes.flatMap(node => node.evidence_ids))."
+  },
+  "probe_results": [
+    {
+      "name": "callBeforeReturn",
+      "edges": [
+        [
+          "START: START",
+          null,
+          "RETURN: return calculate();"
+        ],
+        [
+          "RETURN: return calculate();",
+          "return",
+          "END: END"
+        ],
+        [
+          "CALL: calculate()",
+          null,
+          "END: END"
+        ]
+      ],
+      "cfgEvidenceAccepted": 1,
+      "cfgEvidenceRejected": [
+        {
+          "id": "evidence:1c6493857a2d76b2dd988d36269f072a8d07f640ab535fe4ec7ec4eb1c84c94b",
+          "reason": "evidence content hash does not match its symbol"
+        },
+        {
+          "id": "evidence:5293e77887c26ede79d2731f93ec8ba63529470881926a0b1b37ae9f172af438",
+          "reason": "evidence content hash does not match its symbol"
+        }
+      ]
+    },
+    {
+      "name": "choose",
+      "edges": [
+        [
+          "CONDITION: if (flag) { left(); } else { right(); }",
+          "false",
+          "CALL: done()"
+        ],
+        [
+          "START: START",
+          null,
+          "CONDITION: if (flag) { left(); } else { right(); }"
+        ],
+        [
+          "CONDITION: if (flag) { left(); } else { right(); }",
+          "true",
+          "CALL: left()"
+        ],
+        [
+          "CALL: left()",
+          null,
+          "BRANCH: else { right(); }"
+        ],
+        [
+          "CALL: right()",
+          null,
+          "CALL: done()"
+        ],
+        [
+          "CALL: done()",
+          null,
+          "END: END"
+        ],
+        [
+          "BRANCH: else { right(); }",
+          null,
+          "CALL: right()"
+        ]
+      ],
+      "cfgEvidenceAccepted": 1,
+      "cfgEvidenceRejected": [
+        {
+          "id": "evidence:75cdecefc0b6b4b1444aa58feb3492d0f5b349a49c3f3c71936b336ecd43c68d",
+          "reason": "evidence content hash does not match its symbol"
+        },
+        {
+          "id": "evidence:e50a3eb135a4502779d36eb3c494d2eb63f1113d7e0b4e0e907506cc6b739006",
+          "reason": "evidence content hash does not match its symbol"
+        },
+        {
+          "id": "evidence:fc00bbe462c4f4ba7397796041b067a5d343de3677142158065684961da21fe9",
+          "reason": "evidence content hash does not match its symbol"
+        },
+        {
+          "id": "evidence:13894da9f491018b9d75eab151eeb2d4445de421730ab2943ec8dc8d225effed",
+          "reason": "evidence content hash does not match its symbol"
+        },
+        {
+          "id": "evidence:96060daee9b2206528319a291ee68884ba637e3db6dc9b1c98a35e0d59708854",
+          "reason": "evidence content hash does not match its symbol"
+        }
+      ]
+    },
+    {
+      "name": "cleanup",
+      "edges": [
+        [
+          "START: START",
+          null,
+          "TRY: try { return calculate(); } finally { done(); }"
+        ],
+        [
+          "RETURN: return calculate();",
+          "return",
+          "END: END"
+        ],
+        [
+          "CALL: done()",
+          null,
+          "END: END"
+        ],
+        [
+          "FINALLY: finally { done(); }",
+          null,
+          "CALL: done()"
+        ],
+        [
+          "TRY: try { return calculate(); } finally { done(); }",
+          "try",
+          "RETURN: return calculate();"
+        ],
+        [
+          "CALL: calculate()",
+          null,
+          "FINALLY: finally { done(); }"
+        ]
+      ],
+      "cfgEvidenceAccepted": 1,
+      "cfgEvidenceRejected": [
+        {
+          "id": "evidence:61852f1fc56bbd893620e15db061df96f946898253573aef87dd6276a6ca68e3",
+          "reason": "evidence content hash does not match its symbol"
+        },
+        {
+          "id": "evidence:dd3b43996f4c1e99738d827392d9380aa90174f95776ad51c56d0f1a08aa957b",
+          "reason": "evidence content hash does not match its symbol"
+        },
+        {
+          "id": "evidence:4540a3ab3f1daa29df4c66eb9595af050c5bfc870f99a79b29418cc1f1bd2acd",
+          "reason": "evidence content hash does not match its symbol"
+        },
+        {
+          "id": "evidence:6d3b8b38c57d3aaf82319ee4e238581340db43ccc62c098578e5cf58b4e7c3ef",
+          "reason": "evidence content hash does not match its symbol"
+        },
+        {
+          "id": "evidence:4d312807940b23c8e96237a6dea3632cebba8bd2c7ce467b454eed191edbbd68",
+          "reason": "evidence content hash does not match its symbol"
+        }
+      ]
+    },
+    {
+      "bundleEmbeddedSymbols": 63,
+      "atlasSymbols": 63,
+      "htmlBytes": 132781,
+      "atlasBytes": 430524,
+      "containsFakeSecretInAtlas": true,
+      "containsFakeSecretInHTML": true
+    },
+    {
+      "question": "Why did the team choose this architecture?",
+      "answer": "The repository has 5 primary architecture regions. The largest are authentication (4 files), Payments (2 files), Src (2 files), Users (2 files), Admin (1 file). Start with express:POST:02f2dcc10c62e803888cc822f2d596e3425ad84829e87e67ecef83affb978c38:10 in src/app.ts. These are the detected production entrypoints.",
+      "quality": {
+        "score": 1,
+        "passed": true,
+        "checks": {
+          "grounded": true,
+          "primaryScopeOnly": true,
+          "identifiesStartingPoint": true,
+          "architectureSpecific": true,
+          "nonRepetitive": true
+        }
+      }
+    },
+    {
+      "question": "Where should I add a login rate limit?",
+      "answer": "POST login has an evidence-linked execution path through express:POST:02f2dcc10c62e803888cc822f2d596e3425ad84829e87e67ecef83affb978c38:10 → login → login → authenticate → findUserRepository. login in src/app.ts directly connects to login. login in src/auth/controller.ts directly connects to findUserRepository, authenticate, auditRepository. express:POST:02f2dcc10c62e803888cc822f2d596e3425ad84829e87e67ecef83affb978c38:10 in src/app.ts directly connects to login.",
+      "quality": {
+        "score": 0.6,
+        "passed": false,
+        "checks": {
+          "grounded": true,
+          "primaryScopeOnly": true,
+          "identifiesStartingPoint": false,
+          "architectureSpecific": false,
+          "nonRepetitive": true
+        }
+      }
+    },
+    {
+      "question": "Explain the repository architecture and where an AI coding agent should start.",
+      "answer": "The repository has 5 primary architecture regions. The largest are authentication (4 files), Payments (2 files), Src (2 files), Users (2 files), Admin (1 file). Start with express:POST:02f2dcc10c62e803888cc822f2d596e3425ad84829e87e67ecef83affb978c38:10 in src/app.ts. These are the detected production entrypoints.",
+      "quality": {
+        "score": 1,
+        "passed": true,
+        "checks": {
+          "grounded": true,
+          "primaryScopeOnly": true,
+          "identifiesStartingPoint": true,
+          "architectureSpecific": true,
+          "nonRepetitive": true
+        }
+      }
+    },
+    {
+      "question": "What runs before callBeforeReturn returns?",
+      "answer": "callBeforeReturn in src/probes.ts directly connects to calculate.",
+      "quality": {
+        "score": 0.6,
+        "passed": false,
+        "checks": {
+          "grounded": true,
+          "primaryScopeOnly": true,
+          "identifiesStartingPoint": false,
+          "architectureSpecific": false,
+          "nonRepetitive": true
+        }
+      }
+    }
+  ],
+  "default_mcp": {
+    "tool_count": 19,
+    "discovery_bytes": 7661,
+    "tools_with_output_schema": 0,
+    "tools_with_annotations": 0,
+    "duplicate_name": {
+      "query": "login",
+      "qualified_name": "login",
+      "candidate_files": [
+        "src/app.ts",
+        "src/auth/controller.ts"
+      ],
+      "get_symbol_selected_file": "src/app.ts",
+      "reported_ambiguity": false
+    }
+  },
+  "self_build": {
+    "files": 242,
+    "symbols": 6777,
+    "relationships": 24485,
+    "domains": 22,
+    "entrypoints": 4,
+    "control_flows": 300,
+    "total_ms": 19695.35,
+    "html_bytes": 16579985,
+    "atlas_json_bytes": 63649572
+  },
+  "self_mcp_calls": [
+    {
+      "name": "get_repository_overview",
+      "query": null,
+      "ms": 566,
+      "textBytes": 5259,
+      "wireBytes": 11130,
+      "isError": false
+    },
+    {
+      "name": "find_symbol",
+      "query": "buildRepository",
+      "ms": 1294,
+      "textBytes": 7854,
+      "wireBytes": 16618,
+      "isError": false
+    },
+    {
+      "name": "find_symbol",
+      "query": "buildRepository",
+      "ms": 1270,
+      "textBytes": 7854,
+      "wireBytes": 16618,
+      "isError": false
+    },
+    {
+      "name": "find_symbol",
+      "query": "architecture freshness",
+      "ms": 1282,
+      "textBytes": 9213,
+      "wireBytes": 19348,
+      "isError": false
+    }
+  ],
+  "browser_observations": [
+    "Overview and entrypoint navigation worked.",
+    "Initial self-overview showed counts and a horizontally scrolling region dependency diagram.",
+    "An empty details panel occupied space before selecting an item."
+  ]
+}

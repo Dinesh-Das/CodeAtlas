@@ -6,7 +6,10 @@ import { workspacePaths } from "../core/workspace.js";
 import { compareSnapshots, loadSnapshot } from "../git/snapshots.js";
 import type { Atlas } from "../ir/models.js";
 import { loadV2Config } from "../rules/config.js";
-import { architectureService } from "../service/architecture-service.js";
+import {
+  architectureService,
+  type ArchitectureContext,
+} from "../service/architecture-service.js";
 
 export async function loadFreshIr(repositoryPath: string): Promise<Atlas> {
   return (await architectureService.load(repositoryPath)).atlas;
@@ -16,10 +19,31 @@ interface IrRuntime {
   repositoryRoot: string;
   atlas: Atlas;
   fingerprint: string;
+  responseContext: CanonicalResponseContext;
   maxResultNodes: number;
   maxCallDepth: number;
   maxImpactDepth: number;
 }
+
+interface CanonicalResponseContext {
+  schemaVersion: string;
+  snapshotIds: string[];
+  fingerprint: string;
+  generations: ArchitectureContext["status"]["generations"];
+  freshness: {
+    state: "current" | "stale";
+    mode: ArchitectureContext["status"]["freshnessMode"];
+    checked_at: string;
+    cache_hit: boolean;
+    rebuilt: boolean;
+  };
+}
+
+const RESPONSE_CONTEXT = Symbol("codeatlas.canonical-response-context");
+
+type ContextualResult = Record<string, unknown> & {
+  [RESPONSE_CONTEXT]?: CanonicalResponseContext;
+};
 
 interface CursorPayload {
   version: 1;
@@ -43,10 +67,44 @@ async function loadIrRuntime(repositoryPath: string): Promise<IrRuntime> {
     repositoryRoot: context.repositoryRoot,
     atlas: context.atlas,
     fingerprint: context.fingerprint,
+    responseContext: responseContextFrom(context),
     maxResultNodes: config.limits.maxMcpResultNodes,
     maxCallDepth: Math.min(config.limits.maxTraversalDepth, v2Config.analysis.max_call_depth),
     maxImpactDepth: Math.min(config.limits.maxTraversalDepth, v2Config.analysis.max_impact_depth),
   };
+}
+
+function responseContextFrom(context: ArchitectureContext): CanonicalResponseContext {
+  return {
+    schemaVersion: context.atlas.schema_version,
+    snapshotIds: [context.atlas.snapshot.id],
+    fingerprint: context.fingerprint,
+    generations: context.status.generations,
+    freshness: {
+      state: context.status.architectureSynchronized ? "current" : "stale",
+      mode: context.status.freshnessMode,
+      checked_at: context.status.authoritativeCheckedAt,
+      cache_hit: context.cacheHit,
+      rebuilt: context.rebuilt,
+    },
+  };
+}
+
+function withContext<T extends Record<string, unknown>>(
+  value: T,
+  context: CanonicalResponseContext,
+): T {
+  Object.defineProperty(value, RESPONSE_CONTEXT, {
+    configurable: false,
+    enumerable: false,
+    value: context,
+    writable: false,
+  });
+  return value;
+}
+
+function withRuntime<T extends Record<string, unknown>>(value: T, runtime: IrRuntime): T {
+  return withContext(value, runtime.responseContext);
 }
 
 function encodeCursor(payload: CursorPayload): string {
@@ -122,17 +180,27 @@ function validateDepth(depth: number, maximum: number, label: string): void {
 }
 
 function resolve(atlas: Atlas, target: string) {
-  const exact = atlas.symbols.find((symbol) => symbol.id === target || symbol.qualified_name === target);
-  if (exact !== undefined) return exact;
+  const exactId = atlas.symbols.find((symbol) => symbol.id === target);
+  if (exactId !== undefined) return exactId;
+  const exactQualified = atlas.symbols.filter((symbol) => symbol.qualified_name === target);
+  if (exactQualified.length === 1) return exactQualified[0]!;
+  if (exactQualified.length > 1) {
+    const candidates = exactQualified.slice(0, 10).map((symbol) =>
+      `${symbol.id} (${symbol.kind} ${symbol.file ?? "unknown file"})`
+    ).join(", ");
+    throw new CodeAtlasError(
+      `Ambiguous symbol: ${target}. Use an exact ID. Candidates: ${candidates}`,
+    );
+  }
   const needle = target.toLocaleLowerCase();
   const matches = atlas.symbols.filter((symbol) =>
     symbol.name.toLocaleLowerCase().includes(needle) ||
     symbol.qualified_name?.toLocaleLowerCase().includes(needle) ||
     symbol.file?.toLocaleLowerCase().includes(needle),
   );
-  if (matches.length !== 1) throw new Error(matches.length === 0
+  if (matches.length !== 1) throw new CodeAtlasError(matches.length === 0
     ? `Symbol not found: ${target}`
-    : `Ambiguous symbol: ${target}. Use an exact ID or qualified name.`);
+    : `Ambiguous symbol: ${target}. Use an exact ID from find_symbol.`);
   return matches[0]!;
 }
 
@@ -146,12 +214,12 @@ export async function findSymbolIr(repositoryPath: string, query: string, limit:
     .sort((left, right) => right.score - left.score || left.symbol.id.localeCompare(right.symbol.id))
     .map((item) => item.symbol);
   const result = page(matches, { limit, ...(cursor === undefined ? {} : { cursor }) }, `find_symbol:${needle}`, runtime);
-  return {
+  return withRuntime({
     schema_version: atlas.schema_version,
     derivation: "canonical_ir",
     results: result.items,
     pagination: result.pagination,
-  };
+  }, runtime);
 }
 
 export async function callersIr(repositoryPath: string, target: string, limit: number, cursor?: string) {
@@ -164,13 +232,13 @@ export async function callersIr(repositoryPath: string, target: string, limit: n
   const result = page(matches, { limit, ...(cursor === undefined ? {} : { cursor }) }, `callers:${symbol.id}`, runtime);
   const relationships = result.items;
   const ids = new Set(relationships.map((edge) => edge.source));
-  return {
+  return withRuntime({
     symbol,
     direct_callers: relationships.length,
     callers: atlas.symbols.filter((item) => ids.has(item.id)),
     relationships,
     pagination: result.pagination,
-  };
+  }, runtime);
 }
 
 export async function symbolIr(repositoryPath: string, target: string) {
@@ -180,12 +248,12 @@ export async function symbolIr(repositoryPath: string, target: string) {
   const evidenceIds = new Set(symbol.evidence_ids);
   const relationships = atlas.relationships.filter((edge) => edge.source === symbol.id || edge.target === symbol.id);
   const result = page(relationships, { limit: runtime.maxResultNodes }, `symbol:${symbol.id}:relationships`, runtime);
-  return {
+  return withRuntime({
     symbol,
     relationships: result.items,
     pagination: result.pagination,
     evidence: atlas.evidence.filter((item) => evidenceIds.has(item.id)),
-  };
+  }, runtime);
 }
 
 export async function repositoryOverviewIr(repositoryPath: string) {
@@ -195,7 +263,7 @@ export async function repositoryOverviewIr(repositoryPath: string) {
   const entrypointIds = new Set(atlas.entrypoint_ids);
   const entrypointSymbols = atlas.symbols.filter((symbol) => entrypointIds.has(symbol.id));
   const entrypoints = page(entrypointSymbols, { limit: runtime.maxResultNodes }, "overview:entrypoints", runtime);
-  return {
+  return withRuntime({
     schema_version: atlas.schema_version,
     project: atlas.project,
     snapshot: atlas.snapshot,
@@ -205,7 +273,7 @@ export async function repositoryOverviewIr(repositoryPath: string) {
     })),
     entrypoints: entrypoints.items,
     pagination: { domains: domains.pagination, entrypoints: entrypoints.pagination },
-  };
+  }, runtime);
 }
 
 export async function neighborhoodIr(
@@ -229,13 +297,13 @@ export async function neighborhoodIr(
   );
   const relationships = result.items;
   const ids = new Set(relationships.map((edge) => direction === "outgoing" ? edge.target : edge.source));
-  return {
+  return withRuntime({
     symbol,
     direction,
     relationships,
     symbols: atlas.symbols.filter((item) => ids.has(item.id)),
     pagination: result.pagination,
-  };
+  }, runtime);
 }
 
 export async function tracePathIr(repositoryPath: string, from: string, to: string, depth: number) {
@@ -253,10 +321,16 @@ export async function tracePathIr(repositoryPath: string, from: string, to: stri
   }
   const queue = [{ id: source.id, symbols: [source.id], relationships: [] as string[] }];
   const visited = new Set([source.id]);
+  let truncated = false;
   while (queue.length > 0) {
     const current = queue.shift()!;
-    if (current.id === target.id) return { source, target, path: current };
-    if (current.relationships.length >= depth) continue;
+    if (current.id === target.id) {
+      return withRuntime({ source, target, path: current, depth_limit: depth, truncated }, runtime);
+    }
+    if (current.relationships.length >= depth) {
+      if ((outgoing.get(current.id) ?? []).some((edge) => !visited.has(edge.target))) truncated = true;
+      continue;
+    }
     for (const edge of outgoing.get(current.id) ?? []) {
       if (visited.has(edge.target)) continue;
       visited.add(edge.target);
@@ -267,7 +341,7 @@ export async function tracePathIr(repositoryPath: string, from: string, to: stri
       });
     }
   }
-  return { source, target, path: null };
+  return withRuntime({ source, target, path: null, depth_limit: depth, truncated }, runtime);
 }
 
 export async function impactIr(repositoryPath: string, target: string, depth: number, limit: number) {
@@ -278,37 +352,57 @@ export async function impactIr(repositoryPath: string, target: string, depth: nu
   }
   const atlas = runtime.atlas;
   const symbol = resolve(atlas, target);
-  return {
+  const analysis = describeImpact(atlas, symbol.id, { depth, limit });
+  const truncated = [
+    analysis.paths,
+    analysis.dependency_paths,
+    analysis.potential_paths ?? [],
+    analysis.potential_dependency_paths ?? [],
+  ].some((paths) => paths.length >= limit);
+  return withRuntime({
     symbol,
-    ...describeImpact(atlas, symbol.id, { depth, limit }),
-  };
+    ...analysis,
+    query: { depth_limit: depth, result_limit: limit, truncated },
+  }, runtime);
 }
 
 export async function flowIr(repositoryPath: string, target: string) {
-  const atlas = (await loadIrRuntime(repositoryPath)).atlas;
+  const runtime = await loadIrRuntime(repositoryPath);
+  const atlas = runtime.atlas;
   const symbol = resolve(atlas, target);
-  return { flow: atlas.flows.find((flow) => flow.entrypoint_id === symbol.id || flow.id === target) ?? null };
+  return withRuntime(
+    { flow: atlas.flows.find((flow) => flow.entrypoint_id === symbol.id || flow.id === target) ?? null },
+    runtime,
+  );
 }
 
 export async function controlFlowIr(repositoryPath: string, target: string) {
-  const atlas = (await loadIrRuntime(repositoryPath)).atlas;
+  const runtime = await loadIrRuntime(repositoryPath);
+  const atlas = runtime.atlas;
   const symbol = resolve(atlas, target);
-  return { symbol, control_flow: atlas.control_flows.find((flow) => flow.symbol_id === symbol.id) ?? null };
+  return withRuntime(
+    { symbol, control_flow: atlas.control_flows.find((flow) => flow.symbol_id === symbol.id) ?? null },
+    runtime,
+  );
 }
 
 export async function evidenceIr(repositoryPath: string, target: string) {
-  const atlas = (await loadIrRuntime(repositoryPath)).atlas;
+  const runtime = await loadIrRuntime(repositoryPath);
+  const atlas = runtime.atlas;
   const direct = atlas.evidence.find((evidence) => evidence.id === target);
-  if (direct !== undefined) return { evidence: [direct] };
+  if (direct !== undefined) return withRuntime({ evidence: [direct] }, runtime);
   const symbol = resolve(atlas, target);
   const ids = new Set(symbol.evidence_ids);
-  return { symbol, evidence: atlas.evidence.filter((evidence) => ids.has(evidence.id)) };
+  return withRuntime(
+    { symbol, evidence: atlas.evidence.filter((evidence) => ids.has(evidence.id)) },
+    runtime,
+  );
 }
 
 export async function domainsIr(repositoryPath: string, limit = 100, cursor?: string) {
   const runtime = await loadIrRuntime(repositoryPath);
   const result = page(runtime.atlas.domains, { limit, ...(cursor === undefined ? {} : { cursor }) }, "domains", runtime);
-  return { domains: result.items, pagination: result.pagination };
+  return withRuntime({ domains: result.items, pagination: result.pagination }, runtime);
 }
 
 export async function domainIr(repositoryPath: string, target: string, limit = 100, cursor?: string) {
@@ -324,7 +418,7 @@ export async function domainIr(repositoryPath: string, target: string, limit = 1
     `domain:${domain.id}`,
     runtime,
   );
-  return { domain, symbols: result.items, pagination: result.pagination };
+  return withRuntime({ domain, symbols: result.items, pagination: result.pagination }, runtime);
 }
 
 export async function entrypointsIr(repositoryPath: string, limit = 100, cursor?: string) {
@@ -334,23 +428,23 @@ export async function entrypointsIr(repositoryPath: string, limit = 100, cursor?
   const entries = atlas.symbols.filter((symbol) => ids.has(symbol.id));
   const result = page(entries, { limit, ...(cursor === undefined ? {} : { cursor }) }, "entrypoints", runtime);
   const visibleIds = new Set(result.items.map((symbol) => symbol.id));
-  return {
+  return withRuntime({
     entrypoints: result.items,
     flows: atlas.flows.filter((flow) => visibleIds.has(flow.entrypoint_id)),
     pagination: result.pagination,
-  };
+  }, runtime);
 }
 
 export async function changesIr(repositoryPath: string, limit = 100, cursor?: string) {
   const runtime = await loadIrRuntime(repositoryPath);
   const result = page(runtime.atlas.git_changes, { limit, ...(cursor === undefined ? {} : { cursor }) }, "git_changes", runtime);
-  return { changes: result.items, pagination: result.pagination };
+  return withRuntime({ changes: result.items, pagination: result.pagination }, runtime);
 }
 
 export async function rulesIr(repositoryPath: string, limit = 100, cursor?: string) {
   const runtime = await loadIrRuntime(repositoryPath);
   const rules = page(runtime.atlas.rules, { limit, ...(cursor === undefined ? {} : { cursor }) }, "rules", runtime);
-  return { rules: rules.items, pagination: rules.pagination };
+  return withRuntime({ rules: rules.items, pagination: rules.pagination }, runtime);
 }
 
 export async function ruleViolationsIr(repositoryPath: string, limit = 100, cursor?: string) {
@@ -361,13 +455,13 @@ export async function ruleViolationsIr(repositoryPath: string, limit = 100, curs
     "rule_violations",
     runtime,
   );
-  return { violations: violations.items, pagination: violations.pagination };
+  return withRuntime({ violations: violations.items, pagination: violations.pagination }, runtime);
 }
 
 export async function reviewIr(repositoryPath: string, limit = 100, cursor?: string) {
   const runtime = await loadIrRuntime(repositoryPath);
   const findings = page(runtime.atlas.review_findings, { limit, ...(cursor === undefined ? {} : { cursor }) }, "review_findings", runtime);
-  return { findings: findings.items, pagination: findings.pagination };
+  return withRuntime({ findings: findings.items, pagination: findings.pagination }, runtime);
 }
 
 export const SNAPSHOT_SECTIONS = [
@@ -410,12 +504,16 @@ export async function snapshotIr(
     ),
   };
   if (section === "summary") {
-    return {
+    return withContext({
       snapshot,
       section,
       items: [],
       pagination: { limit: 0, returned: 0, total: 0, cursor: null, has_more: false },
-    };
+    }, {
+      ...runtime.responseContext,
+      schemaVersion: atlas.schema_version,
+      snapshotIds: [atlas.snapshot.id],
+    });
   }
   const snapshotRuntime = {
     ...runtime,
@@ -433,18 +531,92 @@ export async function snapshotIr(
     `snapshot:${atlas.snapshot.id}:${section}`,
     snapshotRuntime,
   );
-  return { snapshot, section, items: result.items, pagination: result.pagination };
+  return withContext(
+    { snapshot, section, items: result.items, pagination: result.pagination },
+    {
+      ...runtime.responseContext,
+      schemaVersion: atlas.schema_version,
+      snapshotIds: [atlas.snapshot.id],
+    },
+  );
 }
 
 export async function compareSnapshotsIr(repositoryPath: string, oldId: string, newId: string) {
   const context = await architectureService.load(repositoryPath);
-  return { diff: await compareSnapshots(workspacePaths(context.repositoryRoot).snapshots, oldId, newId) };
+  return withContext(
+    { diff: await compareSnapshots(workspacePaths(context.repositoryRoot).snapshots, oldId, newId) },
+    {
+      ...responseContextFrom(context),
+      snapshotIds: [oldId, newId],
+    },
+  );
 }
 
-export function irResult(value: Record<string, unknown>) {
+interface CoverageEnvelope {
+  bounded: boolean;
+  truncated: boolean;
+  limitations: string[];
+}
+
+function coverageEnvelope(value: Record<string, unknown>): CoverageEnvelope {
+  let bounded = false;
+  let truncated = false;
+  let structuredControlFlow = false;
+  const unsupportedConstructs = new Set<string>();
+  const seen = new Set<object>();
+
+  const visit = (candidate: unknown, key?: string): void => {
+    if (candidate === null || typeof candidate !== "object" || seen.has(candidate)) return;
+    seen.add(candidate);
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) visit(item);
+      return;
+    }
+    const record = candidate as Record<string, unknown>;
+    if (
+      key === "pagination" || "has_more" in record || "truncated" in record ||
+      "depth_limit" in record || "result_limit" in record
+    ) bounded = true;
+    if (record.has_more === true || record.truncated === true) truncated = true;
+    if (record.analysis_kind === "structured_ast_approximation") structuredControlFlow = true;
+    if (Array.isArray(record.unsupported_constructs)) {
+      for (const construct of record.unsupported_constructs) {
+        if (typeof construct === "string") unsupportedConstructs.add(construct);
+      }
+    }
+    for (const [childKey, child] of Object.entries(record)) visit(child, childKey);
+  };
+  visit(value);
+
+  const limitations: string[] = [];
+  if (truncated) limitations.push("The response is partial; follow pagination cursors or narrow the query.");
+  if (structuredControlFlow) {
+    limitations.push("Control flow is a structured AST approximation, not compiler-level path analysis.");
+  }
+  if (unsupportedConstructs.size > 0) {
+    limitations.push(`Unsupported control-flow constructs: ${[...unsupportedConstructs].sort().join(", ")}.`);
+  }
+  return { bounded, truncated, limitations };
+}
+
+export function irResult(value: ContextualResult) {
+  const context = value[RESPONSE_CONTEXT];
   const enriched = {
     derivation: "canonical_ir",
     ...value,
+    codeatlas: {
+      schema_version: context?.schemaVersion ?? null,
+      snapshot_ids: context?.snapshotIds ?? [],
+      fingerprint: context?.fingerprint ?? null,
+      generations: context?.generations ?? null,
+      freshness: context?.freshness ?? null,
+      content_trust: {
+        indexing: "local_only",
+        repository_content: "untrusted",
+        answer_policy: "evidence_only",
+      },
+      coverage: coverageEnvelope(value),
+    },
     next_actions: [
       "Use exact stable IDs from this response in follow-up MCP calls.",
       "Use get_evidence for source-backed details and analyze_impact for blast-radius paths.",

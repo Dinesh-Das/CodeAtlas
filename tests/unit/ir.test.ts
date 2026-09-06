@@ -5,6 +5,7 @@ import { renderAtlasHtml } from "../../src/export/html.js";
 import { renderAtlasMermaid } from "../../src/export/mermaid.js";
 import { createEvidenceId } from "../../src/ir/evidence.js";
 import { validateEvidenceIds } from "../../src/ir/evidence-validation.js";
+import { loadCompatibleAtlasSnapshot } from "../../src/ir/compatibility.js";
 import { ATLAS_SCHEMA_VERSION, type Atlas } from "../../src/ir/models.js";
 import { semanticAtlasJson } from "../../src/ir/serialization.js";
 import { validateAtlas } from "../../src/ir/validation.js";
@@ -29,7 +30,8 @@ function fixture(): Atlas {
     evidence: [{
       id: evidenceId, file: "src/a.ts", start_line: 1, start_column: 0, end_line: 1,
       end_column: 10, symbol_id: "function:a", relationship_id: null, kind: "source",
-      excerpt: "function a() {}", content_hash: null,
+      excerpt: "function a() {}", excerpt_status: "complete", content_hash: null,
+      file_content_hash: null, range_content_hash: null,
     }],
     domains: [], entrypoint_ids: [], flows: [], control_flows: [],
     impact: { forward: {}, reverse: {}, scores: [] }, git_changes: [], rules: [],
@@ -54,6 +56,38 @@ describe("canonical CodeAtlas IR", () => {
     const second = fixture();
     second.snapshot.created_at = "2030-01-01T00:00:00.000Z";
     expect(semanticAtlasJson(first)).toBe(semanticAtlasJson(second));
+  });
+
+  it("loads 1.0 snapshots through the explicit compatibility upgrade", () => {
+    const legacy = structuredClone(fixture()) as unknown as Record<string, unknown>;
+    legacy.schema_version = "1.0";
+    const legacyEvidence = (legacy.evidence as Array<Record<string, unknown>>)[0]!;
+    delete legacyEvidence.excerpt_status;
+    delete legacyEvidence.file_content_hash;
+    delete legacyEvidence.range_content_hash;
+    legacy.control_flows = [{
+      id: "cfg:legacy",
+      symbol_id: "function:a",
+      nodes: [
+        { id: "start", kind: "START", label: "START", evidence_ids: [legacyEvidence.id] },
+        { id: "end", kind: "END", label: "END", evidence_ids: [legacyEvidence.id] },
+      ],
+      edges: [{ id: "edge", source: "start", target: "end", label: null }],
+      truncated: false,
+    }];
+
+    const upgraded = loadCompatibleAtlasSnapshot(legacy);
+    expect(upgraded.schema_version).toBe(ATLAS_SCHEMA_VERSION);
+    expect(upgraded.evidence[0]).toMatchObject({
+      excerpt_status: "complete",
+      file_content_hash: null,
+      range_content_hash: null,
+    });
+    expect(upgraded.control_flows[0]).toMatchObject({
+      analysis_kind: "source_order_legacy",
+      supported_constructs: [],
+      unsupported_constructs: ["legacy_control_flow_semantics"],
+    });
   });
 
   it("rejects evidence whose snapshot location cannot be grounded", () => {
@@ -182,7 +216,8 @@ describe("canonical CodeAtlas IR", () => {
       id: symbol.evidence_ids[0]!, file: symbol.file!, start_line: symbol.location!.start_line,
       start_column: 0, end_line: symbol.location!.end_line, end_column: 20,
       symbol_id: symbol.id, relationship_id: null, kind: "source" as const,
-      excerpt: `function ${symbol.name}() {}`, content_hash: null,
+      excerpt: `function ${symbol.name}() {}`, excerpt_status: "complete" as const,
+      content_hash: null, file_content_hash: null, range_content_hash: null,
     }));
 
     const answer = answerFromAtlas(atlas, "How does an AI agent get MCP project context?");

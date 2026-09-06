@@ -396,6 +396,11 @@ The previous 33-tool API remains available for existing clients by setting
 canonical tools to reduce tool-selection ambiguity and context overhead.
 
 Canonical-IR collection tools use independent opaque cursors and serialized-size limits.
+Every canonical tool advertises a validated output schema and read-only, local-only MCP
+annotations. Its `codeatlas` envelope records the IR schema and source snapshot IDs, fingerprint,
+index generations, freshness state, repository-content trust policy, and whether the query is
+bounded or partial. Symbol names resolve only when unique; use the stable ID returned by
+`find_symbol` whenever a name has multiple candidates.
 `get_snapshot` returns metadata by default; pass a `section` such as `symbols`, `relationships`,
 `evidence`, or `git_changes` with `limit` and `cursor` to retrieve a bounded snapshot section.
 Use `get_git_changes` for paginated change records alongside `review_changes` findings.
@@ -425,6 +430,11 @@ Each adapter emits 1-based source lines, 0-based columns, deterministic IDs, AST
 confidence, and evidence metadata. Python exports inferred from public-name conventions are
 explicitly marked `heuristic` with lower confidence; `__all__` exports are deterministic AST
 facts.
+
+The canonical IR schema is currently `1.1`. Evidence distinguishes file and exact-range hashes
+and labels excerpts as complete, truncated, redacted, or unavailable. Control-flow graphs declare
+their analysis kind and supported and unsupported constructs. Persistent `1.0` snapshots are
+upgraded in memory when read; current build artifacts are regenerated under the active schema.
 
 ## Supported frameworks
 

@@ -183,6 +183,12 @@ export async function loadAtlasFromDatabase(input: {
      FROM edges ORDER BY id`,
   ).all() as EdgeRow[];
   const nodeIds = new Set(nodeRows.map((row) => row.id));
+  const fileContentHashes = new Map<string, string>();
+  for (const row of nodeRows) {
+    if (row.file_path !== null && row.content_hash !== null) {
+      fileContentHashes.set(row.file_path, row.content_hash);
+    }
+  }
   const excerptReader = new EvidenceExcerptReader(input.repositoryRoot);
   const evidence = new Map<string, AtlasEvidence>();
 
@@ -203,6 +209,7 @@ export async function loadAtlasFromDatabase(input: {
         symbolId: row.id,
       });
       evidenceIds.push(id);
+      const excerpt = await excerptReader.read(row.file_path, row.start_line, endLine);
       evidence.set(id, {
         id,
         file: row.file_path,
@@ -213,8 +220,11 @@ export async function loadAtlasFromDatabase(input: {
         symbol_id: row.id,
         relationship_id: null,
         kind: evidenceKind(provenance),
-        excerpt: await excerptReader.excerpt(row.file_path, row.start_line, endLine),
+        excerpt: excerpt.excerpt,
+        excerpt_status: excerpt.status,
         content_hash: row.content_hash,
+        file_content_hash: row.content_hash,
+        range_content_hash: null,
       });
     }
     symbols.push({
@@ -259,6 +269,7 @@ export async function loadAtlasFromDatabase(input: {
         relationshipId: row.id,
       });
       evidenceIds.push(id);
+      const excerpt = await excerptReader.read(row.file_path, line, line);
       evidence.set(id, {
         id,
         file: row.file_path,
@@ -269,8 +280,11 @@ export async function loadAtlasFromDatabase(input: {
         symbol_id: null,
         relationship_id: row.id,
         kind: evidenceKind(provenance),
-        excerpt: await excerptReader.excerpt(row.file_path, line, line),
+        excerpt: excerpt.excerpt,
+        excerpt_status: excerpt.status,
         content_hash: null,
+        file_content_hash: fileContentHashes.get(row.file_path) ?? null,
+        range_content_hash: null,
       });
     }
     relationships.push({

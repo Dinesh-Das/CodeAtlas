@@ -1,6 +1,6 @@
 import type { ArchitecturalScope } from "../analysis/scope.js";
 
-export const ATLAS_SCHEMA_VERSION = "1.0" as const;
+export const ATLAS_SCHEMA_VERSION = "1.1" as const;
 
 export const ATLAS_PROVENANCE = [
   "AST",
@@ -76,7 +76,13 @@ export interface AtlasEvidence {
   relationship_id: string | null;
   kind: "source" | "config" | "git" | "documentation";
   excerpt: string | null;
+  excerpt_status: "complete" | "truncated" | "redacted" | "unavailable";
+  /** Compatibility hash. Existing snapshots use the indexed file hash here. */
   content_hash: string | null;
+  /** Hash of the indexed file that contained this evidence, when available. */
+  file_content_hash: string | null;
+  /** Hash of the exact source range, when the producer can compute it. */
+  range_content_hash: string | null;
 }
 
 export interface AtlasDomain {
@@ -163,6 +169,10 @@ export interface AtlasControlFlow {
   nodes: ControlFlowNode[];
   edges: ControlFlowEdge[];
   truncated: boolean;
+  /** Describes the semantic strength of this graph for consumers and diagrams. */
+  analysis_kind: "structured_ast_approximation" | "source_order_legacy";
+  supported_constructs: string[];
+  unsupported_constructs: string[];
 }
 
 export interface ImpactPath {

@@ -44,5 +44,18 @@ describe("evidence excerpt boundaries", () => {
     await expect(
       new EvidenceExcerptReader(repositoryRoot).excerpt("alias/value.ts", 1, 1),
     ).resolves.toBe("export const value = 1;");
+    await expect(
+      new EvidenceExcerptReader(repositoryRoot).read("alias/value.ts", 1, 1),
+    ).resolves.toEqual({ excerpt: "export const value = 1;", status: "complete" });
+  });
+
+  it("labels bounded excerpts as truncated", async () => {
+    const repositoryRoot = await mkdtemp(path.join(os.tmpdir(), "codeatlas-evidence-"));
+    roots.push(repositoryRoot);
+    await writeFile(path.join(repositoryRoot, "large.ts"), "one\ntwo\nthree\nfour\nfive\n", "utf8");
+
+    await expect(
+      new EvidenceExcerptReader(repositoryRoot, 2).read("large.ts", 1, 5),
+    ).resolves.toEqual({ excerpt: "one\ntwo", status: "truncated" });
   });
 });

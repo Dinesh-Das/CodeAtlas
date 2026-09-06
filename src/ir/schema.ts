@@ -52,7 +52,38 @@ export const atlasEvidenceSchema = z.object({
   relationship_id: z.string().nullable(),
   kind: z.enum(["source", "config", "git", "documentation"]),
   excerpt: z.string().nullable(),
+  excerpt_status: z.enum(["complete", "truncated", "redacted", "unavailable"]),
   content_hash: z.string().nullable(),
+  file_content_hash: z.string().nullable(),
+  range_content_hash: z.string().nullable(),
+}).strict();
+
+const controlFlowNodeSchema = z.object({
+  id: z.string().min(1),
+  kind: z.enum([
+    "START", "STATEMENT", "CALL", "CONDITION", "BRANCH", "LOOP",
+    "TRY", "CATCH", "FINALLY", "RETURN", "RAISE", "END",
+  ]),
+  label: z.string(),
+  evidence_ids: z.array(z.string()),
+}).strict();
+
+const controlFlowEdgeSchema = z.object({
+  id: z.string().min(1),
+  source: z.string().min(1),
+  target: z.string().min(1),
+  label: z.string().nullable(),
+}).strict();
+
+export const atlasControlFlowSchema = z.object({
+  id: z.string().min(1),
+  symbol_id: z.string().min(1),
+  nodes: z.array(controlFlowNodeSchema),
+  edges: z.array(controlFlowEdgeSchema),
+  truncated: z.boolean(),
+  analysis_kind: z.enum(["structured_ast_approximation", "source_order_legacy"]),
+  supported_constructs: z.array(z.string()),
+  unsupported_constructs: z.array(z.string()),
 }).strict();
 
 export const atlasSchema = z.object({
@@ -77,7 +108,7 @@ export const atlasSchema = z.object({
   domains: z.array(z.unknown()),
   entrypoint_ids: z.array(z.string()),
   flows: z.array(z.unknown()),
-  control_flows: z.array(z.unknown()),
+  control_flows: z.array(atlasControlFlowSchema),
   impact: z.object({
     forward: z.record(z.string(), z.array(z.string())),
     reverse: z.record(z.string(), z.array(z.string())),

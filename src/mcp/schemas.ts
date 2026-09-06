@@ -140,6 +140,53 @@ export const answerPacketSchema = z
 
 export type AnswerPacket = z.infer<typeof answerPacketSchema>;
 
+export const canonicalResultSchema = z
+  .object({
+    derivation: z.literal("canonical_ir"),
+    codeatlas: z
+      .object({
+        schema_version: z.string().min(1).nullable(),
+        snapshot_ids: z.array(z.string().min(1)),
+        fingerprint: z.string().regex(/^[a-f0-9]{64}$/u).nullable(),
+        generations: z
+          .object({
+            structural: z.number().int().nonnegative(),
+            semantic: z.number().int().nonnegative(),
+            search: z.number().int().nonnegative(),
+            architecture: z.number().int().nonnegative(),
+          })
+          .strict()
+          .nullable(),
+        freshness: z
+          .object({
+            state: z.enum(["current", "stale"]),
+            mode: z.enum(["authoritative", "watch_cache"]),
+            checked_at: z.string().datetime(),
+            cache_hit: z.boolean(),
+            rebuilt: z.boolean(),
+          })
+          .strict()
+          .nullable(),
+        content_trust: z
+          .object({
+            indexing: z.literal("local_only"),
+            repository_content: z.literal("untrusted"),
+            answer_policy: z.literal("evidence_only"),
+          })
+          .strict(),
+        coverage: z
+          .object({
+            bounded: z.boolean(),
+            truncated: z.boolean(),
+            limitations: z.array(z.string()),
+          })
+          .strict(),
+      })
+      .strict(),
+    next_actions: z.array(z.string()),
+  })
+  .passthrough();
+
 export const paginationInputShape = {
   cursor: z.string().nullable().optional().default(null),
   limit: z.number().int().positive().max(10_000).optional().default(50),

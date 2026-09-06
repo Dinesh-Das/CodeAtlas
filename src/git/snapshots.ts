@@ -1,9 +1,9 @@
 import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { writeTextAtomic } from "../core/workspace.js";
+import { loadCompatibleAtlasSnapshot } from "../ir/compatibility.js";
 import type { Atlas } from "../ir/models.js";
 import { serializeAtlas } from "../ir/serialization.js";
-import { assertValidAtlas } from "../ir/validation.js";
 import { compareArchitecture, type ArchitectureDiff } from "./architecture-diff.js";
 
 function safeSnapshotId(id: string): string {
@@ -73,9 +73,7 @@ export async function loadSnapshot(snapshotsDirectory: string, id: string): Prom
     path.join(snapshotsDirectory, safeSnapshotId(id), "atlas.json"),
     "utf8",
   );
-  const atlas = JSON.parse(contents) as Atlas;
-  assertValidAtlas(atlas);
-  return atlas;
+  return loadCompatibleAtlasSnapshot(JSON.parse(contents) as unknown);
 }
 
 export async function compareSnapshots(

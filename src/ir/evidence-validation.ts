@@ -28,7 +28,10 @@ function snapshotContainsFile(atlas: Atlas, file: string): boolean {
 export function evidenceRejectionReason(atlas: Atlas, evidence: AtlasEvidence): string | null {
   if (evidence.file.trim().length === 0) return "evidence has no file path";
   if (!validRange(evidence)) return "evidence has an invalid line or column range";
-  if (evidence.excerpt === null) return "evidence source could not be resolved in the indexed snapshot";
+  if (evidence.excerpt === null || evidence.excerpt_status === "unavailable") {
+    return "evidence source could not be resolved in the indexed snapshot";
+  }
+  if (evidence.excerpt_status === "redacted") return "evidence source is redacted";
   if (!snapshotContainsFile(atlas, evidence.file)) return "evidence file is not present in the indexed snapshot";
 
   if (evidence.symbol_id !== null) {
@@ -38,10 +41,11 @@ export function evidenceRejectionReason(atlas: Atlas, evidence: AtlasEvidence): 
     if (symbol.location !== null && !overlapsLocation(evidence, symbol.location)) {
       return "evidence line range does not overlap its symbol";
     }
+    const evidenceFileHash = evidence.file_content_hash ?? evidence.content_hash;
     if (
-      evidence.content_hash !== null &&
+      evidenceFileHash !== null &&
       symbol.content_hash !== null &&
-      evidence.content_hash !== symbol.content_hash
+      evidenceFileHash !== symbol.content_hash
     ) {
       return "evidence content hash does not match its symbol";
     }
@@ -51,6 +55,13 @@ export function evidenceRejectionReason(atlas: Atlas, evidence: AtlasEvidence): 
     const relationship = atlas.relationships.find((item) => item.id === evidence.relationship_id);
     if (relationship === undefined) return "evidence references an unknown relationship";
     if (!relationship.evidence_ids.includes(evidence.id)) return "relationship does not reference the evidence record";
+    const source = atlas.symbols.find((item) => item.id === relationship.source);
+    if (
+      source?.file === evidence.file && source.content_hash !== null &&
+      evidence.file_content_hash !== null && source.content_hash !== evidence.file_content_hash
+    ) {
+      return "evidence content hash does not match its relationship source";
+    }
   }
 
   return null;

@@ -4,6 +4,11 @@ import { sha256 } from "../core/hashing.js";
 import { resolveExistingPathInside } from "../core/paths.js";
 import type { AtlasEvidence } from "./models.js";
 
+export interface EvidenceExcerpt {
+  excerpt: string | null;
+  status: AtlasEvidence["excerpt_status"];
+}
+
 export function createEvidenceId(input: {
   file: string;
   startLine: number;
@@ -33,7 +38,7 @@ export class EvidenceExcerptReader {
     private readonly maxBytes = 1_000,
   ) {}
 
-  async excerpt(file: string, startLine: number, endLine: number): Promise<string | null> {
+  async read(file: string, startLine: number, endLine: number): Promise<EvidenceExcerpt> {
     let lines = this.linesByFile.get(file);
     if (lines === undefined) {
       const absolutePath = await resolveExistingPathInside(
@@ -42,7 +47,7 @@ export class EvidenceExcerptReader {
       );
       if (absolutePath === null) {
         this.linesByFile.set(file, null);
-        return null;
+        return { excerpt: null, status: "unavailable" };
       }
       try {
         lines = (await readFile(absolutePath, "utf8")).split(/\r?\n/u);
@@ -51,12 +56,22 @@ export class EvidenceExcerptReader {
       }
       this.linesByFile.set(file, lines);
     }
-    if (lines === null) return null;
+    if (lines === null) return { excerpt: null, status: "unavailable" };
     const first = Math.max(0, startLine - 1);
     const last = Math.min(lines.length, Math.max(startLine, endLine), first + this.maxLines);
     const value = lines.slice(first, last).join("\n").trimEnd();
-    if (Buffer.byteLength(value, "utf8") <= this.maxBytes) return value;
-    return `${Buffer.from(value, "utf8").subarray(0, this.maxBytes).toString("utf8")}…`;
+    const lineTruncated = last < Math.min(lines.length, Math.max(startLine, endLine));
+    if (Buffer.byteLength(value, "utf8") <= this.maxBytes) {
+      return { excerpt: value, status: lineTruncated ? "truncated" : "complete" };
+    }
+    return {
+      excerpt: `${Buffer.from(value, "utf8").subarray(0, this.maxBytes).toString("utf8")}…`,
+      status: "truncated",
+    };
+  }
+
+  async excerpt(file: string, startLine: number, endLine: number): Promise<string | null> {
+    return (await this.read(file, startLine, endLine)).excerpt;
   }
 }
 

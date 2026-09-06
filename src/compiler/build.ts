@@ -299,6 +299,7 @@ async function mapGitChanges(
       });
       evidenceIds.push(id);
       if (!atlas.evidence.some((item) => item.id === id)) {
+        const excerpt = await excerptReader.read(change.path, range.start_line, range.end_line);
         atlas.evidence.push({
           id,
           file: change.path,
@@ -309,8 +310,11 @@ async function mapGitChanges(
           symbol_id: null,
           relationship_id: null,
           kind: "git",
-          excerpt: await excerptReader.excerpt(change.path, range.start_line, range.end_line),
+          excerpt: excerpt.excerpt,
+          excerpt_status: excerpt.status,
           content_hash: null,
+          file_content_hash: currentCandidates.find((symbol) => symbol.content_hash !== null)?.content_hash ?? null,
+          range_content_hash: null,
         });
       }
     }

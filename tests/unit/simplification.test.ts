@@ -151,7 +151,7 @@ describe("large graph simplification", () => {
         { id: "rel:1", source: endpoint.id, target: helper.id, type: "CALLS", confidence: 1, provenance: "STATIC_ANALYSIS", fact_class: "RESOLVED", evidence_ids: [], metadata: {} },
         { id: "rel:2", source: leaf.id, target: helper.id, type: "CALLS", confidence: 1, provenance: "STATIC_ANALYSIS", fact_class: "RESOLVED", evidence_ids: [], metadata: {} },
       ],
-      evidence: [{ id: "evidence:route", file: "src/auth/routes.ts", start_line: 4, start_column: 0, end_line: 4, end_column: 30, symbol_id: endpoint.id, relationship_id: null, kind: "source", excerpt: 'app.post("/login", login);', content_hash: null }],
+      evidence: [{ id: "evidence:route", file: "src/auth/routes.ts", start_line: 4, start_column: 0, end_line: 4, end_column: 30, symbol_id: endpoint.id, relationship_id: null, kind: "source", excerpt: 'app.post("/login", login);', excerpt_status: "complete", content_hash: null, file_content_hash: null, range_content_hash: null }],
       domains: [
         { id: "domain:auth", name: "Authentication", member_ids: [endpoint.id, leaf.id], file_ids: [], entrypoint_ids: [endpoint.id], internal_relationship_ids: [], outgoing_relationship_ids: ["rel:1"], confidence: 1, label_provenance: "STATIC_ANALYSIS", evidence_ids: [] },
         { id: "domain:shared", name: "Shared Utilities", member_ids: [helper.id], file_ids: [], entrypoint_ids: [], internal_relationship_ids: [], outgoing_relationship_ids: [], confidence: 1, label_provenance: "STATIC_ANALYSIS", evidence_ids: [] },

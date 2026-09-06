@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { initializeRepository } from "../../src/cli/init.js";
 import { getStatus } from "../../src/cli/status.js";
 import { workspacePaths } from "../../src/core/workspace.js";
-import { answerPacketSchema } from "../../src/mcp/schemas.js";
+import { answerPacketSchema, canonicalResultSchema } from "../../src/mcp/schemas.js";
 import { openDatabase } from "../../src/storage/database.js";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
 
@@ -179,6 +179,15 @@ describe("MCP stdio contract", () => {
             "review_changes",
             "trace_path",
           ]);
+          for (const tool of defaultTools.tools) {
+            expect(tool.outputSchema).toHaveProperty("properties.codeatlas");
+            expect(tool.annotations).toMatchObject({
+              readOnlyHint: true,
+              destructiveHint: false,
+              idempotentHint: true,
+              openWorldHint: false,
+            });
+          }
         } finally {
           await defaultClient.close();
         }
@@ -231,7 +240,8 @@ describe("MCP stdio contract", () => {
           arguments: { query: "runCheckout", limit: 10 },
         });
         expect(canonicalSearch.isError).not.toBe(true);
-        expect(canonicalSearch.structuredContent).toEqual(expect.objectContaining({
+        const canonicalSearchContent = canonicalResultSchema.parse(canonicalSearch.structuredContent);
+        expect(canonicalSearchContent).toEqual(expect.objectContaining({
           derivation: "canonical_ir",
           results: expect.arrayContaining([
             expect.objectContaining({ id: runCheckoutId, qualified_name: "runCheckout" }),
@@ -239,6 +249,27 @@ describe("MCP stdio contract", () => {
           pagination: expect.objectContaining({ has_more: false, cursor: null }),
           next_actions: expect.any(Array),
         }));
+        expect(canonicalSearchContent.codeatlas).toMatchObject({
+          schema_version: expect.any(String),
+          snapshot_ids: [expect.any(String)],
+          fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u),
+          generations: {
+            structural: expect.any(Number),
+            semantic: expect.any(Number),
+            search: expect.any(Number),
+            architecture: expect.any(Number),
+          },
+          freshness: {
+            state: "current",
+            mode: expect.stringMatching(/^(authoritative|watch_cache)$/u),
+          },
+          content_trust: {
+            indexing: "local_only",
+            repository_content: "untrusted",
+            answer_policy: "evidence_only",
+          },
+          coverage: { bounded: true, truncated: false },
+        });
 
         const routeSearch = await client.callTool({
           name: "find_symbol",

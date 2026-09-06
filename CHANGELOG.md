@@ -4,8 +4,19 @@ All notable changes follow semantic versioning.
 
 ## Unreleased
 
+### Added
+
+- Added canonical IR 1.1 evidence scopes, excerpt status, CFG capability metadata, and an in-memory
+  compatibility reader for persistent 1.0 snapshots.
+- Added validated trust, freshness, generation, snapshot, and coverage envelopes plus read-only
+  annotations to all 19 default canonical MCP tools.
+
 ### Fixed
 
+- Replaced source-order control-flow chaining with structured lowering for supported branches,
+  loops, abrupt exits, and try/catch/finally paths; unsupported constructs are now explicit.
+- Prevented duplicate qualified symbol names from resolving silently and corrected CFG evidence
+  hashes and source columns.
 - Made explicit indexing bypass the watcher and file-hash caches so immediate filesystem edits are
   detected reliably on macOS and other platforms with delayed watcher delivery.
 - Bounded Vitest file concurrency and gave the large compiler stress fixtures an appropriate
