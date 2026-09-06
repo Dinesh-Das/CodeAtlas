@@ -8,6 +8,7 @@ import { runIndex } from "../../src/indexer/indexer.js";
 import { openDatabase } from "../../src/storage/database.js";
 import { searchPacket, tracePacket } from "../../src/mcp/graph-tools.js";
 import { ensureFreshIndex } from "../../src/mcp/freshness.js";
+import { loadFreshIr } from "../../src/mcp/ir-tools.js";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
 
 interface ExpectedFrameworkGraph {
@@ -396,6 +397,19 @@ describe("Phase 5 framework adapters", () => {
     } finally {
       database.close();
     }
+
+    const atlas = await loadFreshIr(repository.root);
+    expect(atlas.relationships).toContainEqual(expect.objectContaining({
+      type: "MAY_CONTINUE_TO",
+      target: routeId!,
+      provenance_category: "verified",
+      target_resolution: "exact",
+      execution_semantics: "conditional",
+      metadata: expect.objectContaining({
+        conditional: true,
+        condition: "hook_completes_without_terminating_the_request",
+      }),
+    }));
 
     const context = await ensureFreshIndex(repository.root);
     const search = searchPacket(context, {

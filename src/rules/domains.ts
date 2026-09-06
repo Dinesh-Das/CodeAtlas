@@ -35,6 +35,7 @@ export function applyDomainOverrides(atlas: Atlas, config: CodeAtlasV2Config): v
         content_hash: null,
         confidence: 1,
         provenance: "USER_DEFINED",
+        provenance_category: "verified",
         fact_class: "INFERRED",
         evidence_ids: [],
         metadata: { override: true },
@@ -81,7 +82,10 @@ export function applyDomainOverrides(atlas: Atlas, config: CodeAtlasV2Config): v
         type: "BELONGS_TO_DOMAIN",
         confidence: 1,
         provenance: "USER_DEFINED",
+        provenance_category: "verified",
         fact_class: "INFERRED",
+        target_resolution: "exact",
+        execution_semantics: "not_applicable",
         evidence_ids: [],
         metadata: { configured_domain: name },
       });

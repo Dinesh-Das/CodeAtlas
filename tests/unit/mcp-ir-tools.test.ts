@@ -15,6 +15,8 @@ describe("canonical IR MCP result bounds", () => {
     expect(JSON.parse(result.content[0]!.text)).toEqual(result.structuredContent);
     expect(canonicalResultSchema.parse(result.structuredContent)).toMatchObject({
       derivation: "canonical_ir",
+      status: "ok",
+      error: null,
       codeatlas: {
         schema_version: null,
         snapshot_ids: [],
@@ -27,6 +29,13 @@ describe("canonical IR MCP result bounds", () => {
           answer_policy: "evidence_only",
         },
         coverage: { bounded: false, truncated: false, limitations: [] },
+        uncertainty: {
+          inferred_facts: 0,
+          unresolved_references: 0,
+          ambiguous_references: 0,
+          dynamic_references: 0,
+          conditional_relationships: 0,
+        },
       },
     });
   });

@@ -27,6 +27,7 @@ export async function exportAtlasData(atlas: Atlas, outputDirectory: string): Pr
     "domains.json": `${JSON.stringify(normalized.domains, null, 2)}\n`,
     "impact.json": `${JSON.stringify(normalized.impact, null, 2)}\n`,
     "evidence.json": `${JSON.stringify(normalized.evidence, null, 2)}\n`,
+    "resolution-issues.json": `${JSON.stringify(normalized.resolution_issues, null, 2)}\n`,
     "rules.json": `${JSON.stringify({ rules: normalized.rules, violations: normalized.rule_violations }, null, 2)}\n`,
     "review.json": `${JSON.stringify(normalized.review_findings, null, 2)}\n`,
   };
@@ -76,6 +77,7 @@ export async function exportAtlasBundle(atlas: Atlas, outputDirectory: string): 
   addShards("flows", normalized.flows);
   addShards("control-flows", normalized.control_flows);
   addShards("evidence", normalized.evidence);
+  addShards("resolution-issues", normalized.resolution_issues);
   addShards("git-changes", normalized.git_changes);
 
   await Promise.all(Object.entries(contents).map(([name, content]) =>

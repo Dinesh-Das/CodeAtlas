@@ -336,6 +336,7 @@ class StructuredControlFlowBuilder {
         end_column: endColumn,
         symbol_id: this.symbol.id,
         relationship_id: null,
+        resolution_issue_id: null,
         kind: "source",
         excerpt: excerpt || null,
         excerpt_status: excerptTruncated ? "truncated" : "complete",

@@ -26,6 +26,8 @@ export function validateAtlas(atlas: Atlas): AtlasValidationResult {
   const symbolIds = unique("symbol", atlas.symbols.map((symbol) => symbol.id));
   const relationshipIds = unique("relationship", atlas.relationships.map((edge) => edge.id));
   const evidenceIds = unique("evidence", atlas.evidence.map((evidence) => evidence.id));
+  const resolutionIssues = atlas.resolution_issues ?? [];
+  const resolutionIssueIds = unique("resolution issue", resolutionIssues.map((issue) => issue.id));
   const domainIds = unique("domain", atlas.domains.map((domain) => domain.id));
 
   for (const relationship of atlas.relationships) {
@@ -53,6 +55,20 @@ export function validateAtlas(atlas: Atlas): AtlasValidationResult {
     }
     if (evidence.relationship_id !== null && !relationshipIds.has(evidence.relationship_id)) {
       errors.push(`Evidence ${evidence.id} has missing relationship ${evidence.relationship_id}`);
+    }
+    if (evidence.resolution_issue_id !== null && !resolutionIssueIds.has(evidence.resolution_issue_id)) {
+      errors.push(`Evidence ${evidence.id} has missing resolution issue ${evidence.resolution_issue_id}`);
+    }
+  }
+  for (const issue of resolutionIssues) {
+    if (!symbolIds.has(issue.source_id)) {
+      errors.push(`Resolution issue ${issue.id} has missing source ${issue.source_id}`);
+    }
+    for (const id of issue.candidate_ids) {
+      if (!symbolIds.has(id)) errors.push(`Resolution issue ${issue.id} has missing candidate ${id}`);
+    }
+    for (const id of issue.evidence_ids) {
+      if (!evidenceIds.has(id)) errors.push(`Resolution issue ${issue.id} has missing evidence ${id}`);
     }
   }
   for (const entrypointId of atlas.entrypoint_ids) {

@@ -26,6 +26,7 @@ import {
   findSymbolIr,
   flowIr,
   impactIr,
+  irErrorResult,
   irResult,
   neighborhoodIr,
   repositoryOverviewIr,
@@ -85,6 +86,17 @@ function resultFromPacket(packet: z.infer<typeof answerPacketSchema>) {
     content: [{ type: "text" as const, text: JSON.stringify(packet) }],
     structuredContent: packet,
   };
+}
+
+async function canonicalMcpResult(
+  repositoryPath: string,
+  operation: () => Promise<Record<string, unknown>>,
+) {
+  try {
+    return irResult(await operation());
+  } catch (error) {
+    return irErrorResult(error, repositoryPath);
+  }
 }
 
 export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer {
@@ -203,123 +215,120 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
   server.registerTool(
     "find_symbol",
     { description: "Find symbols in the canonical CodeAtlas IR.", inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().positive().max(1_000).optional().default(50), cursor: z.string().min(1).optional() }).strict(), outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { query: string; limit: number; cursor?: string | undefined }) => irResult(await findSymbolIr(repositoryPath, input.query, input.limit, input.cursor)),
+    async (input: { query: string; limit: number; cursor?: string | undefined }) => canonicalMcpResult(repositoryPath, () => findSymbolIr(repositoryPath, input.query, input.limit, input.cursor)),
   );
   if (legacyTools) server.registerTool(
       "search_symbols",
       { description: "Compatibility alias for find_symbol.", inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().positive().max(1_000).optional().default(50), cursor: z.string().min(1).optional() }).strict(), outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-      async (input: { query: string; limit: number; cursor?: string | undefined }) => irResult(await findSymbolIr(repositoryPath, input.query, input.limit, input.cursor)),
+      async (input: { query: string; limit: number; cursor?: string | undefined }) => canonicalMcpResult(repositoryPath, () => findSymbolIr(repositoryPath, input.query, input.limit, input.cursor)),
     );
   server.registerTool(
     "get_repository_overview",
     { description: "Return compact repository, domain, and entrypoint statistics from the canonical IR.", inputSchema: emptyInputSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async () => irResult(await repositoryOverviewIr(repositoryPath)),
+    async () => canonicalMcpResult(repositoryPath, () => repositoryOverviewIr(repositoryPath)),
   );
   server.registerTool(
     "get_symbol",
     { description: "Return a symbol with relationships and evidence from the canonical IR.", inputSchema: targetSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { target: string }) => irResult(await symbolIr(repositoryPath, input.target)),
+    async (input: { target: string }) => canonicalMcpResult(repositoryPath, () => symbolIr(repositoryPath, input.target)),
   );
   server.registerTool(
     "get_callers",
     { description: "Return direct callers with canonical relationships and evidence.", inputSchema: limitedTargetSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { target: string; limit: number; cursor?: string | undefined }) => irResult(await callersIr(repositoryPath, input.target, input.limit, input.cursor)),
+    async (input: { target: string; limit: number; cursor?: string | undefined }) => canonicalMcpResult(repositoryPath, () => callersIr(repositoryPath, input.target, input.limit, input.cursor)),
   );
   if (legacyTools) server.registerTool(
       "get_callees",
       { description: "Compatibility alias for get_dependencies.", inputSchema: limitedTargetSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-      async (input: { target: string; limit: number; cursor?: string | undefined }) => irResult(await neighborhoodIr(repositoryPath, input.target, "outgoing", input.limit, input.cursor)),
+      async (input: { target: string; limit: number; cursor?: string | undefined }) => canonicalMcpResult(repositoryPath, () => neighborhoodIr(repositoryPath, input.target, "outgoing", input.limit, input.cursor)),
     );
   server.registerTool(
     "get_dependencies",
     { description: "Return outgoing canonical dependencies.", inputSchema: limitedTargetSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { target: string; limit: number; cursor?: string | undefined }) => irResult(await neighborhoodIr(repositoryPath, input.target, "outgoing", input.limit, input.cursor)),
+    async (input: { target: string; limit: number; cursor?: string | undefined }) => canonicalMcpResult(repositoryPath, () => neighborhoodIr(repositoryPath, input.target, "outgoing", input.limit, input.cursor)),
   );
   if (legacyTools) server.registerTool(
       "get_dependents",
       { description: "Compatibility alias for get_callers.", inputSchema: limitedTargetSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-      async (input: { target: string; limit: number; cursor?: string | undefined }) => irResult(await neighborhoodIr(repositoryPath, input.target, "incoming", input.limit, input.cursor)),
+      async (input: { target: string; limit: number; cursor?: string | undefined }) => canonicalMcpResult(repositoryPath, () => neighborhoodIr(repositoryPath, input.target, "incoming", input.limit, input.cursor)),
     );
   server.registerTool(
     "trace_path",
     { description: "Trace a bounded directed path between two symbols.", inputSchema: z.object({ from: z.string().min(1), to: z.string().min(1), depth: z.number().int().positive().max(30).optional().default(8) }).strict(), outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { from: string; to: string; depth: number }) => irResult(await tracePathIr(repositoryPath, input.from, input.to, input.depth)),
+    async (input: { from: string; to: string; depth: number }) => canonicalMcpResult(repositoryPath, () => tracePathIr(repositoryPath, input.from, input.to, input.depth)),
   );
   server.registerTool(
     "analyze_impact",
     { description: "Return bounded impact paths and a transparent risk score.", inputSchema: z.object({ target: z.string().min(1), depth: z.number().int().positive().max(30).optional().default(8), limit: z.number().int().positive().max(2_000).optional().default(100) }).strict(), outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { target: string; depth: number; limit: number }) => irResult(await impactIr(repositoryPath, input.target, input.depth, input.limit)),
+    async (input: { target: string; depth: number; limit: number }) => canonicalMcpResult(repositoryPath, () => impactIr(repositoryPath, input.target, input.depth, input.limit)),
   );
   server.registerTool(
     "get_execution_flow",
     { description: "Return a structured entrypoint execution flow from the canonical IR.", inputSchema: targetSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { target: string }) => irResult(await flowIr(repositoryPath, input.target)),
+    async (input: { target: string }) => canonicalMcpResult(repositoryPath, () => flowIr(repositoryPath, input.target)),
   );
   server.registerTool(
     "get_control_flow",
     { description: "Return a function or method control-flow graph.", inputSchema: targetSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { target: string }) => irResult(await controlFlowIr(repositoryPath, input.target)),
+    async (input: { target: string }) => canonicalMcpResult(repositoryPath, () => controlFlowIr(repositoryPath, input.target)),
   );
   server.registerTool(
     "get_evidence",
     { description: "Resolve an evidence ID or a symbol's source evidence.", inputSchema: targetSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { target: string }) => irResult(await evidenceIr(repositoryPath, input.target)),
+    async (input: { target: string }) => canonicalMcpResult(repositoryPath, () => evidenceIr(repositoryPath, input.target)),
   );
   server.registerTool(
     "list_domains",
     { description: "List architecture domains and their bounded memberships.", inputSchema: paginatedSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { limit: number; cursor?: string | undefined }) => irResult(await domainsIr(repositoryPath, input.limit, input.cursor)),
+    async (input: { limit: number; cursor?: string | undefined }) => canonicalMcpResult(repositoryPath, () => domainsIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_domain",
     { description: "Return a domain and its bounded canonical membership.", inputSchema: limitedTargetSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { target: string; limit: number; cursor?: string | undefined }) => irResult(await domainIr(repositoryPath, input.target, input.limit, input.cursor)),
+    async (input: { target: string; limit: number; cursor?: string | undefined }) => canonicalMcpResult(repositoryPath, () => domainIr(repositoryPath, input.target, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_entrypoints",
     { description: "Return detected entrypoints and their structured flows.", inputSchema: paginatedSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { limit: number; cursor?: string | undefined }) => irResult(await entrypointsIr(repositoryPath, input.limit, input.cursor)),
+    async (input: { limit: number; cursor?: string | undefined }) => canonicalMcpResult(repositoryPath, () => entrypointsIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_git_changes",
     { description: "Return Git changes mapped to symbols and impact paths.", inputSchema: paginatedSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { limit: number; cursor?: string | undefined }) => irResult(await changesIr(repositoryPath, input.limit, input.cursor)),
+    async (input: { limit: number; cursor?: string | undefined }) => canonicalMcpResult(repositoryPath, () => changesIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_rules",
     { description: "Return paginated architecture rules.", inputSchema: paginatedSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { limit: number; cursor?: string | undefined }) => irResult(await rulesIr(repositoryPath, input.limit, input.cursor)),
+    async (input: { limit: number; cursor?: string | undefined }) => canonicalMcpResult(repositoryPath, () => rulesIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_rule_violations",
     { description: "Return evidence-linked architecture-rule violations.", inputSchema: paginatedSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { limit: number; cursor?: string | undefined }) => irResult(await ruleViolationsIr(repositoryPath, input.limit, input.cursor)),
+    async (input: { limit: number; cursor?: string | undefined }) => canonicalMcpResult(repositoryPath, () => ruleViolationsIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "review_changes",
     { description: "Return deterministic, evidence-gated architecture review findings.", inputSchema: paginatedSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { limit: number; cursor?: string | undefined }) => irResult(await reviewIr(repositoryPath, input.limit, input.cursor)),
+    async (input: { limit: number; cursor?: string | undefined }) => canonicalMcpResult(repositoryPath, () => reviewIr(repositoryPath, input.limit, input.cursor)),
   );
   server.registerTool(
     "get_snapshot",
     { description: "Return bounded metadata or one paginated section of a persistent canonical architecture snapshot.", inputSchema: snapshotInputSchema, outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: z.infer<typeof snapshotInputSchema>) => irResult(await snapshotIr(
+    async (input: z.infer<typeof snapshotInputSchema>) => canonicalMcpResult(
       repositoryPath,
-      input.id,
-      input.section,
-      input.limit,
-      input.cursor,
-    )),
+      () => snapshotIr(repositoryPath, input.id, input.section, input.limit, input.cursor),
+    ),
   );
   server.registerTool(
     "compare_snapshots",
     { description: "Compare two deterministic architecture snapshots.", inputSchema: z.object({ old_id: z.string().min(1), new_id: z.string().min(1) }).strict(), outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-    async (input: { old_id: string; new_id: string }) => irResult(await compareSnapshotsIr(repositoryPath, input.old_id, input.new_id)),
+    async (input: { old_id: string; new_id: string }) => canonicalMcpResult(repositoryPath, () => compareSnapshotsIr(repositoryPath, input.old_id, input.new_id)),
   );
   if (legacyTools) server.registerTool(
       "get_architecture_diff",
       { description: "Compatibility alias for compare_snapshots.", inputSchema: z.object({ old_id: z.string().min(1), new_id: z.string().min(1) }).strict(), outputSchema: canonicalResultSchema, annotations: canonicalToolAnnotations },
-      async (input: { old_id: string; new_id: string }) => irResult(await compareSnapshotsIr(repositoryPath, input.old_id, input.new_id)),
+      async (input: { old_id: string; new_id: string }) => canonicalMcpResult(repositoryPath, () => compareSnapshotsIr(repositoryPath, input.old_id, input.new_id)),
     );
 
   return server;

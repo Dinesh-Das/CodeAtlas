@@ -62,7 +62,7 @@ describe("codeatlas build v2", () => {
     const first = await buildRepository(root);
     const atlas = JSON.parse(await readFile(path.join(first.currentDirectory, "atlas.json"), "utf8")) as Atlas;
     expect(validateAtlas(atlas)).toEqual({ valid: true, errors: [] });
-    expect(atlas.schema_version).toBe("1.1");
+    expect(atlas.schema_version).toBe("1.2");
     expect(atlas.domains.some((domain) => domain.name === "authentication" && domain.label_provenance === "USER_DEFINED")).toBe(true);
     expect(atlas.flows.some((flow) => flow.steps.length > 1)).toBe(true);
     const authenticate = atlas.symbols.find((symbol) => symbol.qualified_name === "authenticate");

@@ -3,6 +3,8 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initializeRepository } from "../../src/cli/init.js";
 import { workspacePaths } from "../../src/core/workspace.js";
+import { validateEvidenceIds } from "../../src/ir/evidence-validation.js";
+import { loadFreshIr } from "../../src/mcp/ir-tools.js";
 import { openDatabase } from "../../src/storage/database.js";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
 
@@ -51,6 +53,22 @@ describe("relationship resolution", () => {
     } finally {
       database.close();
     }
+
+    const atlas = await loadFreshIr(repository.root);
+    const issue = atlas.resolution_issues.find((candidate) =>
+      candidate.file === "src/consumer.ts" && candidate.reference_name === "duplicate"
+    );
+    expect(issue).toMatchObject({
+      reason: "multi_candidate",
+      provenance_category: "inferred",
+      candidate_ids: [expect.any(String), expect.any(String)],
+      evidence_ids: [expect.any(String)],
+    });
+    expect(validateEvidenceIds(atlas, issue!.evidence_ids).rejected).toEqual([]);
+    expect(atlas.relationships.some((relationship) =>
+      relationship.type === "REFERENCES" && relationship.source === issue!.source_id &&
+      issue!.candidate_ids.includes(relationship.target)
+    )).toBe(false);
   });
 
   it("matches the deterministic evidence-bearing call graph snapshot", async () => {

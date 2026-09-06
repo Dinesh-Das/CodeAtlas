@@ -26,6 +26,12 @@ export function normalizeAtlas(atlas: Atlas): Atlas {
       metadata: sortedRecord(relationship.metadata),
     })).sort(byId),
     evidence: [...atlas.evidence].sort(byId),
+    resolution_issues: (atlas.resolution_issues ?? []).map((issue) => ({
+      ...issue,
+      candidate_ids: strings(issue.candidate_ids),
+      evidence_ids: strings(issue.evidence_ids),
+      metadata: sortedRecord(issue.metadata),
+    })).sort(byId),
     domains: atlas.domains.map((domain) => ({
       ...domain,
       member_ids: strings(domain.member_ids),

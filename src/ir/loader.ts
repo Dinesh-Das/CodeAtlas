@@ -11,10 +11,14 @@ import {
   type Atlas,
   type AtlasDomain,
   type AtlasEvidence,
+  type AtlasExecutionSemantics,
   type AtlasFactClass,
   type AtlasProvenance,
+  type AtlasProvenanceCategory,
   type AtlasRelationship,
+  type AtlasResolutionIssue,
   type AtlasSymbol,
+  type AtlasTargetResolution,
 } from "./models.js";
 import { normalizeAtlas } from "./serialization.js";
 
@@ -52,6 +56,25 @@ interface EdgeRow {
   owner_kind: string;
 }
 
+interface ResolutionIssueRow {
+  id: string;
+  source_node_id: string;
+  reference_kind: string;
+  reference_name: string | null;
+  reference_hash: string;
+  file_path: string;
+  line: number;
+  column_number: number;
+  reason: AtlasResolutionIssue["reason"];
+  candidate_node_ids_json: string;
+  metadata_json: string;
+}
+
+const EXECUTABLE_RELATIONSHIPS = new Set([
+  "CALLS", "HANDLES", "TRIGGERS", "PUBLISHES", "SUBSCRIBES", "MAY_CONTINUE_TO",
+  "APPLIES_HOOK", "PROTECTED_BY", "QUERIES", "UPDATES", "READS_FROM", "WRITES_TO",
+]);
+
 function parseMetadata(value: string | null): Record<string, unknown> {
   if (value === null || value === "") return {};
   try {
@@ -76,6 +99,45 @@ export function atlasProvenance(sourceType: string): AtlasProvenance {
     case "documentation": return "HEURISTIC";
     default: return "STATIC_ANALYSIS";
   }
+}
+
+function provenanceCategory(value: string, sourceType: string): AtlasProvenanceCategory {
+  if (["verified", "inferred", "dynamic", "documentation", "git", "unresolved"].includes(value)) {
+    return value as AtlasProvenanceCategory;
+  }
+  if (sourceType === "heuristic") return "inferred";
+  if (sourceType === "documentation") return "documentation";
+  if (sourceType === "git") return "git";
+  return "verified";
+}
+
+function targetResolution(
+  metadata: Readonly<Record<string, unknown>>,
+  provenance: AtlasProvenanceCategory,
+  sourceType: string,
+): AtlasTargetResolution {
+  const resolution = metadata.resolution;
+  if (resolution === "exact" || resolution === "unique_candidate" || resolution === "ambiguous") {
+    return resolution;
+  }
+  if (provenance === "dynamic") return "dynamic";
+  return sourceType === "heuristic" ? "unique_candidate" : "exact";
+}
+
+function executionSemantics(
+  edgeType: string,
+  metadata: Readonly<Record<string, unknown>>,
+): AtlasExecutionSemantics {
+  if (!EXECUTABLE_RELATIONSHIPS.has(edgeType)) return "not_applicable";
+  if (metadata.conditional === true) return "conditional";
+  if (metadata.conditional === false) return "unconditional";
+  return "unknown";
+}
+
+function issueProvenance(reason: AtlasResolutionIssue["reason"]): AtlasProvenanceCategory {
+  if (reason === "unresolved_reference" || reason === "unsupported_framework") return "unresolved";
+  if (reason === "dynamic_relationship" || reason === "generated_code") return "dynamic";
+  return "inferred";
 }
 
 function factClass(sourceType: string, ownerKind?: string): AtlasFactClass {
@@ -182,6 +244,11 @@ export async function loadAtlasFromDatabase(input: {
             provenance_category, confidence, file_path, line, metadata_json, owner_kind
      FROM edges ORDER BY id`,
   ).all() as EdgeRow[];
+  const resolutionIssueRows = input.database.prepare(
+    `SELECT id, source_node_id, reference_kind, reference_name, reference_hash,
+            file_path, line, column_number, reason, candidate_node_ids_json, metadata_json
+     FROM resolution_issues ORDER BY file_path, line, column_number, id`,
+  ).all() as ResolutionIssueRow[];
   const nodeIds = new Set(nodeRows.map((row) => row.id));
   const fileContentHashes = new Map<string, string>();
   for (const row of nodeRows) {
@@ -219,6 +286,7 @@ export async function loadAtlasFromDatabase(input: {
         end_column: endColumn,
         symbol_id: row.id,
         relationship_id: null,
+        resolution_issue_id: null,
         kind: evidenceKind(provenance),
         excerpt: excerpt.excerpt,
         excerpt_status: excerpt.status,
@@ -247,6 +315,7 @@ export async function loadAtlasFromDatabase(input: {
       content_hash: row.content_hash,
       confidence: row.confidence,
       provenance,
+      provenance_category: provenanceCategory(row.provenance_category, row.source_type),
       fact_class: factClass(row.source_type),
       evidence_ids: evidenceIds,
       metadata: parseMetadata(row.metadata_json),
@@ -257,6 +326,8 @@ export async function loadAtlasFromDatabase(input: {
   for (const row of edgeRows) {
     if (!nodeIds.has(row.source_node_id) || !nodeIds.has(row.target_node_id)) continue;
     const provenance = atlasProvenance(row.source_type);
+    const category = provenanceCategory(row.provenance_category, row.source_type);
+    const metadata = { ...parseMetadata(row.metadata_json), owner: row.owner_kind };
     const evidenceIds: string[] = [];
     if (row.file_path !== null) {
       const line = Math.max(1, row.line ?? 1);
@@ -279,6 +350,7 @@ export async function loadAtlasFromDatabase(input: {
         end_column: 0,
         symbol_id: null,
         relationship_id: row.id,
+        resolution_issue_id: null,
         kind: evidenceKind(provenance),
         excerpt: excerpt.excerpt,
         excerpt_status: excerpt.status,
@@ -294,9 +366,72 @@ export async function loadAtlasFromDatabase(input: {
       type: row.edge_type,
       confidence: row.confidence,
       provenance,
+      provenance_category: category,
       fact_class: factClass(row.source_type, row.owner_kind),
+      target_resolution: targetResolution(metadata, category, row.source_type),
+      execution_semantics: executionSemantics(row.edge_type, metadata),
       evidence_ids: evidenceIds,
-      metadata: { ...parseMetadata(row.metadata_json), owner: row.owner_kind },
+      metadata,
+    });
+  }
+
+  const resolutionIssues: AtlasResolutionIssue[] = [];
+  for (const row of resolutionIssueRows) {
+    if (!nodeIds.has(row.source_node_id)) continue;
+    const metadata = parseMetadata(row.metadata_json);
+    const excerpt = await excerptReader.read(row.file_path, row.line, row.line);
+    const evidenceId = createEvidenceId({
+      file: row.file_path,
+      startLine: row.line,
+      startColumn: Math.max(0, row.column_number),
+      endLine: row.line,
+      endColumn: Math.max(0, row.column_number),
+      symbolId: row.source_node_id,
+      resolutionIssueId: row.id,
+    });
+    evidence.set(evidenceId, {
+      id: evidenceId,
+      file: row.file_path,
+      start_line: row.line,
+      start_column: Math.max(0, row.column_number),
+      end_line: row.line,
+      end_column: Math.max(0, row.column_number),
+      symbol_id: row.source_node_id,
+      relationship_id: null,
+      resolution_issue_id: row.id,
+      kind: evidenceKind(typeof metadata.provenance === "string" ? metadata.provenance : "unresolved"),
+      excerpt: excerpt.excerpt,
+      excerpt_status: excerpt.status,
+      content_hash: null,
+      file_content_hash: fileContentHashes.get(row.file_path) ?? null,
+      range_content_hash: null,
+    });
+    let candidateIds: string[] = [];
+    try {
+      const parsed = JSON.parse(row.candidate_node_ids_json) as unknown;
+      if (Array.isArray(parsed)) {
+        candidateIds = parsed.filter((candidate): candidate is string =>
+          typeof candidate === "string" && nodeIds.has(candidate)
+        );
+      }
+    } catch {
+      candidateIds = [];
+    }
+    resolutionIssues.push({
+      id: row.id,
+      source_id: row.source_node_id,
+      reference_kind: row.reference_kind,
+      reference_name: row.reference_name,
+      reference_hash: row.reference_hash,
+      file: row.file_path,
+      line: row.line,
+      column: Math.max(0, row.column_number),
+      reason: row.reason,
+      candidate_ids: candidateIds,
+      provenance_category: issueProvenance(row.reason),
+      confidence: typeof metadata.confidence === "number" ? metadata.confidence : null,
+      evidence_ids: [evidenceId],
+      metadata,
     });
   }
 
@@ -317,6 +452,7 @@ export async function loadAtlasFromDatabase(input: {
     symbols,
     relationships,
     evidence: [...evidence.values()],
+    resolution_issues: resolutionIssues,
     domains,
     entrypoint_ids: entrypointIds,
     flows: [],

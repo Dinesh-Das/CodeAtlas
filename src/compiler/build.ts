@@ -309,6 +309,7 @@ async function mapGitChanges(
           end_column: 0,
           symbol_id: null,
           relationship_id: null,
+          resolution_issue_id: null,
           kind: "git",
           excerpt: excerpt.excerpt,
           excerpt_status: excerpt.status,

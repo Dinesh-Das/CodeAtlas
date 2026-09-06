@@ -1,6 +1,6 @@
 import type { ArchitecturalScope } from "../analysis/scope.js";
 
-export const ATLAS_SCHEMA_VERSION = "1.1" as const;
+export const ATLAS_SCHEMA_VERSION = "1.2" as const;
 
 export const ATLAS_PROVENANCE = [
   "AST",
@@ -15,6 +15,12 @@ export const ATLAS_PROVENANCE = [
 
 export type AtlasProvenance = (typeof ATLAS_PROVENANCE)[number];
 export type AtlasFactClass = "EXTRACTED" | "RESOLVED" | "INFERRED";
+export const ATLAS_PROVENANCE_CATEGORIES = [
+  "verified", "inferred", "dynamic", "documentation", "git", "unresolved",
+] as const;
+export type AtlasProvenanceCategory = (typeof ATLAS_PROVENANCE_CATEGORIES)[number];
+export type AtlasTargetResolution = "exact" | "unique_candidate" | "ambiguous" | "dynamic";
+export type AtlasExecutionSemantics = "unconditional" | "conditional" | "unknown" | "not_applicable";
 
 export interface AtlasLocation {
   start_line: number;
@@ -48,6 +54,7 @@ export interface AtlasSymbol {
   content_hash: string | null;
   confidence: number;
   provenance: AtlasProvenance;
+  provenance_category: AtlasProvenanceCategory;
   fact_class: AtlasFactClass;
   evidence_ids: string[];
   metadata: Record<string, unknown>;
@@ -60,7 +67,10 @@ export interface AtlasRelationship {
   type: string;
   confidence: number;
   provenance: AtlasProvenance;
+  provenance_category: AtlasProvenanceCategory;
   fact_class: AtlasFactClass;
+  target_resolution: AtlasTargetResolution;
+  execution_semantics: AtlasExecutionSemantics;
   evidence_ids: string[];
   metadata: Record<string, unknown>;
 }
@@ -74,6 +84,7 @@ export interface AtlasEvidence {
   end_column: number;
   symbol_id: string | null;
   relationship_id: string | null;
+  resolution_issue_id: string | null;
   kind: "source" | "config" | "git" | "documentation";
   excerpt: string | null;
   excerpt_status: "complete" | "truncated" | "redacted" | "unavailable";
@@ -83,6 +94,23 @@ export interface AtlasEvidence {
   file_content_hash: string | null;
   /** Hash of the exact source range, when the producer can compute it. */
   range_content_hash: string | null;
+}
+
+export interface AtlasResolutionIssue {
+  id: string;
+  source_id: string;
+  reference_kind: string;
+  reference_name: string | null;
+  reference_hash: string;
+  file: string;
+  line: number;
+  column: number;
+  reason: "unresolved_reference" | "multi_candidate" | "dynamic_relationship" | "generated_code" | "unsupported_framework";
+  candidate_ids: string[];
+  provenance_category: AtlasProvenanceCategory;
+  confidence: number | null;
+  evidence_ids: string[];
+  metadata: Record<string, unknown>;
 }
 
 export interface AtlasDomain {
@@ -349,6 +377,7 @@ export interface Atlas {
   symbols: AtlasSymbol[];
   relationships: AtlasRelationship[];
   evidence: AtlasEvidence[];
+  resolution_issues: AtlasResolutionIssue[];
   domains: AtlasDomain[];
   entrypoint_ids: string[];
   flows: AtlasFlow[];

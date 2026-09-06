@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { ARCHITECTURAL_SCOPES } from "../analysis/scope.js";
-import { ATLAS_PROVENANCE, ATLAS_SCHEMA_VERSION } from "./models.js";
+import {
+  ATLAS_PROVENANCE,
+  ATLAS_PROVENANCE_CATEGORIES,
+  ATLAS_SCHEMA_VERSION,
+} from "./models.js";
 
 const locationSchema = z.object({
   start_line: z.number().int().positive(),
@@ -24,6 +28,7 @@ export const atlasSymbolSchema = z.object({
   content_hash: z.string().nullable(),
   confidence: z.number().min(0).max(1),
   provenance: z.enum(ATLAS_PROVENANCE),
+  provenance_category: z.enum(ATLAS_PROVENANCE_CATEGORIES),
   fact_class: z.enum(["EXTRACTED", "RESOLVED", "INFERRED"]),
   evidence_ids: z.array(z.string()),
   metadata: z.record(z.string(), z.unknown()),
@@ -36,7 +41,10 @@ export const atlasRelationshipSchema = z.object({
   type: z.string().min(1),
   confidence: z.number().min(0).max(1),
   provenance: z.enum(ATLAS_PROVENANCE),
+  provenance_category: z.enum(ATLAS_PROVENANCE_CATEGORIES),
   fact_class: z.enum(["EXTRACTED", "RESOLVED", "INFERRED"]),
+  target_resolution: z.enum(["exact", "unique_candidate", "ambiguous", "dynamic"]),
+  execution_semantics: z.enum(["unconditional", "conditional", "unknown", "not_applicable"]),
   evidence_ids: z.array(z.string()),
   metadata: z.record(z.string(), z.unknown()),
 }).strict();
@@ -50,12 +58,33 @@ export const atlasEvidenceSchema = z.object({
   end_column: z.number().int().nonnegative(),
   symbol_id: z.string().nullable(),
   relationship_id: z.string().nullable(),
+  resolution_issue_id: z.string().nullable(),
   kind: z.enum(["source", "config", "git", "documentation"]),
   excerpt: z.string().nullable(),
   excerpt_status: z.enum(["complete", "truncated", "redacted", "unavailable"]),
   content_hash: z.string().nullable(),
   file_content_hash: z.string().nullable(),
   range_content_hash: z.string().nullable(),
+}).strict();
+
+const atlasResolutionIssueSchema = z.object({
+  id: z.string().min(1),
+  source_id: z.string().min(1),
+  reference_kind: z.string().min(1),
+  reference_name: z.string().nullable(),
+  reference_hash: z.string().min(1),
+  file: z.string().min(1),
+  line: z.number().int().positive(),
+  column: z.number().int().nonnegative(),
+  reason: z.enum([
+    "unresolved_reference", "multi_candidate", "dynamic_relationship",
+    "generated_code", "unsupported_framework",
+  ]),
+  candidate_ids: z.array(z.string()),
+  provenance_category: z.enum(ATLAS_PROVENANCE_CATEGORIES),
+  confidence: z.number().min(0).max(1).nullable(),
+  evidence_ids: z.array(z.string()),
+  metadata: z.record(z.string(), z.unknown()),
 }).strict();
 
 const controlFlowNodeSchema = z.object({
@@ -105,6 +134,7 @@ export const atlasSchema = z.object({
   symbols: z.array(atlasSymbolSchema),
   relationships: z.array(atlasRelationshipSchema),
   evidence: z.array(atlasEvidenceSchema),
+  resolution_issues: z.array(atlasResolutionIssueSchema),
   domains: z.array(z.unknown()),
   entrypoint_ids: z.array(z.string()),
   flows: z.array(z.unknown()),

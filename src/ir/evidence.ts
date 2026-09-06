@@ -17,8 +17,9 @@ export function createEvidenceId(input: {
   endColumn: number;
   symbolId?: string | null;
   relationshipId?: string | null;
+  resolutionIssueId?: string | null;
 }): string {
-  return `evidence:${sha256([
+  const identity = [
     input.file.replaceAll("\\", "/"),
     input.startLine,
     input.startColumn,
@@ -26,7 +27,11 @@ export function createEvidenceId(input: {
     input.endColumn,
     input.symbolId ?? "",
     input.relationshipId ?? "",
-  ].join(":"))}`;
+  ];
+  if (input.resolutionIssueId !== undefined && input.resolutionIssueId !== null) {
+    identity.push(input.resolutionIssueId);
+  }
+  return `evidence:${sha256(identity.join(":"))}`;
 }
 
 export class EvidenceExcerptReader {

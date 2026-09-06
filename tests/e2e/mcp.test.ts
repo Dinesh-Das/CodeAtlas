@@ -243,6 +243,8 @@ describe("MCP stdio contract", () => {
         const canonicalSearchContent = canonicalResultSchema.parse(canonicalSearch.structuredContent);
         expect(canonicalSearchContent).toEqual(expect.objectContaining({
           derivation: "canonical_ir",
+          status: "ok",
+          error: null,
           results: expect.arrayContaining([
             expect.objectContaining({ id: runCheckoutId, qualified_name: "runCheckout" }),
           ]),
@@ -269,6 +271,13 @@ describe("MCP stdio contract", () => {
             answer_policy: "evidence_only",
           },
           coverage: { bounded: true, truncated: false },
+          uncertainty: {
+            inferred_facts: expect.any(Number),
+            unresolved_references: expect.any(Number),
+            ambiguous_references: expect.any(Number),
+            dynamic_references: expect.any(Number),
+            conditional_relationships: expect.any(Number),
+          },
         });
 
         const routeSearch = await client.callTool({
@@ -312,6 +321,35 @@ describe("MCP stdio contract", () => {
         } else {
           expect(duplicatePage2Content.pagination).toMatchObject({ has_more: false, cursor: null });
         }
+
+        const staleCanonicalCursor = await client.callTool({
+          name: "find_symbol",
+          arguments: {
+            query: "runCheckout",
+            limit: 1,
+            cursor: duplicatePage1Content.pagination.cursor,
+          },
+        });
+        expect(staleCanonicalCursor.isError).toBe(true);
+        expect(canonicalResultSchema.parse(staleCanonicalCursor.structuredContent)).toMatchObject({
+          status: "error",
+          error: {
+            code: "stale_cursor",
+            recoverable: true,
+            details: {},
+          },
+          next_actions: ["Retry the same query without a cursor."],
+        });
+
+        const missingCanonicalSymbol = await client.callTool({
+          name: "get_symbol",
+          arguments: { target: "definitely-missing-symbol" },
+        });
+        expect(missingCanonicalSymbol.isError).toBe(true);
+        expect(canonicalResultSchema.parse(missingCanonicalSymbol.structuredContent)).toMatchObject({
+          status: "error",
+          error: { code: "symbol_not_found", recoverable: true },
+        });
 
         const rulesPage1 = await client.callTool({
           name: "get_rules",

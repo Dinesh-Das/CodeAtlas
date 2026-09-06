@@ -125,7 +125,12 @@ function decodeCursor(cursor: string, scope: string, fingerprint: string): numbe
     }
     return value.offset!;
   } catch (error) {
-    throw new CodeAtlasError("Invalid or stale canonical-IR cursor. Restart the query without a cursor.", { cause: error });
+    throw new CodeAtlasError("Invalid or stale canonical-IR cursor. Restart the query without a cursor.", {
+      cause: error,
+      code: "stale_cursor",
+      recoverable: true,
+      nextActions: ["Retry the same query without a cursor."],
+    });
   }
 }
 
@@ -138,6 +143,12 @@ function page<T>(
   if (request.limit > runtime.maxResultNodes) {
     throw new CodeAtlasError(
       `Requested limit exceeds config.limits.maxMcpResultNodes (${runtime.maxResultNodes}).`,
+      {
+        code: "limit_exceeded",
+        recoverable: true,
+        nextActions: [`Retry with limit at or below ${runtime.maxResultNodes}.`],
+        details: { maximum: runtime.maxResultNodes },
+      },
     );
   }
   const offset = request.cursor === undefined ? 0 : decodeCursor(request.cursor, scope, runtime.fingerprint);
@@ -150,6 +161,12 @@ function page<T>(
       if (selected.length === 0) {
         throw new CodeAtlasError(
           `One result exceeds the canonical-IR page byte limit (${maximumPageBytes}).`,
+          {
+            code: "result_too_large",
+            recoverable: true,
+            nextActions: ["Narrow the query or request a smaller projection."],
+            details: { maximum_bytes: maximumPageBytes },
+          },
         );
       }
       break;
@@ -175,7 +192,12 @@ function page<T>(
 
 function validateDepth(depth: number, maximum: number, label: string): void {
   if (depth > maximum) {
-    throw new CodeAtlasError(`Requested ${label} exceeds configured maximum (${maximum}).`);
+    throw new CodeAtlasError(`Requested ${label} exceeds configured maximum (${maximum}).`, {
+      code: "depth_exceeded",
+      recoverable: true,
+      nextActions: [`Retry with ${label} at or below ${maximum}.`],
+      details: { maximum },
+    });
   }
 }
 
@@ -190,6 +212,12 @@ function resolve(atlas: Atlas, target: string) {
     ).join(", ");
     throw new CodeAtlasError(
       `Ambiguous symbol: ${target}. Use an exact ID. Candidates: ${candidates}`,
+      {
+        code: "ambiguous_symbol",
+        recoverable: true,
+        nextActions: ["Choose one candidate ID and retry."],
+        details: { candidate_ids: exactQualified.map((symbol) => symbol.id) },
+      },
     );
   }
   const needle = target.toLocaleLowerCase();
@@ -200,8 +228,30 @@ function resolve(atlas: Atlas, target: string) {
   );
   if (matches.length !== 1) throw new CodeAtlasError(matches.length === 0
     ? `Symbol not found: ${target}`
-    : `Ambiguous symbol: ${target}. Use an exact ID from find_symbol.`);
+    : `Ambiguous symbol: ${target}. Use an exact ID from find_symbol.`, matches.length === 0
+      ? {
+          code: "symbol_not_found",
+          recoverable: true,
+          nextActions: ["Use find_symbol to discover a stable symbol ID."],
+        }
+      : {
+          code: "ambiguous_symbol",
+          recoverable: true,
+          nextActions: ["Use find_symbol, choose one candidate ID, and retry."],
+          details: { candidate_ids: matches.slice(0, 50).map((symbol) => symbol.id) },
+        });
   return matches[0]!;
+}
+
+function resolutionIssuesFor(atlas: Atlas, symbolIds: ReadonlySet<string>, limit: number) {
+  const matches = atlas.resolution_issues.filter((issue) =>
+    symbolIds.has(issue.source_id) || issue.candidate_ids.some((id) => symbolIds.has(id))
+  );
+  return {
+    items: matches.slice(0, limit),
+    total: matches.length,
+    truncated: matches.length > limit,
+  };
 }
 
 export async function findSymbolIr(repositoryPath: string, query: string, limit: number, cursor?: string) {
@@ -232,11 +282,13 @@ export async function callersIr(repositoryPath: string, target: string, limit: n
   const result = page(matches, { limit, ...(cursor === undefined ? {} : { cursor }) }, `callers:${symbol.id}`, runtime);
   const relationships = result.items;
   const ids = new Set(relationships.map((edge) => edge.source));
+  const relatedIds = new Set([symbol.id, ...ids]);
   return withRuntime({
     symbol,
     direct_callers: relationships.length,
     callers: atlas.symbols.filter((item) => ids.has(item.id)),
     relationships,
+    resolution_issues: resolutionIssuesFor(atlas, relatedIds, runtime.maxResultNodes),
     pagination: result.pagination,
   }, runtime);
 }
@@ -253,6 +305,7 @@ export async function symbolIr(repositoryPath: string, target: string) {
     relationships: result.items,
     pagination: result.pagination,
     evidence: atlas.evidence.filter((item) => evidenceIds.has(item.id)),
+    resolution_issues: resolutionIssuesFor(atlas, new Set([symbol.id]), runtime.maxResultNodes),
   }, runtime);
 }
 
@@ -263,6 +316,11 @@ export async function repositoryOverviewIr(repositoryPath: string) {
   const entrypointIds = new Set(atlas.entrypoint_ids);
   const entrypointSymbols = atlas.symbols.filter((symbol) => entrypointIds.has(symbol.id));
   const entrypoints = page(entrypointSymbols, { limit: runtime.maxResultNodes }, "overview:entrypoints", runtime);
+  const issuesByReason = Object.fromEntries(
+    [...new Set(atlas.resolution_issues.map((issue) => issue.reason))]
+      .sort((left, right) => left.localeCompare(right))
+      .map((reason) => [reason, atlas.resolution_issues.filter((issue) => issue.reason === reason).length]),
+  );
   return withRuntime({
     schema_version: atlas.schema_version,
     project: atlas.project,
@@ -272,6 +330,7 @@ export async function repositoryOverviewIr(repositoryPath: string) {
       id: domain.id, name: domain.name, members: domain.member_ids.length, entrypoints: domain.entrypoint_ids.length,
     })),
     entrypoints: entrypoints.items,
+    resolution_issues: { total: atlas.resolution_issues.length, by_reason: issuesByReason },
     pagination: { domains: domains.pagination, entrypoints: entrypoints.pagination },
   }, runtime);
 }
@@ -302,6 +361,7 @@ export async function neighborhoodIr(
     direction,
     relationships,
     symbols: atlas.symbols.filter((item) => ids.has(item.id)),
+    resolution_issues: resolutionIssuesFor(atlas, new Set([symbol.id, ...ids]), runtime.maxResultNodes),
     pagination: result.pagination,
   }, runtime);
 }
@@ -325,7 +385,14 @@ export async function tracePathIr(repositoryPath: string, from: string, to: stri
   while (queue.length > 0) {
     const current = queue.shift()!;
     if (current.id === target.id) {
-      return withRuntime({ source, target, path: current, depth_limit: depth, truncated }, runtime);
+      return withRuntime({
+        source,
+        target,
+        path: current,
+        depth_limit: depth,
+        truncated,
+        resolution_issues: resolutionIssuesFor(atlas, new Set(current.symbols), runtime.maxResultNodes),
+      }, runtime);
     }
     if (current.relationships.length >= depth) {
       if ((outgoing.get(current.id) ?? []).some((edge) => !visited.has(edge.target))) truncated = true;
@@ -341,14 +408,26 @@ export async function tracePathIr(repositoryPath: string, from: string, to: stri
       });
     }
   }
-  return withRuntime({ source, target, path: null, depth_limit: depth, truncated }, runtime);
+  return withRuntime({
+    source,
+    target,
+    path: null,
+    depth_limit: depth,
+    truncated,
+    resolution_issues: resolutionIssuesFor(atlas, new Set([source.id, target.id]), runtime.maxResultNodes),
+  }, runtime);
 }
 
 export async function impactIr(repositoryPath: string, target: string, depth: number, limit: number) {
   const runtime = await loadIrRuntime(repositoryPath);
   validateDepth(depth, runtime.maxImpactDepth, "impact depth");
   if (limit > runtime.maxResultNodes) {
-    throw new CodeAtlasError(`Requested limit exceeds config.limits.maxMcpResultNodes (${runtime.maxResultNodes}).`);
+    throw new CodeAtlasError(`Requested limit exceeds config.limits.maxMcpResultNodes (${runtime.maxResultNodes}).`, {
+      code: "limit_exceeded",
+      recoverable: true,
+      nextActions: [`Retry with limit at or below ${runtime.maxResultNodes}.`],
+      details: { maximum: runtime.maxResultNodes },
+    });
   }
   const atlas = runtime.atlas;
   const symbol = resolve(atlas, target);
@@ -363,6 +442,13 @@ export async function impactIr(repositoryPath: string, target: string, depth: nu
     symbol,
     ...analysis,
     query: { depth_limit: depth, result_limit: limit, truncated },
+    resolution_issues: resolutionIssuesFor(atlas, new Set([
+      symbol.id,
+      ...analysis.paths.flatMap((path) => path.path),
+      ...analysis.dependency_paths.flatMap((path) => path.path),
+      ...(analysis.potential_paths ?? []).flatMap((path) => path.path),
+      ...(analysis.potential_dependency_paths ?? []).flatMap((path) => path.path),
+    ]), runtime.maxResultNodes),
   }, runtime);
 }
 
@@ -370,8 +456,16 @@ export async function flowIr(repositoryPath: string, target: string) {
   const runtime = await loadIrRuntime(repositoryPath);
   const atlas = runtime.atlas;
   const symbol = resolve(atlas, target);
+  const flow = atlas.flows.find((candidate) => candidate.entrypoint_id === symbol.id || candidate.id === target) ?? null;
   return withRuntime(
-    { flow: atlas.flows.find((flow) => flow.entrypoint_id === symbol.id || flow.id === target) ?? null },
+    {
+      flow,
+      resolution_issues: resolutionIssuesFor(
+        atlas,
+        new Set([symbol.id, ...(flow?.steps.map((step) => step.symbol_id) ?? [])]),
+        runtime.maxResultNodes,
+      ),
+    },
     runtime,
   );
 }
@@ -381,7 +475,11 @@ export async function controlFlowIr(repositoryPath: string, target: string) {
   const atlas = runtime.atlas;
   const symbol = resolve(atlas, target);
   return withRuntime(
-    { symbol, control_flow: atlas.control_flows.find((flow) => flow.symbol_id === symbol.id) ?? null },
+    {
+      symbol,
+      control_flow: atlas.control_flows.find((flow) => flow.symbol_id === symbol.id) ?? null,
+      resolution_issues: resolutionIssuesFor(atlas, new Set([symbol.id]), runtime.maxResultNodes),
+    },
     runtime,
   );
 }
@@ -389,12 +487,24 @@ export async function controlFlowIr(repositoryPath: string, target: string) {
 export async function evidenceIr(repositoryPath: string, target: string) {
   const runtime = await loadIrRuntime(repositoryPath);
   const atlas = runtime.atlas;
+  const issue = atlas.resolution_issues.find((candidate) => candidate.id === target);
+  if (issue !== undefined) {
+    const ids = new Set(issue.evidence_ids);
+    return withRuntime({
+      resolution_issue: issue,
+      evidence: atlas.evidence.filter((evidence) => ids.has(evidence.id)),
+    }, runtime);
+  }
   const direct = atlas.evidence.find((evidence) => evidence.id === target);
   if (direct !== undefined) return withRuntime({ evidence: [direct] }, runtime);
   const symbol = resolve(atlas, target);
   const ids = new Set(symbol.evidence_ids);
   return withRuntime(
-    { symbol, evidence: atlas.evidence.filter((evidence) => ids.has(evidence.id)) },
+    {
+      symbol,
+      evidence: atlas.evidence.filter((evidence) => ids.has(evidence.id)),
+      resolution_issues: resolutionIssuesFor(atlas, new Set([symbol.id]), runtime.maxResultNodes),
+    },
     runtime,
   );
 }
@@ -410,7 +520,11 @@ export async function domainIr(repositoryPath: string, target: string, limit = 1
   const atlas = runtime.atlas;
   const needle = target.toLocaleLowerCase();
   const domain = atlas.domains.find((item) => item.id === target || item.name.toLocaleLowerCase() === needle);
-  if (domain === undefined) throw new Error(`Domain not found: ${target}`);
+  if (domain === undefined) throw new CodeAtlasError(`Domain not found: ${target}`, {
+    code: "domain_not_found",
+    recoverable: true,
+    nextActions: ["Use list_domains to choose a valid domain ID."],
+  });
   const members = new Set(domain.member_ids);
   const result = page(
     atlas.symbols.filter((symbol) => members.has(symbol.id)),
@@ -469,6 +583,7 @@ export const SNAPSHOT_SECTIONS = [
   "symbols",
   "relationships",
   "evidence",
+  "resolution_issues",
   "domains",
   "flows",
   "control_flows",
@@ -558,6 +673,14 @@ interface CoverageEnvelope {
   limitations: string[];
 }
 
+interface UncertaintyEnvelope {
+  inferred_facts: number;
+  unresolved_references: number;
+  ambiguous_references: number;
+  dynamic_references: number;
+  conditional_relationships: number;
+}
+
 function coverageEnvelope(value: Record<string, unknown>): CoverageEnvelope {
   let bounded = false;
   let truncated = false;
@@ -599,24 +722,69 @@ function coverageEnvelope(value: Record<string, unknown>): CoverageEnvelope {
   return { bounded, truncated, limitations };
 }
 
+function uncertaintyEnvelope(value: Record<string, unknown>): UncertaintyEnvelope {
+  const inferred = new Set<string>();
+  const unresolved = new Set<string>();
+  const ambiguous = new Set<string>();
+  const dynamic = new Set<string>();
+  const conditional = new Set<string>();
+  const seen = new Set<object>();
+  let anonymous = 0;
+
+  const visit = (candidate: unknown): void => {
+    if (candidate === null || typeof candidate !== "object" || seen.has(candidate)) return;
+    seen.add(candidate);
+    if (Array.isArray(candidate)) {
+      for (const item of candidate) visit(item);
+      return;
+    }
+    const record = candidate as Record<string, unknown>;
+    const identity = typeof record.id === "string" ? record.id : `anonymous:${anonymous++}`;
+    if (record.fact_class === "INFERRED" || record.provenance_category === "inferred") inferred.add(identity);
+    if (record.reason === "unresolved_reference") unresolved.add(identity);
+    if (record.reason === "multi_candidate" || record.target_resolution === "ambiguous") ambiguous.add(identity);
+    if (
+      record.reason === "dynamic_relationship" || record.target_resolution === "dynamic" ||
+      record.provenance_category === "dynamic"
+    ) dynamic.add(identity);
+    if (record.execution_semantics === "conditional") conditional.add(identity);
+    for (const child of Object.values(record)) visit(child);
+  };
+  visit(value);
+  return {
+    inferred_facts: inferred.size,
+    unresolved_references: unresolved.size,
+    ambiguous_references: ambiguous.size,
+    dynamic_references: dynamic.size,
+    conditional_relationships: conditional.size,
+  };
+}
+
+function responseEnvelope(value: Record<string, unknown>, context?: CanonicalResponseContext) {
+  return {
+    schema_version: context?.schemaVersion ?? null,
+    snapshot_ids: context?.snapshotIds ?? [],
+    fingerprint: context?.fingerprint ?? null,
+    generations: context?.generations ?? null,
+    freshness: context?.freshness ?? null,
+    content_trust: {
+      indexing: "local_only" as const,
+      repository_content: "untrusted" as const,
+      answer_policy: "evidence_only" as const,
+    },
+    coverage: coverageEnvelope(value),
+    uncertainty: uncertaintyEnvelope(value),
+  };
+}
+
 export function irResult(value: ContextualResult) {
   const context = value[RESPONSE_CONTEXT];
   const enriched = {
     derivation: "canonical_ir",
+    status: "ok" as const,
+    error: null,
     ...value,
-    codeatlas: {
-      schema_version: context?.schemaVersion ?? null,
-      snapshot_ids: context?.snapshotIds ?? [],
-      fingerprint: context?.fingerprint ?? null,
-      generations: context?.generations ?? null,
-      freshness: context?.freshness ?? null,
-      content_trust: {
-        indexing: "local_only",
-        repository_content: "untrusted",
-        answer_policy: "evidence_only",
-      },
-      coverage: coverageEnvelope(value),
-    },
+    codeatlas: responseEnvelope(value, context),
     next_actions: [
       "Use exact stable IDs from this response in follow-up MCP calls.",
       "Use get_evidence for source-backed details and analyze_impact for blast-radius paths.",
@@ -628,10 +796,53 @@ export function irResult(value: ContextualResult) {
   if (serializedBytes > maximumBytes) {
     throw new CodeAtlasError(
       `Canonical-IR response is ${serializedBytes} bytes; reduce the requested limit to stay below ${maximumBytes} bytes.`,
+      {
+        code: "result_too_large",
+        recoverable: true,
+        nextActions: ["Reduce the requested limit and continue with pagination."],
+        details: { actual_bytes: serializedBytes, maximum_bytes: maximumBytes },
+      },
     );
   }
   return {
     content: [{ type: "text" as const, text: serialized }],
     structuredContent: enriched,
+  };
+}
+
+export async function irErrorResult(error: unknown, repositoryPath: string) {
+  let context: CanonicalResponseContext | undefined;
+  try {
+    context = responseContextFrom(await architectureService.load(repositoryPath));
+  } catch {
+    context = undefined;
+  }
+  const filesystemCode = typeof error === "object" && error !== null && "code" in error
+    ? String(error.code)
+    : null;
+  const invalidSnapshot = error instanceof Error && error.message.startsWith("Invalid snapshot ID:");
+  const known = error instanceof CodeAtlasError;
+  const code = known ? error.code
+    : filesystemCode === "ENOENT" ? "snapshot_not_found"
+    : invalidSnapshot ? "invalid_argument" : "internal_error";
+  const recoverable = known ? error.recoverable : filesystemCode === "ENOENT" || invalidSnapshot;
+  const nextActions = known ? error.nextActions
+    : filesystemCode === "ENOENT" ? ["Use get_snapshot with an existing snapshot ID."]
+    : invalidSnapshot ? ["Use a snapshot ID returned by the snapshot command."] : [];
+  const details = known ? error.details : {};
+  const message = error instanceof Error ? error.message : "CodeAtlas could not complete the query.";
+  const value = { error: { code, message, recoverable, details } };
+  const enriched = {
+    derivation: "canonical_ir" as const,
+    status: "error" as const,
+    ...value,
+    codeatlas: responseEnvelope(value, context),
+    next_actions: nextActions,
+  };
+  const serialized = JSON.stringify(enriched);
+  return {
+    content: [{ type: "text" as const, text: serialized }],
+    structuredContent: enriched,
+    isError: true,
   };
 }

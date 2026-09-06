@@ -5,10 +5,12 @@ import { runDoctor } from "../../src/cli/doctor.js";
 import { getStatus } from "../../src/cli/status.js";
 import { indexRepository } from "../../src/cli/index-command.js";
 import { workspacePaths } from "../../src/core/workspace.js";
+import { validateEvidenceIds } from "../../src/ir/evidence-validation.js";
 import { registerFrameworkAdapter } from "../../src/framework/registry.js";
 import type { FrameworkAdapter } from "../../src/framework/types.js";
 import { getNodePacket } from "../../src/mcp/graph-tools.js";
 import { ensureFreshIndex } from "../../src/mcp/freshness.js";
+import { loadFreshIr } from "../../src/mcp/ir-tools.js";
 import { openDatabase } from "../../src/storage/database.js";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
 
@@ -104,6 +106,22 @@ describe("gap-fix evidence and resilience", () => {
       repository_content: "untrusted",
       answer_policy: "evidence_only",
     });
+
+    const atlas = await loadFreshIr(repository.root);
+    expect(atlas.relationships).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        provenance_category: "dynamic",
+        target_resolution: "exact",
+        execution_semantics: "unknown",
+      }),
+    ]));
+    const dynamicIssues = atlas.resolution_issues.filter((issue) =>
+      issue.source_id === runId && issue.reason === "dynamic_relationship"
+    );
+    expect(dynamicIssues.length).toBeGreaterThan(0);
+    expect(dynamicIssues.every((issue) => issue.provenance_category === "dynamic")).toBe(true);
+    expect(validateEvidenceIds(atlas, dynamicIssues.flatMap((issue) => issue.evidence_ids)).rejected)
+      .toEqual([]);
 
     const doctor = await runDoctor(repository.root);
     expect(doctor).toEqual(

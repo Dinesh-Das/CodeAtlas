@@ -64,6 +64,12 @@ export function evidenceRejectionReason(atlas: Atlas, evidence: AtlasEvidence): 
     }
   }
 
+  if (typeof evidence.resolution_issue_id === "string") {
+    const issue = (atlas.resolution_issues ?? []).find((item) => item.id === evidence.resolution_issue_id);
+    if (issue === undefined) return "evidence references an unknown resolution issue";
+    if (!issue.evidence_ids.includes(evidence.id)) return "resolution issue does not reference the evidence record";
+  }
+
   return null;
 }
 

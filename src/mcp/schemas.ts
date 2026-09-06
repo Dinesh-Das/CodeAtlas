@@ -143,6 +143,16 @@ export type AnswerPacket = z.infer<typeof answerPacketSchema>;
 export const canonicalResultSchema = z
   .object({
     derivation: z.literal("canonical_ir"),
+    status: z.enum(["ok", "error"]),
+    error: z
+      .object({
+        code: z.string().min(1),
+        message: z.string().min(1),
+        recoverable: z.boolean(),
+        details: z.record(z.string(), z.unknown()),
+      })
+      .strict()
+      .nullable(),
     codeatlas: z
       .object({
         schema_version: z.string().min(1).nullable(),
@@ -179,6 +189,15 @@ export const canonicalResultSchema = z
             bounded: z.boolean(),
             truncated: z.boolean(),
             limitations: z.array(z.string()),
+          })
+          .strict(),
+        uncertainty: z
+          .object({
+            inferred_facts: z.number().int().nonnegative(),
+            unresolved_references: z.number().int().nonnegative(),
+            ambiguous_references: z.number().int().nonnegative(),
+            dynamic_references: z.number().int().nonnegative(),
+            conditional_relationships: z.number().int().nonnegative(),
           })
           .strict(),
       })
