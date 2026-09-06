@@ -13,7 +13,7 @@ An experiment has two inputs in addition to the suite. The run manifest pins the
 ```json
 {
   "schema_version": 1,
-  "evaluator_version": "1.0.0",
+  "evaluator_version": "1.1.0",
   "id": "pilot-2026-09-06",
   "suite_id": "codeatlas-development-v1",
   "created_at": "2026-09-06T12:00:00.000+05:30",

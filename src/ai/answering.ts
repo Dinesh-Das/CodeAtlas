@@ -1,6 +1,6 @@
 import type { Atlas, AtlasEvidence, AtlasFlow, AtlasSymbol } from "../ir/models.js";
 import { isDefiniteImpactRelationship } from "../analysis/impact.js";
-import { rankSymbolSearch } from "../analysis/simplification.js";
+import { rankSymbolSearch, symbolSearchTerms } from "../analysis/simplification.js";
 import {
   classifyArchitecturalScope,
   isPrimaryArchitectureScope,
@@ -36,13 +36,13 @@ export interface ArchitectureAnswerQuality {
 
 const STOP_WORDS = new Set([
   "a", "ai", "an", "and", "agent", "architecture", "coding", "codeatlas", "context", "developer",
-  "does", "explain", "for", "give", "how", "is", "of", "overview", "point", "project", "provide",
-  "repository", "start", "starting", "the", "to", "tool", "what", "where", "why", "work",
+  "become", "becomes", "does", "explain", "for", "give", "how", "is", "of", "overview", "point",
+  "project", "provide", "repository", "start", "starting", "the", "to", "tool", "what", "where",
+  "why", "work",
 ]);
 
 function terms(question: string): string[] {
-  return [...new Set(question.toLocaleLowerCase().split(/[^a-z0-9_]+/u)
-    .filter((term) => term.length > 1 && !STOP_WORDS.has(term)))];
+  return symbolSearchTerms(question).filter((term) => !STOP_WORDS.has(term));
 }
 
 function bestFlow(atlas: Atlas, candidates: readonly AtlasSymbol[]): AtlasFlow | null {
@@ -112,12 +112,179 @@ function describedStartingPoint(symbol: AtlasSymbol): string {
   return symbol.file === null ? name : `${name} in ${symbol.file}`;
 }
 
+const ANSWER_PATH_RELATIONSHIPS = new Set([
+  "CALLS", "HANDLES", "TRIGGERS", "IMPLEMENTED_BY", "IMPORTS", "QUERIES", "UPDATES",
+]);
+
+const PATH_STAGE_TERMS = [
+  ["mcp", "server", "request", "route", "handle"],
+  ["find", "search", "query", "index", "store", "retrieval", "projection"],
+  ["evidence", "provenance", "ground", "source"],
+  ["response", "result", "serialize", "envelope"],
+] as const;
+
+interface AnswerPath {
+  symbolIds: string[];
+  relationshipIds: string[];
+  matchedTerms: Set<string>;
+  matchedStages: Set<number>;
+  stageScores: number[];
+  score: number;
+}
+
+function matchedPathTerms(
+  symbols: readonly AtlasSymbol[],
+  atlas: Atlas,
+  queryTerms: readonly string[],
+): { terms: Set<string>; stages: Set<number>; stageScores: number[] } {
+  const text = symbols.map((symbol) => architecturalSearchText(symbol, atlas)).join(" ");
+  const stageScores = PATH_STAGE_TERMS.map((stage) => stage.filter((term) => text.includes(term)).length);
+  return {
+    terms: new Set(queryTerms.filter((term) => text.includes(term))),
+    stages: new Set(stageScores.flatMap((score, index) => score > 0 ? [index] : [])),
+    stageScores,
+  };
+}
+
+function evidenceLinkedPaths(
+  atlas: Atlas,
+  queryTerms: readonly string[],
+  rankedCandidates: readonly { symbol: AtlasSymbol; matchedTerms: number; score: number }[],
+): AnswerPath[] {
+  const symbolById = new Map(atlas.symbols.map((symbol) => [symbol.id, symbol]));
+  const entrypoints = new Set(atlas.entrypoint_ids);
+  const outgoing = new Map<string, typeof atlas.relationships>();
+  for (const relationship of atlas.relationships) {
+    if (!isDefiniteImpactRelationship(relationship) ||
+      !ANSWER_PATH_RELATIONSHIPS.has(relationship.type) ||
+      relationship.evidence_ids.length === 0) continue;
+    const source = symbolById.get(relationship.source);
+    const target = symbolById.get(relationship.target);
+    if (source === undefined || target === undefined ||
+      !isPrimaryArchitectureSymbol(source) || !isPrimaryArchitectureSymbol(target)) continue;
+    const values = outgoing.get(relationship.source) ?? [];
+    values.push(relationship);
+    outgoing.set(relationship.source, values);
+  }
+  const starts = [...new Map([
+    ...rankedCandidates.slice(0, 20).map((item) => [item.symbol.id, item.symbol] as const),
+    ...primaryEntrypoints(atlas).slice(0, 10).map((symbol) => [symbol.id, symbol] as const),
+  ]).values()];
+  const paths: AnswerPath[] = [];
+  const visit = (symbolIds: string[], relationshipIds: string[]): void => {
+    if (symbolIds.length > 1) {
+      const symbols = symbolIds.flatMap((id) => symbolById.get(id) ?? []);
+      const matched = matchedPathTerms(symbols, atlas, queryTerms);
+      paths.push({
+        symbolIds: [...symbolIds],
+        relationshipIds: [...relationshipIds],
+        matchedTerms: matched.terms,
+        matchedStages: matched.stages,
+        stageScores: matched.stageScores,
+        score: matched.terms.size * 180 + matched.stages.size * 260 +
+          matched.stageScores.reduce((sum, value) => sum + value, 0) * 90 +
+          Number(entrypoints.has(symbolIds[0]!)) * 240 + relationshipIds.length * 15,
+      });
+    }
+    if (symbolIds.length >= 5 || paths.length >= 4_000) return;
+    const edges = [...(outgoing.get(symbolIds.at(-1)!) ?? [])]
+      .sort((left, right) => {
+        const score = (id: string): number => {
+          const symbol = symbolById.get(id);
+          return symbol === undefined ? 0 : matchedPathTerms([symbol], atlas, queryTerms).terms.size;
+        };
+        return score(right.target) - score(left.target) || left.id.localeCompare(right.id);
+      })
+      .slice(0, 14);
+    for (const edge of edges) {
+      if (symbolIds.includes(edge.target)) continue;
+      visit([...symbolIds, edge.target], [...relationshipIds, edge.id]);
+      if (paths.length >= 4_000) return;
+    }
+  };
+  for (const start of starts) {
+    visit([start.id], []);
+    if (paths.length >= 4_000) break;
+  }
+  const uniquePaths = [...new Map(paths.map((path) => [path.symbolIds.join("\0"), path] as const)).values()];
+  const errorPathRequested = queryTerms.some((term) => ["error", "fail", "failure"].includes(term));
+  const wrapperPenalty = (path: AnswerPath): number => path.symbolIds.reduce((sum, id) => {
+    const name = symbolById.get(id)?.name ?? "";
+    return sum + (/^(?:withRuntime|withContext|elapsed|measureProjection|page)$/u.test(name) ? 180 : 0) +
+      (!errorPathRequested && /(?:error|failure)/iu.test(name) ? 600 : 0);
+  }, 0);
+  const sorted = uniquePaths.sort((left, right) =>
+    right.score - left.score ||
+    right.symbolIds.length - left.symbolIds.length ||
+    left.symbolIds.join("\0").localeCompare(right.symbolIds.join("\0"))
+  );
+  const selected: AnswerPath[] = [];
+  const selectBestForStage = (stage: number): void => {
+    const ranked = [...uniquePaths].sort((left, right) => {
+      const focusedScore = (path: AnswerPath): number =>
+        (path.stageScores[stage] ?? 0) * 500 +
+        (path.stageScores[0] ?? 0) * 120 +
+        Number(entrypoints.has(path.symbolIds[0]!)) * 120 +
+        path.matchedTerms.size * 40 - wrapperPenalty(path);
+      return focusedScore(right) - focusedScore(left) || right.score - left.score ||
+        left.symbolIds.join("\0").localeCompare(right.symbolIds.join("\0"));
+    });
+    const candidate = ranked.find((path) => (path.stageScores[stage] ?? 0) >= 2 &&
+      selected.every((item) => item.symbolIds.join("\0") !== path.symbolIds.join("\0")));
+    if (candidate !== undefined) selected.push(candidate);
+  };
+  const retrievalRequested = queryTerms.some((term) =>
+    ["find", "search", "query", "index", "store", "retrieval", "projection", "mcp"].includes(term)
+  );
+  const responseRequested = queryTerms.some((term) =>
+    ["evidence", "provenance", "response", "result", "serialize", "envelope", "mcp"].includes(term)
+  );
+  if (retrievalRequested) selectBestForStage(1);
+  if (responseRequested) selectBestForStage(3);
+  if (selected.length >= 2) return selected;
+  const coveredStages = new Set<number>();
+  for (const path of selected) for (const stage of path.matchedStages) coveredStages.add(stage);
+  for (const path of sorted) {
+    if (selected.some((item) => item.symbolIds.join("\0") === path.symbolIds.join("\0"))) continue;
+    const addsStage = [...path.matchedStages].some((stage) => !coveredStages.has(stage));
+    const distinctBranch = selected.every((chosen) =>
+      chosen.relationshipIds[0] !== path.relationshipIds[0] ||
+      chosen.relationshipIds[1] !== path.relationshipIds[1]
+    );
+    if (selected.length > 0 && !addsStage && !distinctBranch) continue;
+    selected.push(path);
+    for (const stage of path.matchedStages) coveredStages.add(stage);
+    if (selected.length >= 3) break;
+  }
+  return selected;
+}
+
+function pathClaim(atlas: Atlas, path: AnswerPath): AtlasClaim | null {
+  const symbolById = new Map(atlas.symbols.map((symbol) => [symbol.id, symbol]));
+  const relationshipById = new Map(atlas.relationships.map((relationship) => [relationship.id, relationship]));
+  const symbols = path.symbolIds.flatMap((id) => symbolById.get(id) ?? []);
+  const evidenceIds = boundedEvidence(
+    ...path.relationshipIds.map((id) => relationshipById.get(id)?.evidence_ids ?? []),
+    ...symbols.map((symbol) => symbol.evidence_ids),
+  );
+  if (symbols.length < 2 || evidenceIds.length === 0) return null;
+  return {
+    text: `An evidence-linked execution path is ${symbols.map((symbol) =>
+      `${symbol.qualified_name ?? symbol.name}${symbol.file === null ? "" : ` (${symbol.file})`}`
+    ).join(" → ")}.`,
+    fact_class: "graph_inference",
+    evidence_ids: evidenceIds,
+  };
+}
+
 export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
   const normalizedQuestion = question.toLocaleLowerCase();
   const asksForAgentContext = /\b(?:ai|agent)\b/u.test(normalizedQuestion) &&
     /\b(?:context|mcp|architecture)\b/u.test(normalizedQuestion);
   const asksForArchitectureOverview = asksForAgentContext ||
     /\b(?:architecture|architectural|overview|onboard|starting point|start)\b/u.test(normalizedQuestion);
+  const asksForExecutionPath = /\b(?:flow|how|path|request|response|through|trace|become|becomes)\b/u
+    .test(normalizedQuestion);
   const queryTerms = terms(question);
   const rankedCandidates = atlas.symbols
     .filter((symbol) => isPrimaryArchitectureSymbol(symbol) && EXPLANATION_KINDS.has(symbol.kind))
@@ -165,6 +332,12 @@ export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
   const flow = bestFlow(atlas, candidates);
   const claims: AtlasClaim[] = [];
   const candidateIds = new Set(candidates.map((candidate) => candidate.id));
+  if (asksForExecutionPath && !asksForArchitectureOverview) {
+    for (const path of evidenceLinkedPaths(atlas, queryTerms, rankedCandidates)) {
+      const claim = pathClaim(atlas, path);
+      if (claim !== null) claims.push(claim);
+    }
+  }
   if (asksForArchitectureOverview) {
     const domains = primaryDomainSummary(atlas);
     if (domains.length > 0) {
@@ -221,7 +394,7 @@ export function answerFromAtlas(atlas: Atlas, question: string): AtlasAnswer {
       });
     }
   }
-  if (flow !== null && !asksForArchitectureOverview) {
+  if (flow !== null && !asksForArchitectureOverview && !asksForExecutionPath) {
     const path = flow.paths?.find((candidate) => !candidate.cycle_detected) ?? flow.paths?.[0];
     const symbolIds = path?.symbol_ids ?? flow.steps.map((step) => step.symbol_id);
     const names = symbolIds.map((id) => symbolById.get(id)?.qualified_name ?? symbolById.get(id)?.name ?? id);

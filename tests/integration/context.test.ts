@@ -65,8 +65,8 @@ describe("task-context compiler", () => {
 
     expect(packet.budget).toMatchObject({
       requested: 6_000,
-      tokenizer: "utf8-bytes-upper-bound/v1",
-      estimated: true,
+      unit: "utf8_bytes_upper_bound",
+      estimator: "utf8-bytes-upper-bound/v1",
       format: "json",
     });
     expect(packet.budget.used).toBeLessThanOrEqual(packet.budget.requested);

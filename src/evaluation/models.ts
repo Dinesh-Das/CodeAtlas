@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const EVALUATION_SCHEMA_VERSION = 1 as const;
-export const EVALUATION_HARNESS_VERSION = "1.0.0";
+export const EVALUATION_HARNESS_VERSION = "1.1.0";
 
 export const evaluationVariantSchema = z.enum(["native", "codeatlas"]);
 export const evaluationTaskCategorySchema = z.enum([
@@ -31,6 +31,13 @@ const evidenceSetSchema = z.object({
   files: z.array(z.string().min(1)).min(1),
 }).strict();
 
+const taskExpectationsSchema = z.object({
+  required_concepts: z.array(z.string().min(1)),
+  required_relationship_types: z.array(z.string().min(1)),
+  allowed_starting_files: z.array(z.string().min(1)),
+  forbidden_distractors: z.array(z.string().min(1)),
+}).strict();
+
 const evaluationTaskSchema = z.object({
   id: z.string().regex(/^[a-z0-9][a-z0-9_-]{2,99}$/u),
   repository_id: z.string().min(1),
@@ -40,6 +47,7 @@ const evaluationTaskSchema = z.object({
   codeatlas_coverage: z.enum(["supported", "out_of_coverage"]).default("supported"),
   context_token_budget: z.number().int().positive(),
   acceptable_evidence: z.array(evidenceSetSchema),
+  expectations: taskExpectationsSchema.optional(),
   expected_behavior: z.string().min(1),
   patch_test: z.string().min(1).nullable(),
 }).strict().superRefine((task, context) => {
@@ -178,6 +186,10 @@ export const evaluationObservationSchema = z.object({
   success: z.boolean(),
   abstained: z.boolean(),
   evidence_files: z.array(z.string().min(1)),
+  answer_text: z.string().optional(),
+  concepts: z.array(z.string().min(1)).optional(),
+  relationship_types: z.array(z.string().min(1)).optional(),
+  starting_files: z.array(z.string().min(1)).optional(),
   metrics: metricsSchema,
   extraction: z.array(extractionMeasurementSchema).nullable(),
   explanation: explanationMeasurementSchema.nullable(),

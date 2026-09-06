@@ -66,7 +66,7 @@ function suite(): EvaluationSuite {
 function run(): EvaluationRun {
   return {
     schema_version: 1,
-    evaluator_version: "1.0.0",
+    evaluator_version: "1.1.0",
     id: "evaluation-run-v1",
     suite_id: "evaluation-test-v1",
     created_at: "2026-09-06T12:00:00.000+05:30",
@@ -159,6 +159,37 @@ describe("outcome evaluation runner", () => {
     input.tasks[0]!.acceptable_evidence = [];
     const parsed = evaluationSuiteSchema.safeParse(input);
     expect(parsed.success).toBe(false);
+  });
+
+  it("rejects claimed success when semantic task expectations are missed", () => {
+    const input = suite();
+    input.tasks[0]!.expectations = {
+      required_concepts: ["authenticate"],
+      required_relationship_types: ["CALLS"],
+      allowed_starting_files: ["src/a.ts"],
+      forbidden_distractors: ["unrelatedVariable"],
+    };
+    const observations = completeObservations();
+    for (const item of observations.filter((candidate) => candidate.task_id === "answerable-task")) {
+      item.answer_text = "The unrelatedVariable contains the implementation.";
+      item.concepts = ["unrelatedVariable"];
+      item.relationship_types = [];
+      item.starting_files = ["src/other.ts"];
+    }
+
+    const report = evaluateRun(input, run(), observations);
+
+    expect(report.complete).toBe(false);
+    expect(report.errors).toEqual(expect.arrayContaining([
+      expect.stringContaining("misses required concepts: authenticate"),
+      expect.stringContaining("required relationship types: CALLS"),
+      expect.stringContaining("allowed starting file: src/a.ts"),
+      expect.stringContaining("forbidden distractors present: unrelatedVariable"),
+    ]));
+    expect(report.variants.codeatlas).toMatchObject({
+      expectation_tasks_measured: 1,
+      expectation_pass_rate: 0,
+    });
   });
 
   it("hashes fixture contents deterministically and reports drift", async () => {

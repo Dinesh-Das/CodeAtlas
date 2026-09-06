@@ -38,7 +38,7 @@ function fixture(): Atlas {
     resolution_issues: [], domains: [], entrypoint_ids: [], flows: [], control_flows: [],
     impact: { forward: {}, reverse: {}, scores: [] }, git_changes: [], rules: [],
     rule_violations: [], review_findings: [],
-    statistics: { files: 1, symbols: 1, relationships: 0, domains: 0, entrypoints: 0,
+    statistics: { files: 0, symbols: 1, relationships: 0, domains: 0, entrypoints: 0,
       flows: 0, control_flows: 0, rule_violations: 0, review_findings: 0 },
   };
 }
@@ -58,6 +58,17 @@ describe("canonical CodeAtlas IR", () => {
     const second = fixture();
     second.snapshot.created_at = "2030-01-01T00:00:00.000Z";
     expect(semanticAtlasJson(first)).toBe(semanticAtlasJson(second));
+  });
+
+  it("rejects canonical statistics that drift from their collections", () => {
+    const atlas = fixture();
+    atlas.statistics.symbols = 0;
+    atlas.statistics.relationships = 2;
+
+    expect(validateAtlas(atlas).errors).toEqual(expect.arrayContaining([
+      "Statistic symbols is 0; expected 1 from canonical data.",
+      "Statistic relationships is 2; expected 0 from canonical data.",
+    ]));
   });
 
   it("loads 1.0 snapshots through the explicit compatibility upgrade", () => {

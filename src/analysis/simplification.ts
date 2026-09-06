@@ -232,8 +232,13 @@ function searchLookups(atlas: Atlas): SymbolSearchLookups {
 }
 
 export function symbolSearchTerms(value: string): string[] {
-  return [...new Set(value.toLocaleLowerCase().split(/[^\p{L}\p{N}_$-]+/u)
-    .filter((term) => term.length > 1))];
+  const lexical = value.toLocaleLowerCase().split(/[^\p{L}\p{N}_$-]+/u);
+  const identifiers = value
+    .replace(/([\p{Ll}\p{N}])([\p{Lu}])/gu, "$1 $2")
+    .replace(/[_$-]+/gu, " ")
+    .toLocaleLowerCase()
+    .split(/[^\p{L}\p{N}]+/u);
+  return [...new Set([...lexical, ...identifiers].filter((term) => term.length > 1))];
 }
 
 export function symbolSearchText(

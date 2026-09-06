@@ -90,8 +90,8 @@ export function createProgram(): Command {
     .option("--repository <path>", "Repository path when no task positional argument is used")
     .option("--diff <base>", "Include changes between this Git base and HEAD")
     .option(
-      "--budget <tokens>",
-      "Conservative maximum context tokens",
+      "--budget <bytes>",
+      "Conservative maximum serialized-context bytes",
       boundedIntegerOption("budget", 512, 100_000),
       6_000,
     )

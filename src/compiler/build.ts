@@ -27,7 +27,7 @@ import { withDetachedWorktree } from "../git/worktree.js";
 import type { Atlas, AtlasGitChange, AtlasGitSymbolChange, AtlasSymbol } from "../ir/models.js";
 import { loadAtlasFromDatabase } from "../ir/loader.js";
 import { normalizeAtlas, serializeAtlas } from "../ir/serialization.js";
-import { assertValidAtlas } from "../ir/validation.js";
+import { assertValidAtlas, computeAtlasStatistics } from "../ir/validation.js";
 import { loadV2Config, v2ConfigFingerprint } from "../rules/config.js";
 import { applyDomainOverrides } from "../rules/domains.js";
 import { evaluateArchitectureRules } from "../rules/engine.js";
@@ -485,13 +485,7 @@ export async function buildRepository(
       .sort((left, right) => left.localeCompare(right));
   }
 
-  atlas.statistics = {
-    ...atlas.statistics,
-    flows: atlas.flows.length,
-    control_flows: atlas.control_flows.length,
-    rule_violations: atlas.rule_violations.length,
-    review_findings: atlas.review_findings.length,
-  };
+  atlas.statistics = computeAtlasStatistics(atlas);
   atlas = normalizeAtlas(atlas);
   assertValidAtlas(atlas);
 

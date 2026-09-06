@@ -66,6 +66,12 @@
         "description": "The HTTP entry point and authentication controller show the flow boundary.",
         "files": ["src/app.ts", "src/auth/controller.ts"]
       }],
+      "expectations": {
+        "required_concepts": ["app.post", "authenticate"],
+        "required_relationship_types": ["HANDLES", "CALLS"],
+        "allowed_starting_files": ["src/app.ts"],
+        "forbidden_distractors": ["duplicate"]
+      },
       "expected_behavior": "Identify app.post as the entry point and follow it into the authentication controller with citations.",
       "patch_test": null
     },
@@ -137,6 +143,12 @@
         "description": "Worker imports, extends, implements, calls, and reads declarations from base.",
         "files": ["consumer.ts", "base.ts"]
       }],
+      "expectations": {
+        "required_concepts": ["Worker", "Base", "shared", "value"],
+        "required_relationship_types": ["IMPORTS", "EXTENDS", "IMPLEMENTS", "CALLS", "REFERENCES"],
+        "allowed_starting_files": ["consumer.ts"],
+        "forbidden_distractors": ["database"]
+      },
       "expected_behavior": "Cover the import, inheritance, interface implementation, shared call, and value read without inventing runtime behavior.",
       "patch_test": null
     },
@@ -202,6 +214,12 @@
         "description": "Worker aliases Base and imports shared and value from the base module.",
         "files": ["consumer.py", "base.py"]
       }],
+      "expectations": {
+        "required_concepts": ["Worker", "Base", "shared", "value"],
+        "required_relationship_types": ["IMPORTS", "EXTENDS", "CALLS", "REFERENCES"],
+        "allowed_starting_files": ["consumer.py"],
+        "forbidden_distractors": ["database"]
+      },
       "expected_behavior": "Explain the alias, inheritance, call, and value read using both files.",
       "patch_test": null
     },
@@ -270,6 +288,12 @@
         "description": "Both routes and handlers are declared in routes.ts.",
         "files": ["routes.ts"]
       }],
+      "expectations": {
+        "required_concepts": ["GET /users/:userId", "POST /users"],
+        "required_relationship_types": ["HANDLES"],
+        "allowed_starting_files": ["routes.ts"],
+        "forbidden_distractors": ["rate limit"]
+      },
       "expected_behavior": "Identify GET /users/:userId and POST /users with their handlers.",
       "patch_test": null
     },
@@ -335,6 +359,12 @@
         "description": "The plugin, two registrations, shared handler, and done call are in routes.ts.",
         "files": ["routes.ts"]
       }],
+      "expectations": {
+        "required_concepts": ["statusRoutes", "sharedHandler", "done"],
+        "required_relationship_types": ["HANDLES", "CALLS"],
+        "allowed_starting_files": ["routes.ts"],
+        "forbidden_distractors": ["unconditional handler execution"]
+      },
       "expected_behavior": "Describe both registration styles and note that route execution is conditional runtime behavior.",
       "patch_test": null
     },
@@ -401,6 +431,12 @@
         "description": "The unsupported Rust source contains the complete processing flow.",
         "files": ["src/lib.rs"]
       }],
+      "expectations": {
+        "required_concepts": ["prosesu", "cofnodi", "cyfanswm", "coverage gap"],
+        "required_relationship_types": [],
+        "allowed_starting_files": ["src/lib.rs"],
+        "forbidden_distractors": ["database"]
+      },
       "expected_behavior": "Use native source evidence, explain prosesu through cofnodi to cyfanswm, and state the CodeAtlas coverage gap.",
       "patch_test": null
     },

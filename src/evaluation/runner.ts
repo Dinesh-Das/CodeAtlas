@@ -41,6 +41,8 @@ interface VariantReport {
   knowledge_transfer_samples: number;
   median_time_to_locate_ms: number | null;
   flow_explanation_accuracy: number | null;
+  expectation_tasks_measured: number;
+  expectation_pass_rate: number | null;
 }
 
 interface ExtractionReport {
@@ -127,6 +129,8 @@ interface TaskAggregate {
   knowledgeTransferMeasured: boolean;
   timeToLocateMs: number;
   flowExplanationCorrect: boolean;
+  expectationMeasured: boolean;
+  expectationPassRate: number;
 }
 
 function rounded(value: number): number {
@@ -229,6 +233,42 @@ function normalizeFile(value: string): string {
   return value.replaceAll("\\", "/").replace(/^\.\//u, "");
 }
 
+function expectationFailures(
+  task: EvaluationTask,
+  observation: EvaluationObservation,
+): string[] {
+  const expected = task.expectations;
+  if (expected === undefined) return [];
+  const answer = observation.answer_text?.toLocaleLowerCase() ?? "";
+  const concepts = new Set((observation.concepts ?? []).map((value) => value.toLocaleLowerCase()));
+  const relationships = new Set((observation.relationship_types ?? [])
+    .map((value) => value.toLocaleUpperCase()));
+  const startingFiles = new Set((observation.starting_files ?? []).map(normalizeFile));
+  const missingConcepts = expected.required_concepts.filter((concept) => {
+    const normalized = concept.toLocaleLowerCase();
+    return !concepts.has(normalized) && !answer.includes(normalized);
+  });
+  const missingRelationships = expected.required_relationship_types.filter((type) =>
+    !relationships.has(type.toLocaleUpperCase())
+  );
+  const startsAllowed = expected.allowed_starting_files.length === 0 ||
+    expected.allowed_starting_files.some((file) => startingFiles.has(normalizeFile(file)));
+  const combinedText = `${answer}\n${[...concepts].join("\n")}`;
+  const distractors = expected.forbidden_distractors.filter((value) =>
+    combinedText.includes(value.toLocaleLowerCase())
+  );
+  return [
+    ...(missingConcepts.length === 0 ? [] : [`required concepts: ${missingConcepts.join(", ")}`]),
+    ...(missingRelationships.length === 0
+      ? []
+      : [`required relationship types: ${missingRelationships.join(", ")}`]),
+    ...(startsAllowed ? [] : [
+      `allowed starting file: ${expected.allowed_starting_files.join(" or ")}`,
+    ]),
+    ...(distractors.length === 0 ? [] : [`forbidden distractors present: ${distractors.join(", ")}`]),
+  ];
+}
+
 function evidenceRecall(task: EvaluationTask, evidenceFiles: readonly string[]): number {
   if (task.answerability !== "answerable") return evidenceFiles.length === 0 ? 1 : 0;
   const files = new Set(evidenceFiles.map(normalizeFile));
@@ -259,6 +299,10 @@ function taskAggregate(
     `${item.edge_type}\0${item.framework ?? ""}`
   ))].sort();
   const successRate = mean(observations.map((observation) => Number(observation.success)));
+  const expectationMeasured = task.expectations !== undefined;
+  const expectationPassRate = expectationMeasured
+    ? mean(observations.map((observation) => Number(expectationFailures(task, observation).length === 0)))
+    : 0;
   return {
     task,
     repositoryId: task.repository_id,
@@ -299,6 +343,8 @@ function taskAggregate(
     timeToLocateMs: median(knowledgeTransfer.map((item) => item.time_to_locate_ms)),
     flowExplanationCorrect: knowledgeTransfer.length > 0 &&
       mean(knowledgeTransfer.map((item) => Number(item.flow_explanation_correct))) >= 0.5,
+    expectationMeasured,
+    expectationPassRate,
   };
 }
 
@@ -347,6 +393,7 @@ function variantReport(aggregates: readonly TaskAggregate[]): VariantReport {
   );
   const patchAggregates = aggregates.filter((aggregate) => aggregate.patchMeasured);
   const knowledgeTransfer = aggregates.filter((aggregate) => aggregate.knowledgeTransferMeasured);
+  const expectationAggregates = aggregates.filter((aggregate) => aggregate.expectationMeasured);
   return {
     successful_tasks: successes,
     task_count: aggregates.length,
@@ -380,6 +427,10 @@ function variantReport(aggregates: readonly TaskAggregate[]): VariantReport {
     flow_explanation_accuracy: knowledgeTransfer.length === 0
       ? null
       : rounded(mean(knowledgeTransfer.map((aggregate) => Number(aggregate.flowExplanationCorrect)))),
+    expectation_tasks_measured: expectationAggregates.length,
+    expectation_pass_rate: expectationAggregates.length === 0
+      ? null
+      : rounded(mean(expectationAggregates.map((aggregate) => aggregate.expectationPassRate))),
   };
 }
 
@@ -467,6 +518,12 @@ export function evaluateRun(
     const task = tasks.get(observation.task_id);
     if (task !== undefined && observation.metrics.context_tokens > task.context_token_budget) {
       errors.push(`${key} exceeds its ${task.context_token_budget}-token context budget.`);
+    }
+    if (task !== undefined && observation.success) {
+      const failures = expectationFailures(task, observation);
+      if (failures.length > 0) {
+        errors.push(`${key} is marked successful but misses ${failures.join("; ")}.`);
+      }
     }
     observations.push(observation);
   }

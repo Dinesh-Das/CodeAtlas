@@ -329,7 +329,7 @@ describe("MCP stdio contract", () => {
         expect(canonicalResultSchema.parse(undersizedContext.structuredContent)).toMatchObject({
           status: "error",
           error: { code: "budget_too_small", recoverable: true },
-          next_actions: ["Increase the context budget or shorten the task description."],
+          next_actions: ["Increase the byte budget or shorten the task description."],
         });
 
         const routeSearch = await client.callTool({

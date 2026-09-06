@@ -192,11 +192,23 @@ function relevantConstraints(
   return uniqueById([...violations, ...decisions]).slice(0, 20);
 }
 
-function resolutionGaps(atlas: Atlas, relevantIds: ReadonlySet<string>): ChangeContextGap[] {
+function resolutionGaps(
+  atlas: Atlas,
+  relevantIds: ReadonlySet<string>,
+  taskTerms: readonly string[],
+): ChangeContextGap[] {
+  const normalizedTaskTerms = new Set(taskTerms.map((term) => term.toLocaleLowerCase()));
   return atlas.resolution_issues.flatMap((issue): ChangeContextGap[] => {
     if (!relevantIds.has(issue.source_id) && !issue.candidate_ids.some((id) => relevantIds.has(id))) {
       return [];
     }
+    const referenceTerms = (issue.reference_name ?? "").toLocaleLowerCase()
+      .split(/[^\p{L}\p{N}_$-]+/u)
+      .filter(Boolean);
+    const namedByTask = referenceTerms.some((term) => normalizedTaskTerms.has(term));
+    const resolvesToRelevantCandidate = issue.candidate_ids.some((id) => relevantIds.has(id));
+    if (["reference", "reflection"].includes(issue.reference_kind) &&
+      !namedByTask && !resolvesToRelevantCandidate) return [];
     const code = issue.reason === "dynamic_relationship" ? "dynamic_relationship"
       : issue.reason === "unsupported_framework" ? "unsupported_coverage"
       : "unresolved_reference";
@@ -208,6 +220,20 @@ function resolutionGaps(atlas: Atlas, relevantIds: ReadonlySet<string>): ChangeC
       evidence_ids: issue.evidence_ids,
     }];
   });
+}
+
+function selectedResolutionIds(
+  candidates: readonly ChangeCandidate[],
+  paths: readonly ChangeContextPath[],
+  tests: readonly ChangeContextTest[],
+  contracts: readonly ChangeContextContract[],
+): Set<string> {
+  return new Set([
+    ...candidates.map((candidate) => candidate.symbol.id),
+    ...paths.slice(0, 12).flatMap((path) => path.symbol_ids),
+    ...tests.map((test) => test.symbol.id),
+    ...contracts.map((contract) => contract.symbol.id),
+  ]);
 }
 
 function fallbackCandidates(atlas: Atlas): AtlasSymbol[] {
@@ -230,12 +256,36 @@ function collectEvidenceIds(candidate: ChangeCandidate): string[] {
   ])];
 }
 
+function diversifyRankedCandidates(
+  ranked: readonly ReturnType<typeof rankChangeCandidates>[number][],
+  symbolById: ReadonlyMap<string, AtlasSymbol>,
+  limit: number,
+): ReturnType<typeof rankChangeCandidates> {
+  const selected: ReturnType<typeof rankChangeCandidates> = [];
+  const selectedIds = new Set<string>();
+  const files = new Set<string>();
+  for (const item of ranked) {
+    const file = symbolById.get(item.symbolId)?.file;
+    if (file === null || file === undefined || files.has(file)) continue;
+    selected.push(item);
+    selectedIds.add(item.symbolId);
+    files.add(file);
+    if (selected.length >= Math.min(6, limit)) break;
+  }
+  for (const item of ranked) {
+    if (selectedIds.has(item.symbolId)) continue;
+    selected.push(item);
+    if (selected.length >= limit) break;
+  }
+  return selected;
+}
+
 export function compileChangeContextFromAtlas(
   atlas: Atlas,
   repositoryRoot: string,
   snapshot: ContextPlannerSnapshot,
   task: string,
-  options: Omit<CompileChangeContextOptions, "gitBase"> = {},
+  options: CompileChangeContextOptions = {},
   resources: ChangeContextResources = {},
 ): ChangeContext {
   const trimmedTask = task.trim();
@@ -253,13 +303,15 @@ export function compileChangeContextFromAtlas(
     ? ftsCandidates(repositoryRoot, ftsQuery)
     : resources.queryStore.searchSymbols(intent.terms.join(" "), 100).items;
   const projection = resources.projection ?? createAtlasProjection(atlas);
-  const ranked = rankChangeCandidates(atlas, trimmedTask, intent, {
+  const ranked = rankChangeCandidates(atlas, intent, {
     fts,
     changedSymbolIds,
+    prioritizeChangedSymbols: options.gitBase !== undefined ||
+      /\b(?:current|diff|changes?|review|working[- ]tree)\b/iu.test(trimmedTask),
     searchTextBySymbolId: projection.searchTextBySymbolId,
   });
   const symbolById = projection.symbolById;
-  let selectedSymbols = ranked.slice(0, 12).flatMap((item) => {
+  let selectedSymbols = diversifyRankedCandidates(ranked, projection.symbolById, 12).flatMap((item) => {
     const symbol = symbolById.get(item.symbolId);
     return symbol === undefined ? [] : [{ symbol, ranked: item }];
   });
@@ -267,7 +319,7 @@ export function compileChangeContextFromAtlas(
     intent.explicit_endpoints.length > 0 || intent.explicit_domains.length > 0;
   const hasSpecificTerm = intent.terms.some((term) => !GENERIC_TASK_TERMS.has(term));
   const underspecified = !hasExplicitTarget && !hasSpecificTerm;
-  if (selectedSymbols.length === 0 || underspecified) {
+  if (underspecified || (selectedSymbols.length === 0 && intent.kind === "architecture")) {
     const fallback = fallbackCandidates(atlas);
     const known = new Set(selectedSymbols.map((item) => item.symbol.id));
     selectedSymbols = [
@@ -338,30 +390,42 @@ export function compileChangeContextFromAtlas(
     evidence_ids: symbol.evidence_ids,
   })).slice(0, 20);
   const impactedIds = new Set(allPaths.flatMap((item) => item.symbol_ids));
-  const testCandidates = atlas.symbols.flatMap((symbol): ChangeContextTest[] => {
+  const testCandidates = atlas.symbols.flatMap((symbol): Array<{
+    test: ChangeContextTest;
+    taskScore: number;
+  }> => {
     const executableTestSymbol = TEST_PATTERN.test(symbol.file ?? "") &&
       ["function", "method", "class"].includes(symbol.kind);
     if (symbolRef(symbol) === null || (symbol.kind !== "test" && !executableTestSymbol)) {
       return [];
     }
-    const taskMatch = fts.some((item) => item.id === symbol.id);
+    const taskText = `${symbol.name} ${symbol.qualified_name ?? ""} ${symbol.file ?? ""}`
+      .toLocaleLowerCase();
+    const taskScore = intent.terms.filter((term) => term.length >= 3 && taskText.includes(term)).length;
+    const taskMatch = fts.some((item) => item.id === symbol.id) || taskScore > 0;
     if (!relevantIds.has(symbol.id) && !impactedIds.has(symbol.id) && !taskMatch) return [];
     return [{
-      symbol: symbolRef(symbol)!,
-      relationship: relevantIds.has(symbol.id) ? "direct" : impactedIds.has(symbol.id) ? "impacted" : "task_match",
-      evidence_ids: symbol.evidence_ids,
+      test: {
+        symbol: symbolRef(symbol)!,
+        relationship: relevantIds.has(symbol.id)
+          ? "direct"
+          : impactedIds.has(symbol.id) ? "impacted" : "task_match",
+        evidence_ids: symbol.evidence_ids,
+      },
+      taskScore,
     }];
   }).sort((left, right) =>
-    Number(right.relationship !== "task_match") - Number(left.relationship !== "task_match") ||
-    Number(right.symbol.kind !== "test") - Number(left.symbol.kind !== "test") ||
-    left.symbol.id.localeCompare(right.symbol.id)
+    right.taskScore - left.taskScore ||
+    Number(right.test.relationship !== "task_match") - Number(left.test.relationship !== "task_match") ||
+    Number(right.test.symbol.kind !== "test") - Number(left.test.symbol.kind !== "test") ||
+    left.test.symbol.id.localeCompare(right.test.symbol.id)
   );
   const seenTestFiles = new Set<string>();
-  const tests = testCandidates.filter((test) => {
+  const tests = testCandidates.filter(({ test }) => {
     if (seenTestFiles.has(test.symbol.file)) return false;
     seenTestFiles.add(test.symbol.file);
     return true;
-  }).slice(0, 20);
+  }).slice(0, 20).map(({ test }) => test);
 
   const gaps: ChangeContextGap[] = [
     ...ambiguousGaps(atlas, intent.explicit_symbols),
@@ -379,7 +443,11 @@ export function compileChangeContextFromAtlas(
       candidate_ids: [],
       evidence_ids: [],
     }] : []),
-    ...resolutionGaps(atlas, relevantIds),
+    ...resolutionGaps(
+      atlas,
+      selectedResolutionIds(candidates, allPaths, tests, contracts),
+      intent.terms,
+    ),
   ];
   const limitations = [
     ...(atlas.statistics.files === 0 ? ["No supported source files were indexed."] : []),

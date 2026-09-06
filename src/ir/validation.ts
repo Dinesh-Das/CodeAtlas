@@ -1,9 +1,23 @@
-import type { Atlas } from "./models.js";
+import type { Atlas, AtlasStatistics } from "./models.js";
 import { atlasSchema } from "./schema.js";
 
 export interface AtlasValidationResult {
   valid: boolean;
   errors: string[];
+}
+
+export function computeAtlasStatistics(atlas: Atlas): AtlasStatistics {
+  return {
+    files: atlas.symbols.filter((symbol) => symbol.kind === "file").length,
+    symbols: atlas.symbols.length,
+    relationships: atlas.relationships.length,
+    domains: atlas.domains.length,
+    entrypoints: atlas.entrypoint_ids.length,
+    flows: atlas.flows.length,
+    control_flows: atlas.control_flows.length,
+    rule_violations: atlas.rule_violations.length,
+    review_findings: atlas.review_findings.length,
+  };
 }
 
 export function validateAtlas(atlas: Atlas): AtlasValidationResult {
@@ -13,6 +27,14 @@ export function validateAtlas(atlas: Atlas): AtlasValidationResult {
     errors.push(...schemaResult.error.issues.map((issue) =>
       `${issue.path.join(".") || "atlas"}: ${issue.message}`,
     ));
+  }
+
+  const expectedStatistics = computeAtlasStatistics(atlas);
+  for (const [name, expected] of Object.entries(expectedStatistics)) {
+    const actual = atlas.statistics[name as keyof AtlasStatistics];
+    if (actual !== expected) {
+      errors.push(`Statistic ${name} is ${actual}; expected ${expected} from canonical data.`);
+    }
   }
 
   const unique = (label: string, ids: readonly string[]): Set<string> => {

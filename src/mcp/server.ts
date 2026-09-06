@@ -231,7 +231,7 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
   server.registerTool(
     "get_change_context",
     {
-      description: "Compile a source-grounded implementation brief within a conservative context-token budget.",
+      description: "Compile a source-grounded implementation brief within a conservative UTF-8 byte budget.",
       inputSchema: z.object({
         task: z.string().trim().min(1).max(8_000),
         budget: z.number().int().min(2_000).max(100_000).optional().default(6_000),

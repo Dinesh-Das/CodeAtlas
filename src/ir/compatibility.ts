@@ -1,5 +1,5 @@
 import { ATLAS_SCHEMA_VERSION, type Atlas } from "./models.js";
-import { assertValidAtlas } from "./validation.js";
+import { assertValidAtlas, computeAtlasStatistics } from "./validation.js";
 
 const LEGACY_ATLAS_SCHEMA_VERSIONS = new Set(["1.0", "1.1"]);
 const EXECUTABLE_RELATIONSHIPS = new Set([
@@ -70,6 +70,7 @@ export function loadCompatibleAtlasSnapshot(value: unknown): Atlas {
     }
     value.resolution_issues = [];
     value.schema_version = ATLAS_SCHEMA_VERSION;
+    value.statistics = computeAtlasStatistics(value as unknown as Atlas);
   }
   const atlas = value as unknown as Atlas;
   assertValidAtlas(atlas);

@@ -1,10 +1,12 @@
 import type { Atlas } from "../ir/models.js";
+import { symbolSearchTerms } from "../analysis/simplification.js";
 import type { ChangeContext, ChangeIntentKind } from "./packet.js";
 
 const STOP_WORDS = new Set([
   "a", "add", "an", "and", "are", "as", "at", "be", "by", "change", "code", "does",
-  "for", "from", "how", "i", "in", "is", "it", "of", "on", "or", "please", "repository",
-  "should", "the", "this", "to", "update", "we", "what", "where", "which", "with",
+  "affected", "around", "become", "becomes", "for", "from", "how", "i", "in", "is", "it",
+  "new", "of", "on", "or", "output", "please", "repository", "should", "that", "the", "this",
+  "to", "update", "we", "what", "where", "which", "with",
 ]);
 
 const APPROVED_VOCABULARY: ReadonlyArray<{ pattern: RegExp; terms: readonly string[] }> = [
@@ -14,6 +16,10 @@ const APPROVED_VOCABULARY: ReadonlyArray<{ pattern: RegExp; terms: readonly stri
   { pattern: /\b(?:test|spec|fixture|coverage)\b/iu, terms: ["test", "spec", "fixture"] },
   { pattern: /\b(?:http|api|endpoint|route)\b/iu, terms: ["api", "endpoint", "route"] },
   { pattern: /\b(?:config|configuration|setting)\b/iu, terms: ["config", "configuration"] },
+  { pattern: /\bmcp\b/iu, terms: ["mcp", "server", "query"] },
+  { pattern: /\b(?:index|indexed|retrieval|retrieve|search)\b/iu, terms: ["index", "search", "query", "store"] },
+  { pattern: /\b(?:evidence|provenance|grounded)\b/iu, terms: ["evidence", "provenance", "source"] },
+  { pattern: /\b(?:response|result|serialize|output)\b/iu, terms: ["response", "result", "serialize"] },
 ];
 
 function classify(task: string): ChangeIntentKind {
@@ -33,7 +39,7 @@ function unique(values: readonly string[]): string[] {
 export type ChangeTaskIntent = ChangeContext["intent"];
 
 export function classifyChangeTask(task: string, atlas: Atlas): ChangeTaskIntent {
-  const rawTerms = task.toLocaleLowerCase().match(/[\p{L}\p{N}_$-]+/gu) ?? [];
+  const rawTerms = symbolSearchTerms(task);
   const vocabularyTerms = APPROVED_VOCABULARY.flatMap((entry) =>
     entry.pattern.test(task) ? entry.terms : []
   );
@@ -56,16 +62,20 @@ export function classifyChangeTask(task: string, atlas: Atlas): ChangeTaskIntent
   ].flatMap((value) => typeof value === "string" ? [value] : [value[1] ?? ""]));
   const domainNames = atlas.domains.map((domain) => domain.name);
   const explicitDomains = domainNames.filter((name) => {
-    const normalized = name.toLocaleLowerCase();
-    return task.toLocaleLowerCase().includes(normalized) || terms.includes(normalized);
+    const domainTerms = symbolSearchTerms(name);
+    return domainTerms.length > 0 && domainTerms.every((term) => rawTerms.includes(term));
   });
   const exactNames = new Set(atlas.symbols.flatMap((symbol) => [
     symbol.name.toLocaleLowerCase(),
     symbol.qualified_name?.toLocaleLowerCase() ?? "",
   ]));
-  const explicitSymbols = unique([...quoted, ...identifiers])
+  const exactIdentifierTokens = task.match(/\b[A-Za-z_$][A-Za-z0-9_$:-]*\b/gu) ?? [];
+  const codeLikeIdentifiers = exactIdentifierTokens.filter((value) =>
+    /[a-z0-9][A-Z]|[_$:]/u.test(value) || /^[A-Z][a-z]/u.test(value)
+  );
+  const explicitSymbols = unique([...quoted, ...identifiers, ...codeLikeIdentifiers])
     .filter((value) => !explicitFiles.includes(value) && !explicitEndpoints.includes(value))
-    .filter((value) => exactNames.has(value.toLocaleLowerCase()) || /^[A-Za-z_$][A-Za-z0-9_$.:-]*$/u.test(value));
+    .filter((value) => exactNames.has(value.toLocaleLowerCase()));
   return {
     kind: classify(task),
     terms,

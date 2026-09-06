@@ -13,14 +13,14 @@ export interface ContextBudgetInput {
   envelopeReserve: number;
 }
 
-export function estimatedContextTokens(serialized: string): number {
+export function estimatedContextBytes(serialized: string): number {
   return Buffer.byteLength(serialized, "utf8");
 }
 
 function updateUsed(packet: ChangeContext): number {
   let previous = -1;
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    const used = estimatedContextTokens(serializeChangeContext(packet, packet.budget.format)) +
+    const used = estimatedContextBytes(serializeChangeContext(packet, packet.budget.format)) +
       packet.budget.envelope_reserved;
     packet.budget.used = used;
     if (used === previous) return used;
@@ -109,6 +109,19 @@ function tryAdd<K extends keyof Pick<
   return false;
 }
 
+function compactCandidate(candidate: ChangeContext["change_candidates"][number]) {
+  return {
+    ...candidate,
+    retrieval_reasons: candidate.retrieval_reasons.slice(0, 2),
+    recommendation: {
+      ...candidate.recommendation,
+      rationale: "Highest-ranked source-backed starting point.",
+    },
+    supporting_paths: [],
+    evidence_ids: candidate.symbol.evidence_ids,
+  };
+}
+
 export function fitChangeContextToBudget(
   base: Omit<ChangeContext, "change_candidates" | "verified_paths" | "potential_paths" |
     "relevant_flows" | "affected_contracts" | "relevant_tests" | "constraints" | "evidence" |
@@ -132,8 +145,8 @@ export function fitChangeContextToBudget(
     budget: {
       requested: budget.requested,
       used: 0,
-      tokenizer: "utf8-bytes-upper-bound/v1",
-      estimated: true,
+      unit: "utf8_bytes_upper_bound",
+      estimator: "utf8-bytes-upper-bound/v1",
       envelope_reserved: budget.envelopeReserve,
       format: budget.format,
     },
@@ -142,38 +155,41 @@ export function fitChangeContextToBudget(
   const evidenceById = new Map(evidence.map((item) => [item.id, item]));
   if (updateUsed(packet) > budget.requested) {
     throw new CodeAtlasError(
-      `The ${budget.requested}-token budget is too small for the task, coverage, and continuation envelope.`,
+      `The ${budget.requested}-byte context budget is too small for the task, coverage, and continuation envelope.`,
       {
         code: "budget_too_small",
         recoverable: true,
-        nextActions: ["Increase the context budget or shorten the task description."],
+        nextActions: ["Increase the byte budget or shorten the task description."],
         details: { requested: budget.requested, minimum: packet.budget.used },
       },
     );
   }
   let omitted = 0;
+  const priorityGaps = collections.gaps.filter((gap) =>
+    ["ambiguous_target", "insufficient_task_specificity", "unsupported_coverage"].includes(gap.code)
+  );
+  const resolutionGaps = collections.gaps.filter((gap) => !priorityGaps.includes(gap));
   const ordered: Array<[keyof typeof collections, readonly unknown[]]> = [
-    ["gaps", collections.gaps.slice(0, 1)],
-    ["relevant_tests", collections.relevant_tests],
     ["change_candidates", collections.change_candidates.slice(0, 1)],
+    ["gaps", priorityGaps],
+    ["relevant_tests", collections.relevant_tests.slice(0, 1)],
+    ["verified_paths", collections.verified_paths.slice(0, 2)],
+    ["change_candidates", collections.change_candidates.slice(1, 4).map(compactCandidate)],
     ["affected_contracts", collections.affected_contracts],
     ["constraints", collections.constraints],
-    ["gaps", collections.gaps.slice(1)],
     ["relevant_flows", collections.relevant_flows],
-    ["verified_paths", collections.verified_paths],
+    ["verified_paths", collections.verified_paths.slice(2)],
+    ["relevant_tests", collections.relevant_tests.slice(1)],
+    ["gaps", resolutionGaps],
     ["potential_paths", collections.potential_paths],
-    ["change_candidates", collections.change_candidates.slice(1)],
+    ["change_candidates", collections.change_candidates.slice(4).map(compactCandidate)],
   ];
   for (const [key, items] of ordered) {
     for (const item of items) {
       if (tryAdd(packet, key, item as never, evidenceById)) continue;
       if (key === "change_candidates") {
         const candidate = item as ChangeContext["change_candidates"][number];
-        const compact = {
-          ...candidate,
-          supporting_paths: [],
-          evidence_ids: candidate.symbol.evidence_ids,
-        };
+        const compact = compactCandidate(candidate);
         if (tryAdd(packet, "change_candidates", compact, evidenceById)) {
           omitted += 1;
           continue;

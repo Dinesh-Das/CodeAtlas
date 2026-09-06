@@ -5,7 +5,7 @@ import type {
   AtlasTargetResolution,
 } from "../ir/models.js";
 
-export const CHANGE_CONTEXT_SCHEMA_VERSION = "1.0" as const;
+export const CHANGE_CONTEXT_SCHEMA_VERSION = "1.1" as const;
 export type ChangeContextFormat = "json" | "markdown";
 export type ChangeIntentKind =
   | "architecture"
@@ -135,8 +135,8 @@ export interface ChangeContext {
   budget: {
     requested: number;
     used: number;
-    tokenizer: "utf8-bytes-upper-bound/v1";
-    estimated: true;
+    unit: "utf8_bytes_upper_bound";
+    estimator: "utf8-bytes-upper-bound/v1";
     envelope_reserved: number;
     format: ChangeContextFormat;
   };
@@ -175,7 +175,7 @@ export function renderChangeContextMarkdown(packet: ChangeContext): string {
     `Task: ${packet.task}`,
     `Intent: ${packet.intent.kind}`,
     `Snapshot: ${packet.snapshot.id}`,
-    `Budget: ${packet.budget.used}/${packet.budget.requested} ${packet.budget.tokenizer}`,
+    `Budget: ${packet.budget.used}/${packet.budget.requested} ${packet.budget.unit} (${packet.budget.estimator})`,
     "",
     packet.summary,
     "",
@@ -226,7 +226,7 @@ export function serializeChangeContext(
   packet: ChangeContext,
   format: ChangeContextFormat,
 ): string {
-  return format === "json" ? JSON.stringify(packet, null, 2) : renderChangeContextMarkdown(packet);
+  return format === "json" ? JSON.stringify(packet) : renderChangeContextMarkdown(packet);
 }
 
 export function validateChangeContextGrounding(packet: ChangeContext): string[] {
