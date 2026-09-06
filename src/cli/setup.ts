@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { CodeAtlasError } from "../core/errors.js";
 import { workspaceExists } from "../core/workspace.js";
 import { detectRepository } from "../git/repository.js";
+import { repositoryOverviewIr } from "../mcp/ir-tools.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -20,6 +21,11 @@ export type SetupStatus =
 
 export interface SetupResult {
   repositoryRoot: string;
+  verification: {
+    tool: "get_repository_overview";
+    schemaVersion: string;
+    snapshotId: string;
+  };
   targets: Array<{
     target: SetupTarget;
     status: SetupStatus;
@@ -178,6 +184,12 @@ export async function setupRepository(
   if (!(await workspaceExists(repository.root))) {
     throw new CodeAtlasError("Error: CodeAtlas is not initialized. Run `codeatlas init` first.");
   }
+  const overview = await repositoryOverviewIr(repository.root);
+  const verification = {
+    tool: "get_repository_overview" as const,
+    schemaVersion: overview.schema_version,
+    snapshotId: overview.snapshot.id,
+  };
   const targets = options.targets === undefined
     ? await detectSetupTargets()
     : [...new Set(options.targets)];
@@ -247,7 +259,7 @@ export async function setupRepository(
       });
     }
   }
-  return { repositoryRoot: repository.root, targets: results };
+  return { repositoryRoot: repository.root, verification, targets: results };
 }
 
 export function parseSetupTargets(value: string): SetupTarget[] {
@@ -264,6 +276,8 @@ export function parseSetupTargets(value: string): SetupTarget[] {
 export function formatSetupResult(result: SetupResult): string {
   return [
     "CodeAtlas MCP setup",
+    "",
+    `[OK] Verified ${result.verification.tool} (IR ${result.verification.schemaVersion}, snapshot ${result.verification.snapshotId}).`,
     "",
     ...result.targets.map((entry) => {
       const marker = entry.status === "already_configured"

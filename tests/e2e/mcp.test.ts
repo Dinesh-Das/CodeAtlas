@@ -120,6 +120,7 @@ describe("MCP stdio contract", () => {
           "codeatlas_health",
           "find_symbol",
           "search_symbols",
+          "get_change_context",
           "get_repository_overview",
           "get_symbol",
           "get_callers",
@@ -163,6 +164,7 @@ describe("MCP stdio contract", () => {
             "compare_snapshots",
             "find_symbol",
             "get_callers",
+            "get_change_context",
             "get_control_flow",
             "get_dependencies",
             "get_domain",
@@ -278,6 +280,37 @@ describe("MCP stdio contract", () => {
             dynamic_references: expect.any(Number),
             conditional_relationships: expect.any(Number),
           },
+        });
+
+        const changeContext = await client.callTool({
+          name: "get_change_context",
+          arguments: { task: "Add validation around `runCheckout` and identify affected tests", budget: 6_000 },
+        });
+        expect(changeContext.isError).not.toBe(true);
+        const changeContextContent = canonicalResultSchema.parse(changeContext.structuredContent) as {
+          change_candidates: Array<{ symbol: { id: string } }>;
+          budget: { requested: number; used: number; envelope_reserved: number };
+        } & Record<string, unknown>;
+        expect(changeContextContent.change_candidates).toEqual(expect.arrayContaining([
+          expect.objectContaining({ symbol: expect.objectContaining({ id: runCheckoutId }) }),
+        ]));
+        expect(changeContextContent.budget).toMatchObject({
+          requested: 6_000,
+          envelope_reserved: 1_400,
+        });
+        expect(changeContextContent.budget.used).toBeLessThanOrEqual(6_000);
+        expect(Buffer.byteLength(JSON.stringify(changeContext.structuredContent), "utf8"))
+          .toBeLessThanOrEqual(6_000);
+
+        const undersizedContext = await client.callTool({
+          name: "get_change_context",
+          arguments: { task: "Change `runCheckout`", budget: 2_000 },
+        });
+        expect(undersizedContext.isError).toBe(true);
+        expect(canonicalResultSchema.parse(undersizedContext.structuredContent)).toMatchObject({
+          status: "error",
+          error: { code: "budget_too_small", recoverable: true },
+          next_actions: ["Increase the context budget or shorten the task description."],
         });
 
         const routeSearch = await client.callTool({

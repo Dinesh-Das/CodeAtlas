@@ -2,6 +2,7 @@ import { describeImpact } from "../analysis/impact.js";
 import { rankSymbolSearch } from "../analysis/simplification.js";
 import { loadConfig } from "../core/config.js";
 import { CodeAtlasError } from "../core/errors.js";
+import { compileChangeContextFromAtlas } from "../context/planner.js";
 import { workspacePaths } from "../core/workspace.js";
 import { compareSnapshots, loadSnapshot } from "../git/snapshots.js";
 import type { Atlas } from "../ir/models.js";
@@ -333,6 +334,20 @@ export async function repositoryOverviewIr(repositoryPath: string) {
     resolution_issues: { total: atlas.resolution_issues.length, by_reason: issuesByReason },
     pagination: { domains: domains.pagination, entrypoints: entrypoints.pagination },
   }, runtime);
+}
+
+export async function changeContextIr(repositoryPath: string, task: string, budget: number) {
+  const runtime = await loadIrRuntime(repositoryPath);
+  const packet = compileChangeContextFromAtlas(runtime.atlas, runtime.repositoryRoot, {
+    id: runtime.atlas.snapshot.id,
+    fingerprint: runtime.fingerprint,
+    generations: runtime.responseContext.generations,
+  }, task, {
+    budget,
+    format: "json",
+    envelopeReserve: 1_400,
+  });
+  return withRuntime(packet as unknown as Record<string, unknown>, runtime);
 }
 
 export async function neighborhoodIr(

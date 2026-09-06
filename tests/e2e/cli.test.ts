@@ -25,7 +25,7 @@ describe("compiled CLI", () => {
   it("exposes the complete v2 command surface through Commander", async () => {
     const help = await runCli("--help");
     for (const command of [
-      "build", "update", "watch", "search", "symbol", "impact", "diff", "check", "review", "ask", "snapshot", "mcp",
+      "build", "update", "watch", "context", "search", "symbol", "impact", "diff", "check", "review", "ask", "snapshot", "mcp",
     ]) {
       expect(help.stdout).toMatch(new RegExp(`\\b${command}\\b`, "u"));
     }
@@ -48,6 +48,14 @@ describe("compiled CLI", () => {
       code: 1,
       stderr: expect.stringContaining("depth must be an integer between 1 and 30"),
     });
+    await expect(runCli("context", "Fix the bug", ".", "--budget", "511")).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("budget must be an integer between 512 and 100000"),
+    });
+    await expect(runCli("context", "Fix the bug", ".", "--format", "yaml")).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("context format must be markdown or json"),
+    });
   });
 
   it("initializes, reports status, diagnoses, and safely cleans a Git repository", async () => {
@@ -63,6 +71,24 @@ describe("compiled CLI", () => {
     expect(initialized.stderr).toContain("tree sitter parsing");
     expect(initialized.stdout).toContain("CodeAtlas is ready");
     expect(initialized.stdout).toContain("codeatlas mcp");
+
+    const contextResult = await runCli(
+      "context",
+      "Change `ready` behavior",
+      repository.root,
+      "--budget",
+      "6000",
+      "--format",
+      "json",
+    );
+    const context = JSON.parse(contextResult.stdout) as {
+      change_candidates: Array<{ symbol: { name: string } }>;
+      budget: { requested: number; used: number };
+    };
+    expect(context.change_candidates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ symbol: expect.objectContaining({ name: "ready" }) }),
+    ]));
+    expect(context.budget.used).toBeLessThanOrEqual(context.budget.requested);
 
     const statusResult = await runCli("status", repository.root, "--json");
     const status = JSON.parse(statusResult.stdout) as { synchronized: boolean; files: number };

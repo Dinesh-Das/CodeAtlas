@@ -16,6 +16,19 @@ export { createCodeAtlasServer } from "./mcp/server.js";
 export { CODEATLAS_VERSION } from "./version.js";
 export { registerFrameworkAdapter } from "./framework/registry.js";
 export {
+  compileChangeContext,
+  compileChangeContextFromAtlas,
+  type CompileChangeContextOptions,
+} from "./context/planner.js";
+export {
+  CHANGE_CONTEXT_SCHEMA_VERSION,
+  renderChangeContextMarkdown,
+  serializeChangeContext,
+  validateChangeContextGrounding,
+  type ChangeContext,
+  type ChangeContextFormat,
+} from "./context/packet.js";
+export {
   EVALUATION_HARNESS_VERSION,
   EVALUATION_SCHEMA_VERSION,
   evaluationObservationSchema,

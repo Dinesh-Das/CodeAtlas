@@ -83,6 +83,36 @@ export function createProgram(): Command {
     });
 
   program
+    .command("context")
+    .description("Compile a budgeted, evidence-backed implementation brief for a task or diff.")
+    .argument("[task]", "Change, fix, refactor, or investigation to prepare")
+    .argument("[path]", "A path inside the repository", process.cwd())
+    .option("--repository <path>", "Repository path when no task positional argument is used")
+    .option("--diff <base>", "Include changes between this Git base and HEAD")
+    .option(
+      "--budget <tokens>",
+      "Conservative maximum context tokens",
+      boundedIntegerOption("budget", 512, 100_000),
+      6_000,
+    )
+    .option("--format <format>", "Output format: markdown or json", "markdown")
+    .action(async (
+      task: string | undefined,
+      targetPath: string,
+      options: { repository?: string; diff?: string; budget: number; format: string },
+    ) => {
+      if (options.format !== "markdown" && options.format !== "json") {
+        throw new CodeAtlasError("Error: context format must be markdown or json.");
+      }
+      const { createChangeContext } = await import("./context.js");
+      console.log(await createChangeContext(task, options.repository ?? targetPath, {
+        budget: options.budget,
+        format: options.format,
+        ...(options.diff === undefined ? {} : { gitBase: options.diff }),
+      }));
+    });
+
+  program
     .command("ask")
     .description("Answer an architecture question from graph paths and validated source evidence.")
     .argument("<question>", "Architecture or execution question")

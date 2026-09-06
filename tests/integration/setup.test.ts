@@ -28,6 +28,11 @@ describe("setup and direct overview", () => {
     const result = await setupRepository(repository.root, {
       targets: ["cursor", "antigravity"],
     });
+    expect(result.verification).toMatchObject({
+      tool: "get_repository_overview",
+      schemaVersion: "1.2",
+      snapshotId: expect.any(String),
+    });
     expect(result.targets.map((target) => target.status)).toEqual(["configured", "configured"]);
     const cursor = JSON.parse(
       await readFile(path.join(repository.root, ".cursor", "mcp.json"), "utf8"),
