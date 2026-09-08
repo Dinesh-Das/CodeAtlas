@@ -142,6 +142,9 @@ describe("MCP stdio contract", () => {
           "get_snapshot",
           "compare_snapshots",
           "get_architecture_diff",
+          "prepare_change",
+          "search",
+          "trace",
         ];
         expect(listed.tools.map((tool) => tool.name).sort()).toEqual(expectedNames.sort());
         const trace = listed.tools.find((tool) => tool.name === "codeatlas_trace");
@@ -160,29 +163,14 @@ describe("MCP stdio contract", () => {
         try {
           const defaultTools = await defaultClient.listTools();
           expect(defaultTools.tools.map((tool) => tool.name).sort()).toEqual([
-            "analyze_impact",
-            "compare_snapshots",
-            "find_symbol",
-            "get_callers",
-            "get_change_context",
-            "get_control_flow",
-            "get_dependencies",
-            "get_domain",
-            "get_entrypoints",
             "get_evidence",
-            "get_execution_flow",
-            "get_git_changes",
-            "get_repository_overview",
-            "get_rule_violations",
-            "get_rules",
-            "get_snapshot",
-            "get_symbol",
-            "list_domains",
-            "review_changes",
-            "trace_path",
+            "prepare_change",
+            "search",
+            "trace",
           ]);
+          expect(Math.ceil(JSON.stringify(defaultTools.tools).length / 4)).toBeLessThan(2_000);
           for (const tool of defaultTools.tools) {
-            expect(tool.outputSchema).toHaveProperty("properties.codeatlas");
+            expect(tool.outputSchema).toHaveProperty("properties.status");
             expect(tool.annotations).toMatchObject({
               readOnlyHint: true,
               destructiveHint: false,
@@ -190,6 +178,29 @@ describe("MCP stdio contract", () => {
               openWorldHint: false,
             });
           }
+          const resources = await defaultClient.listResources();
+          expect(resources.resources.map((resource) => resource.uri)).toContain("codeatlas://repository/overview");
+          const templates = await defaultClient.listResourceTemplates();
+          expect(templates.resourceTemplates.map((resource) => resource.uriTemplate).sort()).toEqual([
+            "codeatlas://change/{fingerprint}",
+            "codeatlas://symbol/{id}",
+            "codeatlas://tour/{id}",
+          ]);
+          const prompts = await defaultClient.listPrompts();
+          expect(prompts.prompts.map((prompt) => prompt.name).sort()).toEqual([
+            "explain_runtime_journey",
+            "plan_change",
+            "repository_onboarding",
+            "review_diff",
+          ]);
+          const planPrompt = await defaultClient.getPrompt({
+            name: "plan_change",
+            arguments: { task: "add checkout validation" },
+          });
+          expect(planPrompt.messages[0]?.content).toMatchObject({
+            type: "text",
+            text: expect.stringContaining("prepare_change"),
+          });
         } finally {
           await defaultClient.close();
         }
@@ -301,6 +312,26 @@ describe("MCP stdio contract", () => {
             truncated: false,
           },
         });
+        const primarySearch = await client.callTool({
+          name: "search",
+          arguments: { query: "runCheckout", limit: 10 },
+        });
+        expect(primarySearch.structuredContent).toEqual(expect.objectContaining({
+          resource_links: expect.arrayContaining([
+            expect.objectContaining({ uri: `codeatlas://symbol/${encodeURIComponent(runCheckoutId)}` }),
+          ]),
+        }));
+        const symbolResource = await client.readResource({
+          uri: `codeatlas://symbol/${encodeURIComponent(runCheckoutId)}`,
+        });
+        expect(JSON.parse(String(symbolResource.contents[0]?.text))).toEqual(expect.objectContaining({
+          symbol: expect.objectContaining({ id: runCheckoutId }),
+        }));
+        const primaryTrace = await client.callTool({
+          name: "trace",
+          arguments: { from: runCheckoutId, to: chargeId, depth: 4 },
+        });
+        expect(primaryTrace.isError).not.toBe(true);
 
         const changeContext = await client.callTool({
           name: "get_change_context",

@@ -229,6 +229,12 @@ export const canonicalResultSchema = z
   })
   .passthrough();
 
+export const agentResultSchema = z.object({
+  derivation: z.literal("canonical_ir"),
+  status: z.enum(["ok", "error"]),
+  resource_links: z.array(z.object({ uri: z.string(), title: z.string() }).strict()).optional(),
+}).passthrough();
+
 export const paginationInputShape = {
   cursor: z.string().nullable().optional().default(null),
   limit: z.number().int().positive().max(10_000).optional().default(50),

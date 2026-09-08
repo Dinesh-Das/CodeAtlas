@@ -29,7 +29,7 @@ describe("setup and direct overview", () => {
       targets: ["cursor", "antigravity"],
     });
     expect(result.verification).toMatchObject({
-      tool: "get_repository_overview",
+      resource: "codeatlas://repository/overview",
       schemaVersion: "1.2",
       snapshotId: expect.any(String),
     });

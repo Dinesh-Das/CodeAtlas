@@ -247,6 +247,13 @@ Acceptance:
 - A host can complete onboarding and change planning using progressive resources without receiving the full graph.
 - Legacy tool names remain available for one documented compatibility window.
 
+Implementation status on 2026-09-09: the default MCP surface contains `search`, `prepare_change`,
+`trace`, and `get_evidence`, with its serialized definitions held below the 2,000-token budget.
+Repository, symbol, tour, and change resources support progressive reads; four reusable prompts cover
+the declared workflows. Tool results link stable symbol resources, a routing corpus verifies the
+first-operation policy including native fallback, and the former tools remain available through
+`CODEATLAS_MCP_LEGACY_TOOLS=1` for the documented 0.x compatibility window.
+
 ### P3 — Turn the viewer into a guided KT product
 
 Effort: 2-3 weeks. Dependencies: P0 and P1.

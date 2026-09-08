@@ -22,7 +22,7 @@ export type SetupStatus =
 export interface SetupResult {
   repositoryRoot: string;
   verification: {
-    tool: "get_repository_overview";
+    resource: "codeatlas://repository/overview";
     schemaVersion: string;
     snapshotId: string;
   };
@@ -186,7 +186,7 @@ export async function setupRepository(
   }
   const overview = await repositoryOverviewIr(repository.root);
   const verification = {
-    tool: "get_repository_overview" as const,
+    resource: "codeatlas://repository/overview" as const,
     schemaVersion: overview.schema_version,
     snapshotId: overview.snapshot.id,
   };
@@ -277,7 +277,7 @@ export function formatSetupResult(result: SetupResult): string {
   return [
     "CodeAtlas MCP setup",
     "",
-    `[OK] Verified ${result.verification.tool} (IR ${result.verification.schemaVersion}, snapshot ${result.verification.snapshotId}).`,
+    `[OK] Verified ${result.verification.resource} (IR ${result.verification.schemaVersion}, snapshot ${result.verification.snapshotId}).`,
     "",
     ...result.targets.map((entry) => {
       const marker = entry.status === "already_configured"

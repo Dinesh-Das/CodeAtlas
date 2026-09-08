@@ -201,29 +201,31 @@ For any other MCP-compatible host, configure a local stdio server:
 
 See the copyable [MCP configuration example](examples/mcp-config.json).
 
-The default server exposes 20 canonical, read-only tools:
+The default server exposes four compact, read-only tools:
 
 | Area | Tools |
 |---|---|
-| Task context | `get_change_context` |
-| Discovery | `get_repository_overview`, `find_symbol`, `get_symbol` |
-| Dependencies and impact | `get_callers`, `get_dependencies`, `trace_path`, `analyze_impact` |
-| Execution | `get_entrypoints`, `get_execution_flow`, `get_control_flow` |
-| Architecture | `list_domains`, `get_domain`, `get_rules`, `get_rule_violations` |
-| Evidence and changes | `get_evidence`, `get_git_changes`, `review_changes` |
-| Snapshots | `get_snapshot`, `compare_snapshots` |
+| Discovery | `search` |
+| Task context | `prepare_change` |
+| Execution and dependencies | `trace` |
+| Source proof | `get_evidence` |
+
+Clients can progressively read `codeatlas://repository/overview`, `codeatlas://symbol/{id}`,
+`codeatlas://tour/{id}`, and `codeatlas://change/{fingerprint}`. Reusable prompts cover repository
+onboarding, change planning, diff review, and runtime-journey explanation.
 
 Responses use validated schemas, stable IDs, opaque cursors, serialized-size limits, and a common
 `codeatlas` envelope containing schema/snapshot provenance, fingerprint, generations, freshness,
 content trust, coverage, and uncertainty counts. Expected failures use typed, recoverable error
 packets with a suggested next action. Ambiguous symbol names must be followed with the stable ID
-returned by `find_symbol`.
+returned by `search`.
 
-Set `CODEATLAS_MCP_LEGACY_TOOLS=1` to expose the previous ten Answer Packet tools and four canonical
-aliases alongside the default surface. New integrations should use the canonical tools.
+Set `CODEATLAS_MCP_LEGACY_TOOLS=1` during the 0.x compatibility window to expose the previous
+Answer Packet and canonical tool names alongside the four primary tools.
 
-Every MCP request performs an authoritative working-tree freshness check and incrementally repairs
-the required structural, semantic, search, or architecture generation before answering.
+MCP requests use watcher-backed freshness metadata and periodically reconcile the working tree.
+Invalidated caches incrementally repair the required structural, semantic, search, or architecture
+generation before answering.
 
 ## Configuration
 
