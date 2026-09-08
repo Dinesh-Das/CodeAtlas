@@ -53,10 +53,11 @@ function satisfies(status: StatusResult, requirement: FreshnessRequirement): boo
 export async function ensureFreshIndex(
   repositoryPath: string,
   requirement: FreshnessRequirement = "all",
+  options: { authoritative?: boolean } = {},
 ): Promise<FreshContext> {
-  // Filesystem watcher delivery can lag behind the request that follows an edit.
-  // Every consumer must therefore reconcile Git state instead of trusting that cache.
-  let status = await getFastStatus(repositoryPath, { forceReconcile: true });
+  // The watcher-backed status cache keeps warm agent queries bounded. Callers that
+  // publish an explicit status audit can still require a full reconciliation.
+  let status = await getFastStatus(repositoryPath, { forceReconcile: options.authoritative === true });
   if (!satisfies(status, requirement)) {
     await refreshOnce(status.root);
     clearFastStatusCache(status.root);

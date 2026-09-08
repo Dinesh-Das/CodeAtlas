@@ -63,6 +63,8 @@ architecture:
       .toThrow("between 1 and 100");
     expect(() => normalizeV2Config(parseCodeAtlasYaml("html:\n  mode: remote\n")))
       .toThrow("single-file or bundle");
+    expect(() => normalizeV2Config(parseCodeAtlasYaml("html:\n  max_single_file_bytes: 10\n")))
+      .toThrow("between 1048576 and 1073741824");
     expect(() => normalizeV2Config(parseCodeAtlasYaml("ai:\n  enabled: true\n  api_key: secret\n")))
       .toThrow("Keep credentials and secrets in environment variables");
   });

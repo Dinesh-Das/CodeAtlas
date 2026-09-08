@@ -395,6 +395,31 @@ const migrations: readonly Migration[] = [
       CREATE INDEX idx_edges_owner_file ON edges(owner_kind, file_path);
     `,
   },
+  {
+    version: 11,
+    sql: `
+      CREATE TABLE atlas_metadata (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        payload_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE atlas_sections (
+        section TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        item_id TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        PRIMARY KEY(section, item_id)
+      );
+      CREATE UNIQUE INDEX idx_atlas_sections_order
+        ON atlas_sections(section, ordinal);
+
+      CREATE VIRTUAL TABLE atlas_symbol_search USING fts5(
+        id UNINDEXED,
+        text
+      );
+    `,
+  },
 ];
 
 export function runMigrations(database: Database.Database): void {

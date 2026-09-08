@@ -96,3 +96,83 @@ export function renderAtlasHtml(atlas: Atlas): string {
 export async function exportAtlasHtml(atlas: Atlas, outputPath: string): Promise<void> {
   await writeTextAtomic(outputPath, renderAtlasHtml(atlas));
 }
+
+function boundedViewerAtlas(atlas: Atlas, symbolBudget: number): Atlas {
+  const entrypoints = new Set(atlas.entrypoint_ids);
+  const symbols = [...atlas.symbols]
+    .sort((left, right) =>
+      Number(entrypoints.has(right.id)) - Number(entrypoints.has(left.id)) ||
+      Number(right.kind === "file" || right.kind === "module") - Number(left.kind === "file" || left.kind === "module") ||
+      left.id.localeCompare(right.id)
+    )
+    .slice(0, symbolBudget);
+  const symbolIds = new Set(symbols.map((symbol) => symbol.id));
+  const relationships = atlas.relationships.filter((relationship) =>
+    symbolIds.has(relationship.source) && symbolIds.has(relationship.target)
+  );
+  const relationshipIds = new Set(relationships.map((relationship) => relationship.id));
+  const evidenceIds = new Set([
+    ...symbols.flatMap((symbol) => symbol.evidence_ids),
+    ...relationships.flatMap((relationship) => relationship.evidence_ids),
+  ]);
+  const filterIndex = (index: Record<string, string[]>): Record<string, string[]> => Object.fromEntries(
+    Object.entries(index)
+      .filter(([id]) => symbolIds.has(id))
+      .map(([id, related]) => [id, related.filter((relatedId) => symbolIds.has(relatedId))]),
+  );
+  return {
+    ...atlas,
+    symbols,
+    relationships,
+    evidence: atlas.evidence
+      .filter((evidence) => evidenceIds.has(evidence.id))
+      .map((evidence) => ({ ...evidence, excerpt: null, excerpt_status: "unavailable" })),
+    resolution_issues: atlas.resolution_issues.filter((issue) => symbolIds.has(issue.source_id)),
+    domains: atlas.domains.map((domain) => ({
+      ...domain,
+      member_ids: domain.member_ids.filter((id) => symbolIds.has(id)),
+      file_ids: domain.file_ids.filter((id) => symbolIds.has(id)),
+      entrypoint_ids: domain.entrypoint_ids.filter((id) => symbolIds.has(id)),
+      internal_relationship_ids: domain.internal_relationship_ids.filter((id) => relationshipIds.has(id)),
+      outgoing_relationship_ids: domain.outgoing_relationship_ids.filter((id) => relationshipIds.has(id)),
+    })).filter((domain) => domain.member_ids.length > 0),
+    entrypoint_ids: atlas.entrypoint_ids.filter((id) => symbolIds.has(id)),
+    flows: atlas.flows.map((flow) => ({
+      ...flow,
+      steps: flow.steps.filter((step) => symbolIds.has(step.symbol_id)),
+    })).filter((flow) => flow.steps.length > 0),
+    control_flows: [],
+    impact: {
+      forward: filterIndex(atlas.impact.forward),
+      reverse: filterIndex(atlas.impact.reverse),
+      scores: atlas.impact.scores.filter((score) => symbolIds.has(score.symbol_id)),
+    },
+    git_changes: atlas.git_changes.slice(0, 100).map((change) => ({
+      ...change,
+      source_diff: "",
+      symbol_ids: change.symbol_ids.filter((id) => symbolIds.has(id)),
+      impacted_symbol_ids: change.impacted_symbol_ids.filter((id) => symbolIds.has(id)),
+      related_test_ids: change.related_test_ids.filter((id) => symbolIds.has(id)),
+    })),
+    rule_violations: atlas.rule_violations.filter((violation) => symbolIds.has(violation.source_id)),
+    review_findings: atlas.review_findings.slice(0, 100).map((finding) => ({
+      ...finding,
+      changed_symbol_ids: finding.changed_symbol_ids.filter((id) => symbolIds.has(id)),
+      impacted_symbol_ids: finding.impacted_symbol_ids.filter((id) => symbolIds.has(id)),
+    })),
+  };
+}
+
+export async function exportBoundedAtlasHtml(
+  atlas: Atlas,
+  outputPath: string,
+  maximumBytes: number,
+): Promise<void> {
+  let symbolBudget = Math.min(1_200, atlas.symbols.length);
+  let html = renderAtlasHtml(boundedViewerAtlas(atlas, symbolBudget));
+  while (Buffer.byteLength(html, "utf8") > maximumBytes && symbolBudget > 12) {
+    symbolBudget = Math.max(12, Math.floor(symbolBudget / 2));
+    html = renderAtlasHtml(boundedViewerAtlas(atlas, symbolBudget));
+  }
+  await writeTextAtomic(outputPath, html);
+}

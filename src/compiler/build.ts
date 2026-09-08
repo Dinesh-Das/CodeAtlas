@@ -14,6 +14,7 @@ import { resolveExistingPathInside } from "../core/paths.js";
 import { workspaceExists, workspacePaths, writeJsonAtomic, writeTextAtomic } from "../core/workspace.js";
 import {
   estimateAtlasHtmlSize,
+  exportBoundedAtlasHtml,
   exportAtlasHtml,
   type AtlasHtmlSizeEstimate,
 } from "../export/html.js";
@@ -33,6 +34,7 @@ import { applyDomainOverrides } from "../rules/domains.js";
 import { evaluateArchitectureRules } from "../rules/engine.js";
 import { buildDeterministicReview } from "../review/review.js";
 import { openDatabase } from "../storage/database.js";
+import { persistAtlasRuntime } from "../storage/atlas-cache.js";
 import type { IndexPhaseName, IndexProgress } from "../core/telemetry.js";
 
 export interface BuildResult {
@@ -75,6 +77,7 @@ export interface BuildTimings {
   gitAnalysis: number;
   htmlExport: number;
   snapshotPersistence: number;
+  runtimePersistence: number;
   indexing: number;
   ir: number;
   flows: number;
@@ -100,12 +103,15 @@ function roundedMs(value: number): number {
 function resolveHtmlMode(
   configured: "single-file" | "bundle",
   options: { bundle?: boolean; singleFile?: boolean },
+  estimate?: AtlasHtmlSizeEstimate,
+  maximumSingleFileBytes = Number.POSITIVE_INFINITY,
 ): "single-file" | "bundle" {
   if (options.bundle === true && options.singleFile === true) {
     throw new CodeAtlasError("Error: Choose either --bundle or --single-file, not both.");
   }
   if (options.bundle === true) return "bundle";
   if (options.singleFile === true) return "single-file";
+  if (estimate !== undefined && estimate.estimated_single_file_bytes > maximumSingleFileBytes) return "bundle";
   return configured;
 }
 
@@ -374,7 +380,6 @@ export async function buildRepository(
   const paths = workspacePaths(index.repository.root);
   const config = await loadConfig(index.repository.root);
   const v2Config = await loadV2Config(index.repository.root);
-  const htmlMode = resolveHtmlMode(v2Config.html.mode, options);
   const artifactMode = options.artifacts ?? "all";
 
   const irStarted = performance.now();
@@ -489,9 +494,27 @@ export async function buildRepository(
   atlas = normalizeAtlas(atlas);
   assertValidAtlas(atlas);
 
+  const runtimePersistenceStarted = performance.now();
+  persistAtlasRuntime(paths.database, atlas, {
+    kind: "full",
+    currentFingerprint: index.fingerprint,
+    generations: index.generations,
+    configFingerprint: v2ConfigFingerprint(v2Config),
+    gitAvailable: index.repository.gitAvailable,
+    gitBase: index.repository.gitAvailable ? baseCommit : null,
+    gitHead: index.repository.gitAvailable ? headCommit : null,
+  });
+  const runtimePersistenceMs = performance.now() - runtimePersistenceStarted;
+
   const exportStarted = performance.now();
   const compiledDirectory = artifactMode === "query" ? paths.query : paths.current;
   const artifactEstimate = artifactMode === "all" ? estimateAtlasHtmlSize(atlas) : null;
+  const htmlMode = resolveHtmlMode(
+    v2Config.html.mode,
+    options,
+    artifactEstimate ?? undefined,
+    v2Config.html.max_single_file_bytes,
+  );
   const bundlePath = htmlMode === "bundle" ? path.join(index.repository.root, "codeatlas") : null;
   const htmlPath = bundlePath === null
     ? path.join(index.repository.root, "codeatlas.html")
@@ -517,7 +540,8 @@ export async function buildRepository(
     ];
     const htmlExportTask = (async () => {
       const htmlExportStarted = performance.now();
-      await exportAtlasHtml(atlas, htmlPath);
+      if (bundlePath === null) await exportAtlasHtml(atlas, htmlPath);
+      else await exportBoundedAtlasHtml(atlas, htmlPath, v2Config.html.max_single_file_bytes);
       htmlExportMs = performance.now() - htmlExportStarted;
     })();
     if (bundlePath === null) {
@@ -550,6 +574,7 @@ export async function buildRepository(
     gitAnalysis: roundedMs(gitMs),
     htmlExport: roundedMs(htmlExportMs),
     snapshotPersistence: snapshotCreated ? roundedMs(snapshotMs) : 0,
+    runtimePersistence: roundedMs(runtimePersistenceMs),
     indexing: roundedMs(indexMs),
     ir: roundedMs(irMs),
     flows: roundedMs(flowsMs),

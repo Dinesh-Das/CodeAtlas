@@ -1,23 +1,25 @@
 import { performance } from "node:perf_hooks";
 import { buildControlFlowForSymbol } from "../analysis/control-flow.js";
 import { describeImpact } from "../analysis/impact.js";
+import { rankSymbolSearch } from "../analysis/simplification.js";
 import { loadConfig } from "../core/config.js";
 import { CodeAtlasError } from "../core/errors.js";
 import { compileChangeContextFromAtlas } from "../context/planner.js";
 import { workspacePaths } from "../core/workspace.js";
 import { compareSnapshots, loadSnapshot } from "../git/snapshots.js";
+import { EvidenceExcerptReader } from "../ir/evidence.js";
 import type { Atlas } from "../ir/models.js";
 import { loadV2Config } from "../rules/config.js";
 import {
   architectureService,
   type ArchitectureContext,
+  type ArchitectureQueryContext,
 } from "../service/architecture-service.js";
 import {
   projectionSearchCandidates,
-  rankProjectedSymbol,
   type AtlasProjection,
 } from "../service/atlas-projection.js";
-import type { QueryProjectionRequest, QueryStore } from "../storage/query-store.js";
+import type { QueryProjectionRequest, QueryStore, QueryStoreMetrics } from "../storage/query-store.js";
 
 export async function loadFreshIr(repositoryPath: string): Promise<Atlas> {
   return (await architectureService.load(repositoryPath)).atlas;
@@ -33,6 +35,15 @@ interface IrRuntime {
   maxResultNodes: number;
   maxCallDepth: number;
   maxImpactDepth: number;
+}
+
+interface IrQueryRuntime {
+  repositoryRoot: string;
+  queryStore: QueryStore;
+  fingerprint: string;
+  responseContext: CanonicalResponseContext;
+  maxResultNodes: number;
+  schemaVersion: string;
 }
 
 interface CanonicalQueryTimings {
@@ -56,6 +67,11 @@ interface CanonicalResponseContext {
     rebuilt: boolean;
   };
   timingsMs: CanonicalQueryTimings;
+  storage: {
+    queries: number;
+    rows_read: number;
+    bytes_read: number;
+  };
 }
 
 const RESPONSE_CONTEXT = Symbol("codeatlas.canonical-response-context");
@@ -99,14 +115,31 @@ async function loadIrRuntime(repositoryPath: string): Promise<IrRuntime> {
   };
 }
 
+async function loadQueryRuntime(repositoryPath: string): Promise<IrQueryRuntime> {
+  const context = await architectureService.loadQuery(repositoryPath);
+  const configStartedAt = performance.now();
+  const config = await loadConfig(context.repositoryRoot);
+  const responseContext = responseContextFrom(context);
+  responseContext.timingsMs.retrieval += elapsed(configStartedAt);
+  return {
+    repositoryRoot: context.repositoryRoot,
+    queryStore: context.queryStore,
+    fingerprint: context.fingerprint,
+    responseContext,
+    maxResultNodes: config.limits.maxMcpResultNodes,
+    schemaVersion: context.manifest.schema_version,
+  };
+}
+
 function elapsed(startedAt: number): number {
   return Number((performance.now() - startedAt).toFixed(3));
 }
 
-function responseContextFrom(context: ArchitectureContext): CanonicalResponseContext {
+function responseContextFrom(context: ArchitectureContext | ArchitectureQueryContext): CanonicalResponseContext {
+  const metadata = "atlas" in context ? context.atlas : context.manifest;
   return {
-    schemaVersion: context.atlas.schema_version,
-    snapshotIds: [context.atlas.snapshot.id],
+    schemaVersion: metadata.schema_version,
+    snapshotIds: [metadata.snapshot.id],
     fingerprint: context.fingerprint,
     generations: context.status.generations,
     freshness: {
@@ -123,7 +156,18 @@ function responseContextFrom(context: ArchitectureContext): CanonicalResponseCon
       serialization: 0,
       transport: 0,
     },
+    storage: { queries: 0, rows_read: 0, bytes_read: 0 },
   };
+}
+
+function recordStorageMetrics(
+  context: CanonicalResponseContext,
+  before: QueryStoreMetrics,
+  after: QueryStoreMetrics,
+): void {
+  context.storage.queries += after.queries - before.queries;
+  context.storage.rows_read += after.rowsRead - before.rowsRead;
+  context.storage.bytes_read += after.bytesRead - before.bytesRead;
 }
 
 function measureProjection<T>(runtime: IrRuntime, operation: () => T): T {
@@ -137,10 +181,12 @@ function measureProjection<T>(runtime: IrRuntime, operation: () => T): T {
 
 function queryProjection(runtime: IrRuntime, request: QueryProjectionRequest) {
   const startedAt = performance.now();
+  const metricsBefore = runtime.queryStore.metrics();
   try {
     return runtime.queryStore.queryProjection(request);
   } finally {
     runtime.responseContext.timingsMs.retrieval += elapsed(startedAt);
+    recordStorageMetrics(runtime.responseContext, metricsBefore, runtime.queryStore.metrics());
   }
 }
 
@@ -157,7 +203,10 @@ function withContext<T extends Record<string, unknown>>(
   return value;
 }
 
-function withRuntime<T extends Record<string, unknown>>(value: T, runtime: IrRuntime): T {
+function withRuntime<T extends Record<string, unknown>>(
+  value: T,
+  runtime: Pick<IrRuntime, "responseContext"> | Pick<IrQueryRuntime, "responseContext">,
+): T {
   return withContext(value, runtime.responseContext);
 }
 
@@ -192,7 +241,7 @@ function page<T>(
   items: readonly T[],
   request: PageRequest,
   scope: string,
-  runtime: IrRuntime,
+  runtime: Pick<IrRuntime, "fingerprint" | "maxResultNodes"> | Pick<IrQueryRuntime, "fingerprint" | "maxResultNodes">,
 ): { items: T[]; pagination: { limit: number; returned: number; total: number; cursor: string | null; has_more: boolean } } {
   if (request.limit > runtime.maxResultNodes) {
     throw new CodeAtlasError(
@@ -312,37 +361,47 @@ function resolutionIssuesFor(
   };
 }
 
+async function hydrateEvidence(runtime: IrRuntime, evidence: readonly Atlas["evidence"][number][]) {
+  const reader = new EvidenceExcerptReader(runtime.repositoryRoot);
+  return Promise.all(evidence.map(async (item) => {
+    const excerpt = await reader.read(item.file, item.start_line, item.end_line);
+    return { ...item, excerpt: excerpt.excerpt, excerpt_status: excerpt.status };
+  }));
+}
+
 export async function findSymbolIr(repositoryPath: string, query: string, limit: number, cursor?: string) {
-  const runtime = await loadIrRuntime(repositoryPath);
-  const atlas = runtime.atlas;
+  const runtime = await loadQueryRuntime(repositoryPath);
   const needle = query.toLocaleLowerCase();
+  const metricsBefore = runtime.queryStore.metrics();
   const retrievalStartedAt = performance.now();
   const indexed = runtime.queryStore.searchSymbols(query, 10_000);
+  const hydrated = runtime.queryStore.getSymbols(indexed.items.map((item) => item.id), 10_000);
   runtime.responseContext.timingsMs.retrieval += elapsed(retrievalStartedAt);
-  const projectedCandidates = projectionSearchCandidates(runtime.projection, query);
-  const candidateIds = new Set(indexed.items.map((item) => item.id));
-  for (const symbol of projectedCandidates) candidateIds.add(symbol.id);
-  const candidateLimit = 10_000;
-  const matches = measureProjection(runtime, () => [...candidateIds].slice(0, candidateLimit)
-    .flatMap((id) => {
-      const symbol = runtime.projection.symbolById.get(id);
-      if (symbol === undefined) return [];
-      return [{ symbol, score: rankProjectedSymbol(runtime.projection, symbol, query) }];
-    })
-    .filter((item) => item.score > 0)
+  const indexedPosition = new Map(indexed.items.map((item, position) => [item.id, position]));
+  const projectionStartedAt = performance.now();
+  const matches = hydrated.items
+    .map((symbol) => ({
+      symbol,
+      score: rankSymbolSearch(symbol, query) || Math.max(1, 10_000 - (indexedPosition.get(symbol.id) ?? 10_000)),
+    }))
     .sort((left, right) => right.score - left.score || left.symbol.id.localeCompare(right.symbol.id))
-    .map((item) => item.symbol));
+    .map((item) => item.symbol);
+  runtime.responseContext.timingsMs.projection += elapsed(projectionStartedAt);
+  const metricsAfter = runtime.queryStore.metrics();
+  recordStorageMetrics(runtime.responseContext, metricsBefore, metricsAfter);
   const result = page(matches, { limit, ...(cursor === undefined ? {} : { cursor }) }, `find_symbol:${needle}`, runtime);
   return withRuntime({
-    schema_version: atlas.schema_version,
+    schema_version: runtime.schemaVersion,
     derivation: "canonical_ir",
     results: result.items,
     retrieval: {
-      strategy: "sqlite_fts_name_path+generation_projection",
+      strategy: "sqlite_fts_enriched+bounded_hydration",
       indexed_candidates: indexed.items.length,
-      projection_candidates: projectedCandidates.length,
       ranked_candidates: matches.length,
-      truncated: indexed.truncated || candidateIds.size > candidateLimit,
+      query_count: metricsAfter.queries - metricsBefore.queries,
+      rows_read: metricsAfter.rowsRead - metricsBefore.rowsRead,
+      bytes_read: metricsAfter.bytesRead - metricsBefore.bytesRead,
+      truncated: indexed.truncated || hydrated.truncated,
     },
     pagination: result.pagination,
   }, runtime);
@@ -609,6 +668,7 @@ export async function controlFlowIr(repositoryPath: string, target: string) {
     }
     if (controlFlow !== null) {
       runtime.projection.registerControlFlow(controlFlow);
+      runtime.queryStore.cacheControlFlow(controlFlow);
       generation = "on_demand";
     }
   }
@@ -632,11 +692,12 @@ export async function evidenceIr(repositoryPath: string, target: string) {
       evidence: { resolutionIssueIds: [issue.id] },
       limit: runtime.maxResultNodes,
     });
+    const evidence = projection.evidence.items.flatMap((item) =>
+      runtime.projection.evidenceById.get(item.id) ?? []
+    );
     return withRuntime({
       resolution_issue: issue,
-      evidence: projection.evidence.items.flatMap((item) =>
-        runtime.projection.evidenceById.get(item.id) ?? []
-      ),
+      evidence: await hydrateEvidence(runtime, evidence),
     }, runtime);
   }
   const direct = runtime.projection.evidenceById.get(target);
@@ -644,7 +705,7 @@ export async function evidenceIr(repositoryPath: string, target: string) {
     if (
       direct.symbol_id === null && direct.relationship_id === null &&
       direct.resolution_issue_id === null
-    ) return withRuntime({ evidence: [direct] }, runtime);
+    ) return withRuntime({ evidence: await hydrateEvidence(runtime, [direct]) }, runtime);
     const projection = queryProjection(runtime, {
       evidence: {
         ...(direct.symbol_id === null ? {} : { symbolIds: [direct.symbol_id] }),
@@ -655,7 +716,7 @@ export async function evidenceIr(repositoryPath: string, target: string) {
     });
     const projected = projection.evidence.items.some((item) => item.id === direct.id);
     return withRuntime({
-      evidence: [direct],
+      evidence: await hydrateEvidence(runtime, [direct]),
       retrieval: { source: projected ? "sqlite_projection" : "generation_projection" },
     }, runtime);
   }
@@ -664,12 +725,13 @@ export async function evidenceIr(repositoryPath: string, target: string) {
     evidence: { symbolIds: [symbol.id] },
     limit: runtime.maxResultNodes,
   });
+  const evidence = projection.evidence.items.flatMap((item) =>
+    runtime.projection.evidenceById.get(item.id) ?? []
+  );
   return withRuntime(
     {
       symbol,
-      evidence: projection.evidence.items.flatMap((item) =>
-        runtime.projection.evidenceById.get(item.id) ?? []
-      ),
+      evidence: await hydrateEvidence(runtime, evidence),
       resolution_issues: resolutionIssuesFor(runtime.projection, new Set([symbol.id]), runtime.maxResultNodes),
     },
     runtime,
@@ -943,6 +1005,8 @@ function responseEnvelope(value: Record<string, unknown>, context?: CanonicalRes
     uncertainty: uncertaintyEnvelope(value),
     performance: context === undefined ? null : {
       timings_ms: context.timingsMs,
+      storage: context.storage,
+      rss_mib: Number((process.memoryUsage().rss / 1024 / 1024).toFixed(2)),
       transport_scope: "response_construction",
     },
   };
@@ -1002,7 +1066,7 @@ export function irResult(value: ContextualResult) {
 export async function irErrorResult(error: unknown, repositoryPath: string) {
   let context: CanonicalResponseContext | undefined;
   try {
-    context = responseContextFrom(await architectureService.load(repositoryPath));
+    context = responseContextFrom(await architectureService.loadQuery(repositoryPath));
   } catch {
     context = undefined;
   }

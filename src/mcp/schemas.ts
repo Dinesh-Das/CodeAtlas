@@ -211,6 +211,14 @@ export const canonicalResultSchema = z
                 transport: z.number().nonnegative(),
               })
               .strict(),
+            storage: z
+              .object({
+                queries: z.number().int().nonnegative(),
+                rows_read: z.number().int().nonnegative(),
+                bytes_read: z.number().int().nonnegative(),
+              })
+              .strict(),
+            rss_mib: z.number().nonnegative(),
             transport_scope: z.literal("response_construction"),
           })
           .strict()

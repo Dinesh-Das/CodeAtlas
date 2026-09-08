@@ -221,7 +221,7 @@ export function normalizeV2Config(value: unknown): CodeAtlasV2Config {
   const analysis = record(root.analysis);
   assertKnownKeys(analysis, "analysis", ["max_call_depth", "max_impact_depth"]);
   const html = record(root.html);
-  assertKnownKeys(html, "html", ["mode"]);
+  assertKnownKeys(html, "html", ["mode", "max_single_file_bytes"]);
   if (html.mode !== undefined && html.mode !== "single-file" && html.mode !== "bundle") {
     throw new CodeAtlasError("Error: .codeatlas.yml html.mode must be single-file or bundle.");
   }
@@ -251,7 +251,16 @@ export function normalizeV2Config(value: unknown): CodeAtlasV2Config {
         100,
       ),
     },
-    html: { mode: html.mode === "bundle" ? "bundle" : "single-file" },
+    html: {
+      mode: html.mode === "bundle" ? "bundle" : "single-file",
+      max_single_file_bytes: boundedInteger(
+        html.max_single_file_bytes,
+        "html.max_single_file_bytes",
+        DEFAULT_V2_CONFIG.html.max_single_file_bytes,
+        1_048_576,
+        1_073_741_824,
+      ),
+    },
     ai: { enabled: ai.enabled === true },
   };
 }
@@ -284,7 +293,7 @@ export async function loadV2Config(repositoryRoot: string): Promise<CodeAtlasV2C
         config.analysis.max_impact_depth,
       ),
     },
-    html: { mode: htmlMode ?? config.html.mode },
+    html: { ...config.html, mode: htmlMode ?? config.html.mode },
     ai: { enabled: aiEnabled ?? config.ai.enabled },
   };
 }

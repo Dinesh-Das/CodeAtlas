@@ -119,7 +119,7 @@ describe("compiled CLI", () => {
     expect(quietIndexResult).toEqual({ stdout: "", stderr: "" });
 
     const doctor = await runCli("doctor", repository.root);
-    expect(doctor.stdout).toContain("[OK] SQLite: quick_check=ok, journal_mode=wal, schema=10");
+    expect(doctor.stdout).toContain("[OK] SQLite: quick_check=ok, journal_mode=wal, schema=11");
     expect(doctor.stdout).toContain("[OK] Graph integrity:");
     expect(doctor.stdout).toContain("[OK] Relationship quality:");
     expect(doctor.stdout).toContain("[OK] Database storage:");

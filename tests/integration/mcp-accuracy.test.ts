@@ -283,13 +283,13 @@ describe("Phase 7 MCP accuracy", () => {
     await repository.git("commit", "-m", "freshness metadata fixture");
     await initializeRepository(repository.root);
 
-    const authoritative = statusPacket(await ensureFreshIndex(repository.root));
+    const authoritative = statusPacket(await ensureFreshIndex(repository.root, "all", { authoritative: true }));
     expect(authoritative.freshness).toMatchObject({
       mode: "authoritative",
       working_tree_checked: true,
       reconciliation_max_age_ms: 30_000,
     });
-    const repeated = statusPacket(await ensureFreshIndex(repository.root));
+    const repeated = statusPacket(await ensureFreshIndex(repository.root, "all", { authoritative: true }));
     expect(repeated.freshness).toMatchObject({
       mode: "authoritative",
       working_tree_checked: true,

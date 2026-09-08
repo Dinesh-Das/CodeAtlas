@@ -57,6 +57,7 @@ analysis:
 
 html:
   mode: single-file
+  max_single_file_bytes: 10485760
 
 ai:
   enabled: false

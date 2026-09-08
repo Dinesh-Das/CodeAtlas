@@ -273,6 +273,7 @@ analysis:
 
 html:
   mode: single-file
+  max_single_file_bytes: 10485760
 
 ai:
   enabled: false
@@ -286,6 +287,10 @@ Rule selectors support `kind`, `layer`, `domain`, and `matches_path`. Predicates
 `CODEATLAS_AI_ENABLED` can override their tracked equivalents for a process. The AI flag is
 reserved: the current codebase has no built-in model provider, so enabling it does not make a
 network request.
+
+CodeAtlas switches to the sharded bundle automatically when the estimated self-contained viewer
+would exceed `html.max_single_file_bytes`. Pass `--single-file` to explicitly request the full
+self-contained export.
 
 ## Supported languages and frameworks
 

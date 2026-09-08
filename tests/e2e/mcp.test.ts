@@ -293,10 +293,11 @@ describe("MCP stdio contract", () => {
         });
         expect(canonicalSearchContent).toMatchObject({
           retrieval: {
-            strategy: "sqlite_fts_name_path+generation_projection",
+            strategy: "sqlite_fts_enriched+bounded_hydration",
             indexed_candidates: expect.any(Number),
-            projection_candidates: expect.any(Number),
             ranked_candidates: expect.any(Number),
+            rows_read: expect.any(Number),
+            bytes_read: expect.any(Number),
             truncated: false,
           },
         });

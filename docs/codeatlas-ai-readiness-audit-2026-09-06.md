@@ -218,6 +218,15 @@ Acceptance on the current repository:
 - Default viewer payload is below 10 MB; full canonical export is created only when requested.
 - Search result ordering remains identical for the declared parity corpus.
 
+Implementation status on 2026-09-09: SQLite schema 11 persists the enriched canonical runtime as
+typed, independently readable sections and an evidence-aware symbol FTS index. Canonical search
+uses bounded SQLite reads and works when `atlas.json` is absent or invalid; explicit evidence reads
+hydrate synchronized source ranges on demand. Generated control-flow graphs are cached by
+generation, large viewers switch automatically to bounded HTML plus sharded full data, and MCP
+responses report query, row, byte, timing, cache, and RSS telemetry. The benchmark harness retains
+search-order parity and p50/p95 measurement gates; machine-specific results remain generated
+evidence rather than hard-coded claims.
+
 ### P2 — Ship an agent-native MCP interface
 
 Effort: 1-2 weeks. Dependencies: P0; benefits from P1.

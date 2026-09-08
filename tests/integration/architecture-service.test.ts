@@ -113,14 +113,20 @@ describe("ArchitectureService", () => {
     };
     expect(indexed.results.some((symbol) => symbol.qualified_name === "indexedOperation")).toBe(true);
     expect(indexed.retrieval).toMatchObject({
-      strategy: "sqlite_fts_name_path+generation_projection",
+      strategy: "sqlite_fts_enriched+bounded_hydration",
       indexed_candidates: expect.any(Number),
+      rows_read: expect.any(Number),
+      bytes_read: expect.any(Number),
     });
 
+    await repository.write(".codeatlas/current/atlas.json", "{ deliberately invalid JSON");
+    architectureService.clear(repository.root);
     const evidenceMatch = await findSymbolIr(repository.root, "quantum platypus", 10) as {
       results: Array<{ qualified_name: string | null }>;
     };
     expect(evidenceMatch.results.some((symbol) => symbol.qualified_name === "indexedOperation")).toBe(true);
+    const sqliteAtlas = await architectureService.load(repository.root);
+    expect(sqliteAtlas.atlas.symbols.some((symbol) => symbol.qualified_name === "indexedOperation")).toBe(true);
 
     const response = irResult(await findSymbolIr(repository.root, "indexedOperation", 10));
     expect(response.structuredContent.codeatlas.performance).toMatchObject({
