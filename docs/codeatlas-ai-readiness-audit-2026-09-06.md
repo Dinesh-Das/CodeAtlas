@@ -274,6 +274,14 @@ Acceptance:
 - At least 80% of pilot users answer the prepared architecture questions correctly without opening raw source first.
 - Every tour reports coverage gaps and the snapshot/fingerprint it represents.
 
+Implementation status on 2026-09-09: the viewer now opens on a system context capped at 12 nodes
+and presents five generated tours for onboarding, request flow, storage, feature work, and testing.
+Runtime, data-lineage, contract, and change lenses expose bounded evidence locations; tour steps
+carry relationship labels, confidence, fact class, gaps, snapshot, and fingerprint. Source-free
+Markdown and print exports support sharing. The existing detailed SVG, domain, flow, impact,
+change, rule, review, and evidence views remain available for drill-down. The 80% pilot-user target
+still requires an external usability study and is not asserted by automated tests.
+
 ### P4 — Add system and contract intelligence for one complete stack
 
 Effort: 3-5 weeks. Dependencies: P0; viewer benefits from P3.

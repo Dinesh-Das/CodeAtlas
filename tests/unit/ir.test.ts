@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { gunzipSync } from "node:zlib";
 import { answerFromAtlas, evaluateArchitectureAnswer } from "../../src/ai/answering.js";
 import { summarizeReviewArchitecture } from "../../src/cli/review.js";
 import { renderAtlasHtml } from "../../src/export/html.js";
+import { buildKnowledgeTours } from "../../src/export/tours.js";
 import { renderAtlasMermaid } from "../../src/export/mermaid.js";
 import { createEvidenceId } from "../../src/ir/evidence.js";
 import { validateEvidenceIds } from "../../src/ir/evidence-validation.js";
@@ -249,6 +251,26 @@ describe("canonical CodeAtlas IR", () => {
       findings_by_severity: { critical: 0, high: 1, medium: 0, low: 0 },
     });
     const html = renderAtlasHtml(atlas);
+    const tours = buildKnowledgeTours(atlas);
+    expect(tours.map((tour) => tour.title)).toEqual([
+      "Start here",
+      "How a request flows",
+      "How data is stored",
+      "How to add a feature",
+      "How to test a change",
+    ]);
+    expect(tours.every((tour) => tour.snapshot_id === atlas.snapshot.id)).toBe(true);
+    expect(tours.every((tour) => tour.coverage.summary.includes("coverage gaps"))).toBe(true);
+    expect(html).toContain('id="tour-data"');
+    expect(html).toContain("Data lineage");
+    expect(html).toContain("Export source-free Markdown");
+    const encodedProjection = /id="projection-data"[^>]*>([^<]+)</u.exec(html)?.[1];
+    expect(encodedProjection).toBeDefined();
+    const initialProjection = JSON.parse(
+      gunzipSync(Buffer.from(encodedProjection!, "base64")).toString("utf8"),
+    ) as { nodes: unknown[]; edges: Array<{ representative_relationship_ids: string[] }> };
+    expect(initialProjection.nodes.length).toBeLessThanOrEqual(12);
+    expect(initialProjection.edges.every((edge) => edge.representative_relationship_ids.length > 0)).toBe(true);
     expect(html).toContain("What changed");
     expect(html).toContain("Source evidence");
     expect(html).toContain("Architecture rule");
@@ -266,9 +288,10 @@ describe("canonical CodeAtlas IR", () => {
     expect(html).toContain("Evidence");
     expect(html).toContain("Location");
     expect(html).toContain("path.symbol_ids");
-    const scriptStart = html.lastIndexOf("<script>") + "<script>".length;
-    const scriptEnd = html.lastIndexOf("</script>");
-    expect(() => new Function(html.slice(scriptStart, scriptEnd))).not.toThrow();
+    const executableScripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/gu)]
+      .map((match) => match[1]!);
+    expect(executableScripts).toHaveLength(2);
+    for (const script of executableScripts) expect(() => new Function(script)).not.toThrow();
   });
 
   it("renders a portable Mermaid architecture diagram", () => {

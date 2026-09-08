@@ -54,9 +54,12 @@ bundle mode. CodeAtlas excludes these generated paths from its own analysis; add
 paths to the target repository's `.gitignore` if they should not be committed (this repository
 already does so).
 
-The viewer includes repository, domain, entrypoint, execution-flow, file/class, function,
-control-flow, impact, Git-change, rule, review, and evidence views. Diagrams are interactive SVG
-and can be exported as SVG.
+The viewer opens on a 12-node system context with guided tours for onboarding, request flow, data
+storage, feature work, and testing. Runtime, data-lineage, contract, and change lenses keep each
+view bounded while preserving evidence locations, confidence, uncertainty, snapshot, and
+fingerprint. The detailed repository, domain, entrypoint, execution-flow, file/class, function,
+control-flow, impact, Git-change, rule, review, and evidence views remain available. Diagrams are
+interactive SVG; guided summaries can be printed or exported as source-free Markdown.
 
 The flat `current/` projection contains `atlas.json`, `symbols.jsonl`, `relationships.jsonl`,
 `flows.jsonl`, `domains.json`, `impact.json`, `evidence.json`, `resolution-issues.json`,
