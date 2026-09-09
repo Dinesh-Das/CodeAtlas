@@ -33,6 +33,7 @@ import { loadV2Config, v2ConfigFingerprint } from "../rules/config.js";
 import { applyDomainOverrides } from "../rules/domains.js";
 import { evaluateArchitectureRules } from "../rules/engine.js";
 import { buildDeterministicReview } from "../review/review.js";
+import { buildKnowledgeReport, renderAgentMap } from "../knowledge/system.js";
 import { openDatabase } from "../storage/database.js";
 import { persistAtlasRuntime } from "../storage/atlas-cache.js";
 import type { IndexPhaseName, IndexProgress } from "../core/telemetry.js";
@@ -526,14 +527,19 @@ export async function buildRepository(
     await writeTextAtomic(path.join(compiledDirectory, "atlas.json"), serializeAtlas(atlas));
   } else {
     await exportAtlasData(atlas, paths.current);
+    const knowledge = buildKnowledgeReport(atlas, v2Config);
     const commonExports = [
       exportAtlasMarkdown(atlas, markdownPath),
       exportAtlasMermaid(atlas, mermaidPath),
       writeTextAtomic(path.join(paths.agent, "overview.md"), renderAtlasMarkdown(atlas)),
+      writeTextAtomic(path.join(paths.agent, "map.md"), renderAgentMap(knowledge)),
+      writeJsonAtomic(path.join(paths.agent, "knowledge.json"), knowledge),
       writeJsonAtomic(path.join(paths.agent, "manifest.json"), {
         schema_version: atlas.schema_version,
         snapshot_id: atlas.snapshot.id,
         overview: "overview.md",
+        agent_map: "map.md",
+        knowledge_report: "knowledge.json",
         canonical_ir: "../current/atlas.json",
         mcp_command: "codeatlas mcp",
       }),

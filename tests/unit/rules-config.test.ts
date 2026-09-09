@@ -57,6 +57,41 @@ architecture:
     ]);
   });
 
+  it("parses team-pinned owners, journeys, invariants, and canonical names", () => {
+    const config = normalizeV2Config(parseCodeAtlasYaml(`
+knowledge:
+  max_documentation_age_days: 90
+  owners:
+    - id: authentication
+      owner: identity-team
+      purpose: Authenticate users
+      include: [src/auth/**]
+      entrypoint: login
+      contracts: [POST login]
+      validation_command: npm run test:auth
+  journeys:
+    - id: login-request
+      name: Login request
+      purpose: Issue a session
+      entrypoint: login
+  invariants:
+    - id: passwords-never-logged
+      statement: Passwords never enter logs
+      applies_to: [src/auth/**]
+  canonical_names:
+    - symbol: login
+      name: Login entrypoint
+`));
+
+    expect(config.knowledge).toMatchObject({
+      max_documentation_age_days: 90,
+      owners: [expect.objectContaining({ id: "authentication", owner: "identity-team" })],
+      journeys: [expect.objectContaining({ id: "login-request", entrypoint: "login" })],
+      invariants: [expect.objectContaining({ id: "passwords-never-logged" })],
+      canonical_names: [{ symbol: "login", name: "Login entrypoint" }],
+    });
+  });
+
   it("rejects invalid ranges, modes, and credential-like config fields", () => {
     expect(() => normalizeV2Config(parseCodeAtlasYaml("version: 2\n"))).toThrow("version must be 1");
     expect(() => normalizeV2Config(parseCodeAtlasYaml("analysis:\n  max_call_depth: 0\n")))

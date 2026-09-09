@@ -111,10 +111,33 @@ function documentNodes(context: IntentContext): GraphNode[] {
   const sections = headings.length === 0
     ? [{ line: 1, level: 1, title: path.posix.basename(context.relativeFilePath) }]
     : headings;
+  const adrFile = /(?:^|\/)adr(?:s)?\//iu.test(context.relativeFilePath) ||
+    /(?:^|\/)(?:adr[-_]?\d+|\d{4}[-_][^/]+)\.(?:md|mdx|rst)$/iu.test(context.relativeFilePath);
+  const field = (name: string): string | null => {
+    const inline = new RegExp(`^\\s*(?:[-*]\\s*)?${name}\\s*:\\s*(.+?)\\s*$`, "imu")
+      .exec(context.content)?.[1]?.trim();
+    if (inline !== undefined) return inline;
+    const section = new RegExp(`^#{1,6}\\s+${name}\\s*$\\r?\\n+([^#\\r\\n].*)`, "imu")
+      .exec(context.content)?.[1]?.trim();
+    return section ?? null;
+  };
+  const rawStatus = field("status")?.toLocaleLowerCase() ?? null;
+  const adrStatus = rawStatus === null
+    ? "unknown"
+    : ["proposed", "accepted", "rejected", "deprecated", "superseded"].find((status) =>
+      rawStatus.includes(status)
+    ) ?? "unknown";
+  const adrMetadata = adrFile ? {
+    adr_status: adrStatus,
+    adr_owner: field("(?:owner|owners|decision owner)"),
+    last_reviewed: field("(?:last reviewed|reviewed|date)"),
+    supersedes: field("supersedes"),
+    superseded_by: field("superseded by"),
+  } : {};
   return sections.map((section, index) => {
     const next = sections[index + 1];
     const endLine = Math.max(section.line, (next?.line ?? lines.length + 1) - 1);
-    const documentKind = /(?:^|\/)adr(?:s)?\//iu.test(context.relativeFilePath)
+    const documentKind = adrFile
       ? "adr"
       : /(?:^|\/)readme/iu.test(context.relativeFilePath)
         ? "readme"
@@ -132,6 +155,7 @@ function documentNodes(context: IntentContext): GraphNode[] {
         heading_level: section.level,
         heading_hash: sha256(section.title),
         explanation_source: "repository_documentation",
+        ...adrMetadata,
       },
     });
   });

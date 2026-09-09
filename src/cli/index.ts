@@ -374,6 +374,21 @@ export function createProgram(): Command {
     });
 
   program
+    .command("knowledge")
+    .description("Generate the agent map and check ownership, ADR, journey, and invariant knowledge.")
+    .argument("[path]", "A path inside the repository", process.cwd())
+    .option("--json", "Print the machine-readable knowledge report", false)
+    .option("--check", "Fail when pinned knowledge contradicts the indexed graph", false)
+    .action(async (targetPath: string, options: { json: boolean; check: boolean }) => {
+      const { createKnowledgeArtifacts, formatKnowledgeReport } = await import("../knowledge/system.js");
+      const { report } = await createKnowledgeArtifacts(targetPath);
+      console.log(options.json ? JSON.stringify(report, null, 2) : formatKnowledgeReport(report));
+      if (options.check && report.findings.some((finding) => finding.severity === "error")) {
+        process.exitCode = 1;
+      }
+    });
+
+  program
     .command("mcp")
     .description("Start the CodeAtlas MCP server over stdio.")
     .argument("[path]", "A path inside the repository", process.cwd())

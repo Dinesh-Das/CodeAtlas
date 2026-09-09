@@ -301,7 +301,7 @@ function relevantConstraints(
     const documentKind = typeof symbol.metadata.document_kind === "string"
       ? symbol.metadata.document_kind
       : "";
-    if (documentKind !== "decision") return [];
+    if (documentKind !== "decision" && documentKind !== "adr") return [];
     return [{
       id: symbol.id,
       kind: "decision",

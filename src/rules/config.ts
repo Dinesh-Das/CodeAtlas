@@ -3,7 +3,15 @@ import path from "node:path";
 import { sha256 } from "../core/hashing.js";
 import { CodeAtlasError } from "../core/errors.js";
 import type { ArchitectureRule, RuleSeverity } from "../ir/models.js";
-import { DEFAULT_V2_CONFIG, type CodeAtlasV2Config, type DomainOverride } from "./types.js";
+import {
+  DEFAULT_V2_CONFIG,
+  type CanonicalName,
+  type CodeAtlasV2Config,
+  type DomainOverride,
+  type KnowledgeInvariant,
+  type KnowledgeJourney,
+  type KnowledgeOwner,
+} from "./types.js";
 
 function stripComment(line: string): string {
   let quote: string | null = null;
@@ -167,6 +175,26 @@ function boundedInteger(value: unknown, pathName: string, fallback: number, mini
   return value as number;
 }
 
+function requiredString(value: unknown, pathName: string, max = 500): string {
+  if (typeof value !== "string" || value.trim() === "" || value.length > max) {
+    throw new CodeAtlasError(`Error: .codeatlas.yml ${pathName} must be a non-empty string up to ${max} characters.`);
+  }
+  return value.trim();
+}
+
+function optionalString(value: unknown, pathName: string): string | null {
+  return value === undefined || value === null ? null : requiredString(value, pathName);
+}
+
+function recordList(value: unknown, pathName: string, max = 200): Record<string, unknown>[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some((item) => Object.keys(record(item)).length === 0)) {
+    throw new CodeAtlasError(`Error: .codeatlas.yml ${pathName} must be a list of mappings.`);
+  }
+  if (value.length > max) throw new CodeAtlasError(`Error: .codeatlas.yml ${pathName} may contain at most ${max} entries.`);
+  return value.map(record);
+}
+
 function environmentBoolean(value: string | undefined, name: string): boolean | undefined {
   if (value === undefined) return undefined;
   if (["1", "true", "yes", "on"].includes(value.toLowerCase())) return true;
@@ -182,7 +210,7 @@ function environmentDepth(value: string | undefined, name: string, fallback: num
 
 export function normalizeV2Config(value: unknown): CodeAtlasV2Config {
   const root = record(value);
-  assertKnownKeys(root, "root", ["version", "index", "domains", "architecture", "analysis", "html", "ai"]);
+  assertKnownKeys(root, "root", ["version", "index", "domains", "architecture", "analysis", "html", "ai", "knowledge"]);
   if (root.version !== undefined && root.version !== 1) {
     throw new CodeAtlasError("Error: .codeatlas.yml version must be 1.");
   }
@@ -230,6 +258,49 @@ export function normalizeV2Config(value: unknown): CodeAtlasV2Config {
   if (ai.enabled !== undefined && typeof ai.enabled !== "boolean") {
     throw new CodeAtlasError("Error: .codeatlas.yml ai.enabled must be true or false.");
   }
+  const knowledge = record(root.knowledge);
+  assertKnownKeys(knowledge, "knowledge", [
+    "owners", "journeys", "invariants", "canonical_names", "max_documentation_age_days",
+  ]);
+  const owners = recordList(knowledge.owners, "knowledge.owners", 100).map((item, index): KnowledgeOwner => {
+    assertKnownKeys(item, `knowledge.owners[${index}]`, [
+      "id", "owner", "purpose", "include", "entrypoint", "contracts", "validation_command",
+    ]);
+    return {
+      id: requiredString(item.id, `knowledge.owners[${index}].id`, 120),
+      owner: requiredString(item.owner, `knowledge.owners[${index}].owner`, 200),
+      purpose: requiredString(item.purpose, `knowledge.owners[${index}].purpose`),
+      include: stringList(item.include, `knowledge.owners[${index}].include`, 100),
+      entrypoint: optionalString(item.entrypoint, `knowledge.owners[${index}].entrypoint`),
+      contracts: stringList(item.contracts, `knowledge.owners[${index}].contracts`, 100),
+      validation_command: optionalString(item.validation_command, `knowledge.owners[${index}].validation_command`),
+    };
+  });
+  const journeys = recordList(knowledge.journeys, "knowledge.journeys", 100).map((item, index): KnowledgeJourney => {
+    assertKnownKeys(item, `knowledge.journeys[${index}]`, ["id", "name", "purpose", "entrypoint"]);
+    return {
+      id: requiredString(item.id, `knowledge.journeys[${index}].id`, 120),
+      name: requiredString(item.name, `knowledge.journeys[${index}].name`, 200),
+      purpose: requiredString(item.purpose, `knowledge.journeys[${index}].purpose`),
+      entrypoint: requiredString(item.entrypoint, `knowledge.journeys[${index}].entrypoint`, 300),
+    };
+  });
+  const invariants = recordList(knowledge.invariants, "knowledge.invariants", 200).map((item, index): KnowledgeInvariant => {
+    assertKnownKeys(item, `knowledge.invariants[${index}]`, ["id", "statement", "applies_to"]);
+    return {
+      id: requiredString(item.id, `knowledge.invariants[${index}].id`, 120),
+      statement: requiredString(item.statement, `knowledge.invariants[${index}].statement`, 1_000),
+      applies_to: stringList(item.applies_to, `knowledge.invariants[${index}].applies_to`, 100),
+    };
+  });
+  const canonicalNames = recordList(knowledge.canonical_names, "knowledge.canonical_names", 200)
+    .map((item, index): CanonicalName => {
+      assertKnownKeys(item, `knowledge.canonical_names[${index}]`, ["symbol", "name"]);
+      return {
+        symbol: requiredString(item.symbol, `knowledge.canonical_names[${index}].symbol`, 300),
+        name: requiredString(item.name, `knowledge.canonical_names[${index}].name`, 200),
+      };
+    });
   return {
     version: DEFAULT_V2_CONFIG.version,
     index: { exclude: stringList(index.exclude, "index.exclude") },
@@ -262,6 +333,19 @@ export function normalizeV2Config(value: unknown): CodeAtlasV2Config {
       ),
     },
     ai: { enabled: ai.enabled === true },
+    knowledge: {
+      owners,
+      journeys,
+      invariants,
+      canonical_names: canonicalNames,
+      max_documentation_age_days: boundedInteger(
+        knowledge.max_documentation_age_days,
+        "knowledge.max_documentation_age_days",
+        DEFAULT_V2_CONFIG.knowledge.max_documentation_age_days,
+        1,
+        3_650,
+      ),
+    },
   };
 }
 

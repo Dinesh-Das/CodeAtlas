@@ -25,7 +25,7 @@ describe("compiled CLI", () => {
   it("exposes the complete v2 command surface through Commander", async () => {
     const help = await runCli("--help");
     for (const command of [
-      "build", "update", "watch", "context", "search", "symbol", "impact", "diff", "check", "review", "review-report", "ask", "snapshot", "mcp",
+      "build", "update", "watch", "context", "search", "symbol", "impact", "diff", "check", "review", "review-report", "knowledge", "ask", "snapshot", "mcp",
     ]) {
       expect(help.stdout).toMatch(new RegExp(`\\b${command}\\b`, "u"));
     }

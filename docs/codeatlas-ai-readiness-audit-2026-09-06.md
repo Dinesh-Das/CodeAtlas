@@ -364,6 +364,20 @@ Acceptance:
 - Every critical system has an owner, purpose, entrypoint, principal contracts, and validation command or an explicit missing-knowledge finding.
 - Stale documentation produces actionable file/line evidence and does not silently override code facts.
 
+Implementation status on 2026-09-09: every full build now writes `.codeatlas/agent/map.md`
+as a bounded table of contents (hard-capped below 150 lines) and a machine-readable
+`knowledge.json`. The map links the guided architecture, canonical IR, product/planning,
+reliability/security, ADR, owner, journey, invariant, canonical-name, and validation material.
+Tracked `knowledge` configuration pins owners, purposes, path scopes, entrypoints, contracts,
+commands, journeys, invariants, canonical names, and the documentation-age policy. ADR extraction
+records status, owner, review date, and supersession metadata with documentation provenance; the
+knowledge checker reports missing/stale metadata, broken supersession targets, empty owner or
+invariant scopes, and unresolved journey/canonical selectors with file/line evidence. Inferred
+domains without team ownership become explicit missing-knowledge findings. CI runs
+`codeatlas knowledge --check`, failing only for contradictions in pinned facts while leaving
+coverage/freshness gaps as visible warnings. Tests verify the line bound, human/generated
+provenance separation, stale ADR evidence, broken supersession, and config-versus-code drift.
+
 ### P7 — Earn distribution after proof
 
 Effort: ongoing, beginning after P0 and P5 evidence.

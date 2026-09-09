@@ -23,6 +23,16 @@ export {
   sourceFreeReviewReport,
   type SourceFreeReviewReport,
 } from "./cli/review.js";
+export {
+  buildKnowledgeReport,
+  createKnowledgeArtifacts,
+  formatKnowledgeReport,
+  renderAgentMap,
+  writeKnowledgeArtifacts,
+  type KnowledgeFinding,
+  type KnowledgeReport,
+  type KnowledgeSystem,
+} from "./knowledge/system.js";
 export { createCodeAtlasServer } from "./mcp/server.js";
 export { CODEATLAS_VERSION } from "./version.js";
 export { registerFrameworkAdapter } from "./framework/registry.js";

@@ -169,6 +169,7 @@ All optional `[path]` arguments default to the current directory.
 | `codeatlas index [path]` | Synchronize the local graph incrementally |
 | `codeatlas status [path]` | Compare the working tree with the indexed fingerprint |
 | `codeatlas doctor [path]` | Check configuration, runtime, parsers, storage, and graph health |
+| `codeatlas knowledge [path] --check` | Generate the short agent map and validate owners, ADRs, journeys, invariants, and canonical names |
 | `codeatlas mcp [path]` | Start the MCP server over stdio |
 | `codeatlas clean [path]` | Remove `.codeatlas/` after confirmation |
 
@@ -237,7 +238,7 @@ CodeAtlas uses two deliberately separate configuration files:
 
 - `.codeatlas/config.json` is local runtime configuration created by `init` or `build`.
 - `.codeatlas.yml` is optional, tracked team configuration for exclusions, named domains,
-  architecture rules, analysis depth, HTML mode, and the reserved AI flag.
+  architecture rules, team knowledge, analysis depth, HTML mode, and the reserved AI flag.
 
 Both formats are strict: unknown keys and invalid values fail with a diagnostic instead of being
 silently ignored.
@@ -272,6 +273,29 @@ architecture:
       forbid:
         depends_on:
           matches_path: src/mcp/
+
+knowledge:
+  max_documentation_age_days: 180
+  owners:
+    - id: agent-interface
+      owner: developer-experience
+      purpose: Serve compact evidence to coding agents
+      include: [src/mcp/**, src/context/**]
+      entrypoint: createCodeAtlasServer
+      contracts: [prepareChangeIr]
+      validation_command: npm run test
+  journeys:
+    - id: prepare-change
+      name: Prepare a change
+      purpose: Find edit locations, contracts, tests, and validation
+      entrypoint: prepareChangeIr
+  invariants:
+    - id: source-private-storage
+      statement: Persist hashes and graph facts without complete source text
+      applies_to: [src/storage/**]
+  canonical_names:
+    - symbol: createCodeAtlasServer
+      name: Agent interface
 
 analysis:
   max_call_depth: 8
@@ -317,6 +341,9 @@ analysis does not maintain a second grammar switch. Third-party adapters can be 
 | FastAPI | Decorated application/router routes and handlers |
 | Prisma | Schema models, fields, references, and verified client query/update operations |
 | SQLAlchemy | Declarative models, mapped fields, and local model relationships |
+| OpenAPI / Swagger | HTTP operations, schemas, servers, security, runtime matching, and drift |
+| AsyncAPI | Channels, publish/subscribe contracts, schemas, and servers |
+| Deployment manifests | Compose services/datastores and selected Kubernetes processes, jobs, and environment variables |
 
 Framework adapters are optional and can be extended through `registerFrameworkAdapter(...)`.
 Route and database-table literals are used transiently during extraction and stored as hashes;
