@@ -7,7 +7,7 @@ import {
 
 function validEvidence(): ReleaseEvidence {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     targetVersion: "1.0.0",
     releaseArtifact: {
       codeAtlasVersion: "1.0.0",
@@ -35,6 +35,23 @@ function validEvidence(): ReleaseEvidence {
       verifiedRelationshipPercent: 70,
       unresolvedRelationshipPercent: 10,
     })),
+    providerEvaluation: {
+      suiteId: "held-out-v1",
+      suiteVisibility: "held_out",
+      runId: "provider-run-1",
+      validatedAt: new Date().toISOString(),
+      codeAtlasVersion: "1.0.0-rc.1",
+      reportSha256: "b".repeat(64),
+      model: { provider: "provider", id: "model", version: "model-snapshot" },
+      taskCount: STABLE_RELEASE_BUDGETS.minimumProviderEvaluationTasks,
+      repeats: 3,
+      observationCount: STABLE_RELEASE_BUDGETS.minimumProviderEvaluationTasks * 3 * 2,
+      launchGatePassed: true,
+      contextTokenReduction: STABLE_RELEASE_BUDGETS.minimumContextTokenReduction,
+      taskSuccessRegression: STABLE_RELEASE_BUDGETS.maximumTaskSuccessRegression,
+      requiredFileRecall: STABLE_RELEASE_BUDGETS.minimumRequiredFileRecall,
+      independentlyReviewed: true,
+    },
     largeRepositoryBenchmark: {
       repository: "large/repository",
       commit: "a".repeat(40),

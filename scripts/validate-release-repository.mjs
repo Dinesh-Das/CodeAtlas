@@ -141,7 +141,9 @@ if (!source || !id) {
     const languages = [...new Set(
       atlas.symbols
         .map((symbol) => symbol.language)
-        .filter((language) => ["typescript", "javascript", "python"].includes(language)),
+        .filter((language) => [
+          "typescript", "javascript", "python", "go", "java", "rust",
+        ].includes(language)),
     )].sort();
     const result = {
       id,
@@ -200,7 +202,7 @@ if (!source || !id) {
       );
     }
     if (result.languages.length === 0) {
-      throw new Error("Repository contains no supported TypeScript, JavaScript, or Python source.");
+      throw new Error("Repository contains no supported TypeScript, JavaScript, Python, Go, Java, or Rust source.");
     }
     console.log(serializedResult.trimEnd());
   } finally {

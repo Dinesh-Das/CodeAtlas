@@ -6,12 +6,12 @@
     "url": "https://github.com/Dinesh-Das/CodeAtlas",
     "source": "github"
   },
-  "version": "0.10.0",
+  "version": "0.11.0-beta.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@dinesh-das/codeatlas",
-      "version": "0.10.0",
+      "version": "0.11.0-beta.1",
       "packageArguments": [
         {
           "type": "positional",

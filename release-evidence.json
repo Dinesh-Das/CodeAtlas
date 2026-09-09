@@ -1,11 +1,12 @@
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "targetVersion": "0.10.0",
   "releaseArtifact": {
     "codeAtlasVersion": "0.10.0",
     "packageSha256": "a626a13a57670a11e49130db7e9a4dbdfdc8e8cfad962891912ec186fbf4c2d4",
     "packedFileCount": 590
   },
+  "providerEvaluation": null,
   "independentRepositories": [
     {
       "id": "ajv-linux",

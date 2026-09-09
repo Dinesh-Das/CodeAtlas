@@ -1,12 +1,41 @@
 # CodeAtlas outcome evaluations
 
-The development suite defines 30 tasks across six pinned, Apache-2.0 fixture repositories. It covers architecture explanation, change location, cross-file fixes, refactoring, affected tests, ambiguous questions, and questions outside the indexed source. An unsupported Rust fixture uses unfamiliar Welsh identifiers to test whether an agent falls back to native source tools and reports the CodeAtlas coverage gap. These fixtures are public development data. They are not the held-out set and their results must not be presented as product efficacy claims.
+The development suite defines 30 tasks across six pinned, Apache-2.0 fixture repositories. It covers architecture explanation, change location, cross-file fixes, refactoring, affected tests, ambiguous questions, and questions outside the indexed source. An unsupported C# fixture uses unfamiliar Welsh identifiers to test whether an agent falls back to native source tools and reports the CodeAtlas coverage gap. These fixtures are public development data. They are not the held-out set and their results must not be presented as product efficacy claims.
 
 Validate the suite, including deterministic content hashes:
 
 ```bash
 npm run eval:validate
 ```
+
+Run the paired provider harness with an exact model identifier and provider-reported version:
+
+```bash
+npm run eval:provider -- \
+  --suite evals/development.json \
+  --provider codex \
+  --model <model-id> \
+  --model-version <immutable-model-version> \
+  --output-dir evals/runs/<run-id>
+
+npm run eval:report -- \
+  --suite evals/development.json \
+  --run evals/runs/<run-id>/run.json \
+  --observations evals/runs/<run-id>/observations.jsonl \
+  --output evals/runs/<run-id>/report.json \
+  --require-gate
+```
+
+The runner copies every pinned fixture into a fresh temporary Git repository for every task,
+repeat, and variant. Native runs may use normal repository tools but are prohibited from running
+CodeAtlas. CodeAtlas runs initialize the local index first and must begin with a budgeted `context`
+packet. Both variants use the same read-only model, output schema, task, and cold-workspace policy.
+Success is computed from required evidence recall, calibrated abstention, required concepts,
+relationship types, allowed starting files, and forbidden distractors; the model does not grade
+itself. Provider token events and tool calls are retained in the observation records.
+
+Use `--dry-run` to validate the model metadata and observation count without making provider calls.
+Run artifacts can contain model answers and file names; review them before publishing.
 
 An experiment has two inputs in addition to the suite. The run manifest pins the exact provider, model ID and model version, harness ID and version, cache state, and repeat count. The observations file is JSON Lines with one result per task, variant, and repeat. Both `native` and `codeatlas` must run with the same run manifest and at least three repeats.
 
@@ -32,7 +61,7 @@ An experiment has two inputs in addition to the suite. The run manifest pins the
 }
 ```
 
-Generate a report after recording the observations:
+You can also generate a report from observations produced by another compatible harness:
 
 ```bash
 npm run eval:report -- --suite evals/development.json --run path/to/run.json --observations path/to/observations.jsonl --output path/to/report.json

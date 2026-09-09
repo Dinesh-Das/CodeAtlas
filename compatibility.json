@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "codeAtlasVersion": "0.10.0",
+  "codeAtlasVersion": "0.11.0-beta.1",
   "lastVerified": "2026-09-09",
   "transport": "stdio",
   "targets": [

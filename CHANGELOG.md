@@ -2,7 +2,7 @@
 
 All notable changes follow semantic versioning.
 
-## Unreleased
+## 0.11.0-beta.1 - 2026-09-09
 
 ### Added
 
@@ -13,6 +13,9 @@ All notable changes follow semantic versioning.
   unique IDs, and source-backed evidence before optional graph facts are accepted.
 - Versioned `codeatlas.runtime.json` observations that materialize uniquely resolved reflective,
   generated, registered, and dependency-injected relationships with trace/profile/test evidence.
+- A read-only paired Codex evaluation runner that creates a fresh Git workspace per observation,
+  enforces structured answers, independently scores evidence and task expectations, and emits the
+  versioned run/observation records consumed by the launch-gate report.
 - Added canonical IR 1.2 evidence scopes, excerpt status, first-class resolution diagnostics,
   relationship uncertainty, CFG capability metadata, and an in-memory compatibility reader for
   persistent 1.0 and 1.1 snapshots.

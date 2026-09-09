@@ -13,6 +13,10 @@ export const STABLE_RELEASE_BUDGETS = {
   maximumUnresolvedRelationshipPercent: 20,
   maximumEvidenceAgeDays: 90,
   validationHeapMiB: 5_120,
+  minimumProviderEvaluationTasks: 20,
+  minimumRequiredFileRecall: 0.9,
+  minimumContextTokenReduction: 0.2,
+  maximumTaskSuccessRegression: 0.02,
 } as const;
 
 export const repositoryValidationSchema = z.object({
@@ -51,6 +55,28 @@ const benchmarkSchema = z.object({
   freshnessP95Ms: z.number().positive(),
 }).strict();
 
+const providerEvaluationSchema = z.object({
+  suiteId: z.string().trim().min(1),
+  suiteVisibility: z.literal("held_out"),
+  runId: z.string().trim().min(1),
+  validatedAt: z.string().datetime({ offset: true }),
+  codeAtlasVersion: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u),
+  reportSha256: z.string().regex(/^[0-9a-f]{64}$/iu),
+  model: z.object({
+    provider: z.string().trim().min(1),
+    id: z.string().trim().min(1),
+    version: z.string().trim().min(1),
+  }).strict(),
+  taskCount: z.number().int().positive(),
+  repeats: z.number().int().min(3),
+  observationCount: z.number().int().positive(),
+  launchGatePassed: z.literal(true),
+  contextTokenReduction: z.number().min(-1).max(1),
+  taskSuccessRegression: z.number().min(-1).max(1),
+  requiredFileRecall: z.number().min(0).max(1),
+  independentlyReviewed: z.literal(true),
+}).strict();
+
 export const releaseArtifactSchema = z.object({
   codeAtlasVersion: z.string().regex(/^\d+\.\d+\.\d+$/u),
   packageSha256: z.string().regex(/^[0-9a-f]{64}$/iu),
@@ -60,11 +86,12 @@ export const releaseArtifactSchema = z.object({
 export type ReleaseArtifactIdentity = z.infer<typeof releaseArtifactSchema>;
 
 export const releaseEvidenceSchema = z.object({
-  schemaVersion: z.literal(3),
+  schemaVersion: z.literal(4),
   targetVersion: z.string().regex(/^\d+\.\d+\.\d+$/u),
   releaseArtifact: releaseArtifactSchema,
   independentRepositories: z.array(repositoryValidationSchema),
   largeRepositoryBenchmark: benchmarkSchema.nullable(),
+  providerEvaluation: providerEvaluationSchema.nullable(),
 }).strict();
 
 export type ReleaseEvidence = z.infer<typeof releaseEvidenceSchema>;
@@ -214,6 +241,55 @@ export function validateStableReleaseEvidence(
     ];
     for (const [actual, limit, label] of budgetChecks) {
       if (actual > limit) errors.push(`${label} failed: ${actual} > ${limit}.`);
+    }
+  }
+  const providerEvaluation = evidence.providerEvaluation;
+  if (providerEvaluation === null) {
+    errors.push("A paired held-out provider evaluation is required.");
+  } else {
+    const evaluationAgeMs = Date.now() - Date.parse(providerEvaluation.validatedAt);
+    const maximumAgeMs = STABLE_RELEASE_BUDGETS.maximumEvidenceAgeDays * 86_400_000;
+    if (evaluationAgeMs > maximumAgeMs || evaluationAgeMs < -86_400_000) {
+      errors.push(
+        `Provider evaluation is outside the ${STABLE_RELEASE_BUDGETS.maximumEvidenceAgeDays}-day evidence window.`,
+      );
+    }
+    if (stableVersion(providerEvaluation.codeAtlasVersion) !== stableVersion(version)) {
+      errors.push(
+        `Provider evaluation used ${providerEvaluation.codeAtlasVersion}, not the ${stableVersion(version)} release line.`,
+      );
+    }
+    if (providerEvaluation.taskCount < STABLE_RELEASE_BUDGETS.minimumProviderEvaluationTasks) {
+      errors.push(
+        `Provider evaluation task minimum failed: ${providerEvaluation.taskCount} < ${STABLE_RELEASE_BUDGETS.minimumProviderEvaluationTasks}.`,
+      );
+    }
+    const expectedObservations = providerEvaluation.taskCount * providerEvaluation.repeats * 2;
+    if (providerEvaluation.observationCount < expectedObservations) {
+      errors.push(
+        `Provider evaluation observations are incomplete: ${providerEvaluation.observationCount} < ${expectedObservations}.`,
+      );
+    }
+    if (
+      providerEvaluation.contextTokenReduction <
+      STABLE_RELEASE_BUDGETS.minimumContextTokenReduction
+    ) {
+      errors.push(
+        `Provider context-token reduction failed: ${providerEvaluation.contextTokenReduction} < ${STABLE_RELEASE_BUDGETS.minimumContextTokenReduction}.`,
+      );
+    }
+    if (
+      providerEvaluation.taskSuccessRegression >
+      STABLE_RELEASE_BUDGETS.maximumTaskSuccessRegression
+    ) {
+      errors.push(
+        `Provider task-success regression failed: ${providerEvaluation.taskSuccessRegression} > ${STABLE_RELEASE_BUDGETS.maximumTaskSuccessRegression}.`,
+      );
+    }
+    if (providerEvaluation.requiredFileRecall < STABLE_RELEASE_BUDGETS.minimumRequiredFileRecall) {
+      errors.push(
+        `Provider required-file recall failed: ${providerEvaluation.requiredFileRecall} < ${STABLE_RELEASE_BUDGETS.minimumRequiredFileRecall}.`,
+      );
     }
   }
   return {

@@ -461,6 +461,5 @@ dependency installation requires a supported Node.js runtime and platform toolch
 - [Security policy](SECURITY.md)
 - [Canonical IR compatibility](docs/canonical-ir-compatibility.md)
 
-The package version is `0.10.0`; work recorded under **Unreleased** in the changelog is present in
-the current working tree but is not part of that tagged release until published through the release
-workflow.
+The source and release metadata are prepared for `0.11.0-beta.1`. The release workflow publishes
+the exact tagged artifact to npm and the MCP Registry after every validation job succeeds.
