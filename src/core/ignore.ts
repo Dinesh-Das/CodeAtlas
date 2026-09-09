@@ -21,7 +21,7 @@ const DEFAULT_IGNORES = [
   "codeatlas.html",
   "CODEATLAS.md",
   "CODEATLAS.mmd",
-  "codeatlas/",
+  "/codeatlas/",
 ];
 
 const SECRET_IGNORES = [

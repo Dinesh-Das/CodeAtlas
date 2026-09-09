@@ -7,6 +7,7 @@ import type { EdgeType, GraphEdge, GraphNode, ProvenanceCategory, SourceType } f
 import type { AtlasDatabase } from "../storage/database.js";
 import { upsertEdge } from "../storage/edges.js";
 import { upsertNode } from "../storage/nodes.js";
+import { materializeRuntimeEvidence } from "./runtime-evidence.js";
 
 interface EdgeRow {
   source_node_id: string;
@@ -578,5 +579,5 @@ export function materializeFrameworkRelationships(
     }
   }
 
-  return written.size;
+  return written.size + materializeRuntimeEvidence(database, repositoryId, timestamp);
 }

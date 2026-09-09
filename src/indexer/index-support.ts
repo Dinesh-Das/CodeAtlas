@@ -106,7 +106,14 @@ export function owningPackage(
 
 export function initialParseStatus(
   language: DetectedLanguage | null,
-  enabled: { typescript: boolean; javascript: boolean; python: boolean },
+  enabled: {
+    typescript: boolean;
+    javascript: boolean;
+    python: boolean;
+    go?: boolean;
+    java?: boolean;
+    rust?: boolean;
+  },
   hasAdapter: boolean,
   hasFrameworkAdapter: boolean,
   hasIntentAdapter: boolean,

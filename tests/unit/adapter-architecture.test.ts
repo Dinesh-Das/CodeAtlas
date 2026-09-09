@@ -14,9 +14,12 @@ describe("language and framework adapter architecture", () => {
   it("uses tree-sitter as the baseline for every built-in source-language adapter", () => {
     const adapters = availableLanguageAdapters();
     expect(adapters.map((adapter) => adapter.language)).toEqual([
+      "go",
+      "java",
       "javascript",
       "jsx",
       "python",
+      "rust",
       "tsx",
       "typescript",
     ]);

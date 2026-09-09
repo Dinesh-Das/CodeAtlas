@@ -1,0 +1,30 @@
+{
+  "nodes": [
+    "module|src/input.rs|1|-|-|ast|1",
+    "interface|Runner|3|pub trait Runner|public|ast|1",
+    "class|Service|7|pub struct Service|public|ast|1",
+    "method|Runner.run|4|fn run(&self);|module|ast|1",
+    "method|Service.new|12|pub fn new(repository: Repository) -> Self|public|ast|1",
+    "method|Service.save|16|fn save(&self)|module|ast|1",
+    "method|Service.run|22|fn run(&self)|module|ast|1"
+  ],
+  "edges": [
+    "CONTAINS|file:src/input.rs|module:src/input.rs|1|ast|1",
+    "CONTAINS|module:src/input.rs|interface:Runner|3|ast|1",
+    "EXPORTS|module:src/input.rs|interface:Runner|3|ast|1",
+    "CONTAINS|module:src/input.rs|class:Service|7|ast|1",
+    "EXPORTS|module:src/input.rs|class:Service|7|ast|1",
+    "CONTAINS|interface:Runner|method:Runner.run|4|ast|1",
+    "CONTAINS|class:Service|method:Service.new|12|ast|1",
+    "EXPORTS|module:src/input.rs|method:Service.new|12|ast|1",
+    "CONTAINS|class:Service|method:Service.save|16|ast|1",
+    "CONTAINS|class:Service|method:Service.run|22|ast|1"
+  ],
+  "unresolvedReferences": [
+    "import|crate::store::Repository|1|4|ast",
+    "call|self.repository.save|17|8|ast",
+    "implements|Runner|21|5|ast",
+    "call|self.save|23|8|ast"
+  ],
+  "errors": []
+}

@@ -20,6 +20,9 @@ const fixtures: Array<{ language: DetectedLanguage; filename: string }> = [
   { language: "tsx", filename: "input.tsx" },
   { language: "jsx", filename: "input.jsx" },
   { language: "python", filename: "input.py" },
+  { language: "go", filename: "input.go" },
+  { language: "java", filename: "Input.java" },
+  { language: "rust", filename: "input.rs" },
 ];
 
 function compactSnapshot(

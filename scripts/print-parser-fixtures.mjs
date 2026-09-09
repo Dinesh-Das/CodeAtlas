@@ -10,6 +10,9 @@ const fixtures = [
   ["tsx", "input.tsx"],
   ["jsx", "input.jsx"],
   ["python", "input.py"],
+  ["go", "input.go"],
+  ["java", "Input.java"],
+  ["rust", "input.rs"],
 ];
 
 for (const [language, filename] of fixtures) {

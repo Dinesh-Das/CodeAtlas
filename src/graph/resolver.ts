@@ -288,6 +288,48 @@ function moduleCandidates(
   const sourceDirectory = path.posix.dirname(reference.evidence.file);
   const candidatePaths = new Set<string>();
 
+  if (reference.evidence.file.endsWith(".java")) {
+    const suffix = `${reference.name.replaceAll(".", "/")}.java`;
+    for (const filePath of modulesByFile.keys()) {
+      if (filePath === suffix || filePath.endsWith(`/${suffix}`)) candidatePaths.add(filePath);
+    }
+  }
+
+  if (reference.evidence.file.endsWith(".go")) {
+    const importPath = reference.name.replace(/^\/+|\/+$/gu, "");
+    const segments = importPath.split("/");
+    // Go imports address a package directory rather than one source file. Match the
+    // longest repository-local suffix and retain every file in that package so the
+    // graph represents the package even when its declarations span files.
+    for (let offset = 0; offset < segments.length; offset += 1) {
+      const directorySuffix = segments.slice(offset).join("/");
+      const matches = [...modulesByFile.keys()].filter((filePath) =>
+        filePath.endsWith(".go") &&
+        (path.posix.dirname(filePath) === directorySuffix ||
+          path.posix.dirname(filePath).endsWith(`/${directorySuffix}`))
+      );
+      if (matches.length === 0) continue;
+      for (const match of matches) candidatePaths.add(match);
+      break;
+    }
+  }
+
+  if (reference.evidence.file.endsWith(".rs")) {
+    const parts = reference.name.split("::").filter((part) =>
+      part !== "crate" && part !== "self" && part !== "super" && part !== ""
+    );
+    // A use path normally ends in the imported symbol. Resolve its containing
+    // module through both Rust file layouts.
+    const moduleParts = parts.slice(0, -1);
+    if (moduleParts.length > 0) {
+      const base = moduleParts.join("/");
+      candidatePaths.add(`src/${base}.rs`);
+      candidatePaths.add(`src/${base}/mod.rs`);
+      candidatePaths.add(`${base}.rs`);
+      candidatePaths.add(`${base}/mod.rs`);
+    }
+  }
+
   // An explicit runtime extension is authoritative when that file is indexed. TypeScript may
   // resolve `./index.js` to a neighboring declaration file for type checking; adding both the
   // runtime and declaration modules makes a single import look ambiguous and weakens every

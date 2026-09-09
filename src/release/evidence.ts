@@ -25,7 +25,7 @@ export const repositoryValidationSchema = z.object({
   codeAtlasVersion: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u),
   atlasSha256: z.string().regex(/^[0-9a-f]{64}$/iu),
   operatingSystem: z.enum(["linux", "macos", "windows"]),
-  languages: z.array(z.enum(["typescript", "javascript", "python"])).min(1),
+  languages: z.array(z.enum(["typescript", "javascript", "python", "go", "java", "rust"])).min(1),
   checks: z.object({
     install: z.literal(true),
     index: z.literal(true),
@@ -150,7 +150,7 @@ export function validateStableReleaseEvidence(
     }
   }
   const languages = new Set(evidence.independentRepositories.flatMap((entry) => entry.languages));
-  for (const language of ["typescript", "javascript", "python"] as const) {
+  for (const language of ["typescript", "javascript", "python", "go", "java", "rust"] as const) {
     if (!languages.has(language)) errors.push(`Independent validation is missing ${language}.`);
   }
   for (const repository of evidence.independentRepositories) {

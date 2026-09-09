@@ -12,6 +12,9 @@ export const configSchema = z
         typescript: z.boolean(),
         javascript: z.boolean(),
         python: z.boolean(),
+        go: z.boolean().default(true),
+        java: z.boolean().default(true),
+        rust: z.boolean().default(true),
       })
       .strict(),
     analysis: z
@@ -63,6 +66,9 @@ export const DEFAULT_CONFIG: CodeAtlasConfig = {
     typescript: true,
     javascript: true,
     python: true,
+    go: true,
+    java: true,
+    rust: true,
   },
   analysis: {
     gitHistory: true,

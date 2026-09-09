@@ -8,6 +8,9 @@ snapshot:
 - TSX
 - JSX
 - Python
+- Go
+- Java
+- Rust
 
 The snapshots cover modules, symbols, containment, exports, transient references, evidence,
 confidence, signatures, and literal-value redaction. Relationship fixtures cover imports, calls,

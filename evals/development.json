@@ -46,9 +46,9 @@
       "negative_coverage": false
     },
     {
-      "id": "unsupported-rust",
-      "fixture_root": "evals/fixtures/unsupported-rust",
-      "content_sha256": "005983f5a996b3fe67468110c370d3d478e34733840a7a28443eae6b23f642c0",
+      "id": "unsupported-csharp",
+      "fixture_root": "evals/fixtures/unsupported-csharp",
+      "content_sha256": "289ed5ab620fc6f2204f9dbf6f9955c674c6f1fd38b8ee1db80c757fafc7c37e",
       "license": "Apache-2.0",
       "languages": ["unsupported"],
       "negative_coverage": true
@@ -420,81 +420,78 @@
     },
 
     {
-      "id": "rust-architecture-fallback",
-      "repository_id": "unsupported-rust",
+      "id": "csharp-architecture-fallback",
+      "repository_id": "unsupported-csharp",
       "category": "architecture_explanation",
       "prompt": "Explain how the cyfriflyfr processing flow accumulates and returns values.",
       "answerability": "answerable",
       "codeatlas_coverage": "out_of_coverage",
       "context_token_budget": 900,
       "acceptable_evidence": [{
-        "description": "The unsupported Rust source contains the complete processing flow.",
-        "files": ["src/lib.rs"]
+        "description": "The unsupported C# source contains the complete processing flow.",
+        "files": ["src/Ledger.cs"]
       }],
       "expectations": {
-        "required_concepts": ["prosesu", "cofnodi", "cyfanswm", "coverage gap"],
+        "required_concepts": ["Prosesu", "Cofnodi", "Cyfanswm", "coverage gap"],
         "required_relationship_types": [],
-        "allowed_starting_files": ["src/lib.rs"],
+        "allowed_starting_files": ["src/Ledger.cs"],
         "forbidden_distractors": ["database"]
       },
-      "expected_behavior": "Use native source evidence, explain prosesu through cofnodi to cyfanswm, and state the CodeAtlas coverage gap.",
+      "expected_behavior": "Use native source evidence, explain Prosesu through Cofnodi to Cyfanswm, and state the CodeAtlas coverage gap.",
       "patch_test": null
     },
     {
-      "id": "rust-change-cyfanswm",
-      "repository_id": "unsupported-rust",
+      "id": "csharp-change-cyfanswm",
+      "repository_id": "unsupported-csharp",
       "category": "change_location",
       "prompt": "Where should the Cyfriflyfr total calculation be changed?",
       "answerability": "answerable",
       "codeatlas_coverage": "out_of_coverage",
       "context_token_budget": 650,
       "acceptable_evidence": [{
-        "description": "cyfanswm performs the total calculation in the unsupported source.",
-        "files": ["src/lib.rs"]
+        "description": "Cyfanswm performs the total calculation in the unsupported source.",
+        "files": ["src/Ledger.cs"]
       }],
-      "expected_behavior": "Locate cyfanswm through native search and disclose that CodeAtlas does not parse Rust.",
+      "expected_behavior": "Locate Cyfanswm through native search and disclose that CodeAtlas does not parse C#.",
       "patch_test": null
     },
     {
-      "id": "rust-cross-file-storage",
-      "repository_id": "unsupported-rust",
+      "id": "csharp-cross-file-storage",
+      "repository_id": "unsupported-csharp",
       "category": "cross_file_bug_fix",
       "prompt": "Which storage module persists Cyfriflyfr entries across restarts?",
       "answerability": "unanswerable",
       "codeatlas_coverage": "out_of_coverage",
       "context_token_budget": 650,
       "acceptable_evidence": [],
-      "expected_behavior": "Abstain because no persistence module exists, while separately reporting the Rust coverage limitation.",
+      "expected_behavior": "Abstain because no persistence module exists, while separately reporting the C# coverage limitation.",
       "patch_test": null
     },
     {
-      "id": "rust-refactor-cofnodi",
-      "repository_id": "unsupported-rust",
+      "id": "csharp-refactor-cofnodi",
+      "repository_id": "unsupported-csharp",
       "category": "refactoring",
-      "prompt": "What source locations must change if cofnodi is renamed?",
+      "prompt": "What source locations must change if Cofnodi is renamed?",
       "answerability": "answerable",
       "codeatlas_coverage": "out_of_coverage",
       "context_token_budget": 750,
       "acceptable_evidence": [{
-        "description": "The method declaration and its call from prosesu share one Rust source file.",
-        "files": ["src/lib.rs"]
+        "description": "The method declaration and its call from Prosesu share one C# source file.",
+        "files": ["src/Ledger.cs"]
       }],
       "expected_behavior": "Find the declaration and call with native tools and avoid claiming graph-backed rename coverage.",
       "patch_test": null
     },
     {
-      "id": "rust-affected-tests",
-      "repository_id": "unsupported-rust",
+      "id": "csharp-affected-tests",
+      "repository_id": "unsupported-csharp",
       "category": "affected_tests",
-      "prompt": "Which test exercises prosesu and its total calculation?",
-      "answerability": "answerable",
+      "prompt": "Which test exercises Prosesu and its total calculation?",
+      "answerability": "unanswerable",
       "codeatlas_coverage": "out_of_coverage",
       "context_token_budget": 700,
-      "acceptable_evidence": [{
-        "description": "The inline Rust test calls prosesu and checks its total.",
-        "files": ["src/lib.rs"]
-      }],
-      "expected_behavior": "Locate cyfanswm_yw_cywir using native tools and state that it was not retrieved from CodeAtlas.",
+      "acceptable_evidence": [],
+      "expected_behavior": "Abstain because the fixture has no test project, and state the C# coverage limitation.",
       "patch_test": null
     }
   ],

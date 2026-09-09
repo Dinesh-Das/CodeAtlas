@@ -2,6 +2,9 @@ import type { DetectedLanguage } from "../core/languages.js";
 import type { LanguageAdapter } from "./parser.js";
 import { javascriptAdapter, jsxAdapter } from "./languages/javascript.js";
 import { pythonAdapter } from "./languages/python.js";
+import { goAdapter } from "./languages/go.js";
+import { javaAdapter } from "./languages/java.js";
+import { rustAdapter } from "./languages/rust.js";
 import { tsxAdapter, typescriptAdapter } from "./languages/typescript.js";
 
 export const TREE_SITTER_VERSION = "tree-sitter@0.21.1+codeatlas-buffer-v2";
@@ -40,6 +43,9 @@ for (const [language, adapter] of [
   ["javascript", javascriptAdapter],
   ["jsx", jsxAdapter],
   ["python", pythonAdapter],
+  ["go", goAdapter],
+  ["java", javaAdapter],
+  ["rust", rustAdapter],
 ] as const) {
   registerLanguageAdapter(language, adapter);
 }

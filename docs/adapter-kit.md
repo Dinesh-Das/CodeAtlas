@@ -14,7 +14,14 @@ npm run adapter:check
 ```
 
 The example gate requires precision >= 0.95 and recall >= 0.90. Real adapters should split metrics
-by supported edge type and include contract edges separately. A pull request should contain:
+by supported edge type and include contract edges separately.
+
+The runtime also enforces the adapter graph contract per file. Node and edge IDs must be unique,
+types and provenance values must be canonical, confidence must stay within 0-1, and every fact must
+carry a positive evidence line owned by the file being analyzed. A contract violation isolates that
+adapter for the file, records a warning, and retains the generic language graph.
+
+A pull request should contain:
 
 - an adapter name and pinned parser/framework versions;
 - positive, negative, aliased-import, composed-registration, and dynamic-registration fixtures;

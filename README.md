@@ -89,6 +89,8 @@ CodeAtlas currently provides:
 - `CONTAINS`, `EXPORTS`, `IMPORTS`, `CALLS`, `EXTENDS`, `IMPLEMENTS`, and `REFERENCES`
   relationships with stable IDs and evidence.
 - Explicit unresolved, ambiguous, dynamic, generated-code, and unsupported-framework diagnostics.
+- Optional [`codeatlas.runtime.json`](docs/runtime-evidence.md) observations that resolve reflective,
+  generated, and dependency-injected relationships only when both symbol selectors are unique.
 - Express, Fastify, FastAPI, Prisma, and SQLAlchemy framework extraction.
 - Deterministic domains, features, dependency communities, architecture metrics, and rules.
 - Branch-preserving execution flows and structured control-flow graphs for supported constructs.
@@ -257,7 +259,7 @@ CodeAtlas uses two deliberately separate configuration files:
 Both formats are strict: unknown keys and invalid values fail with a diagnostic instead of being
 silently ignored.
 
-The generated local configuration defaults to all three languages and framework analysis enabled,
+The generated local configuration defaults to all six built-in languages and framework analysis enabled,
 bounded source/query/traversal limits, 20 retained snapshots, and relationship-quality thresholds.
 Run `codeatlas doctor` after editing it.
 
@@ -343,6 +345,9 @@ self-contained export.
 | `typescript` | TypeScript and TSX |
 | `javascript` | JavaScript and JSX |
 | `python` | Python |
+| `go` | Go |
+| `java` | Java |
+| `rust` | Rust |
 
 Source-language adapters own structural extraction and syntax-tree creation so downstream CFG
 analysis does not maintain a second grammar switch. Third-party adapters can be registered with
@@ -362,6 +367,9 @@ analysis does not maintain a second grammar switch. Third-party adapters can be 
 Framework adapters are optional and can be extended through `registerFrameworkAdapter(...)`.
 Route and database-table literals are used transiently during extraction and stored as hashes;
 exact values are re-read from synchronized evidence ranges when requested.
+
+Runtime traces, profiles, instrumented tests, and probes can close static-analysis gaps through the
+versioned [`codeatlas.runtime.json` evidence contract](docs/runtime-evidence.md).
 
 ## Freshness, storage, and privacy
 

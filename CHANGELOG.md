@@ -6,6 +6,13 @@ All notable changes follow semantic versioning.
 
 ### Added
 
+- Built-in Go, Java, and Rust Tree-sitter adapters with repository-local imports, declarations,
+  calls, implementation relationships, generated-code signals, and reflection/runtime-registration
+  uncertainty.
+- Runtime framework-adapter contract validation for canonical types, confidence, provenance,
+  unique IDs, and source-backed evidence before optional graph facts are accepted.
+- Versioned `codeatlas.runtime.json` observations that materialize uniquely resolved reflective,
+  generated, registered, and dependency-injected relationships with trace/profile/test evidence.
 - Added canonical IR 1.2 evidence scopes, excerpt status, first-class resolution diagnostics,
   relationship uncertainty, CFG capability metadata, and an in-memory compatibility reader for
   persistent 1.0 and 1.1 snapshots.
@@ -21,6 +28,10 @@ All notable changes follow semantic versioning.
 
 ### Fixed
 
+- Made source-backed CLI and MCP reads reconcile Git authoritatively so delayed macOS file-watcher
+  notifications cannot return a stale architecture generation.
+- Anchored the generated `codeatlas/` bundle exclusion at the repository root so Java and other
+  namespace directories named `codeatlas` remain indexable.
 - Replaced source-order control-flow chaining with structured lowering for supported branches,
   loops, abrupt exits, and try/catch/finally paths; unsupported constructs are now explicit.
 - Prevented duplicate qualified symbol names from resolving silently and corrected CFG evidence

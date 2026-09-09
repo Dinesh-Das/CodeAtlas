@@ -1,0 +1,25 @@
+{
+  "nodes": [
+    "module|src/Input.java|1|-|-|ast|1",
+    "class|io.codeatlas.service.Input|5|public class Input implements Runnable|public|ast|1",
+    "variable|io.codeatlas.service.Input.repository|6|private final Repository repository;|private|ast|1",
+    "method|io.codeatlas.service.Input.Input|8|public Input(Repository repository)|public|ast|1",
+    "method|io.codeatlas.service.Input.run|12|@Override public void run()|public|ast|1"
+  ],
+  "edges": [
+    "CONTAINS|file:src/Input.java|module:src/Input.java|1|ast|1",
+    "CONTAINS|module:src/Input.java|class:io.codeatlas.service.Input|5|ast|1",
+    "EXPORTS|module:src/Input.java|class:io.codeatlas.service.Input|5|ast|1",
+    "CONTAINS|class:io.codeatlas.service.Input|variable:io.codeatlas.service.Input.repository|6|ast|1",
+    "CONTAINS|class:io.codeatlas.service.Input|method:io.codeatlas.service.Input.Input|8|ast|1",
+    "EXPORTS|module:src/Input.java|method:io.codeatlas.service.Input.Input|8|ast|1",
+    "CONTAINS|class:io.codeatlas.service.Input|method:io.codeatlas.service.Input.run|12|ast|1",
+    "EXPORTS|module:src/Input.java|method:io.codeatlas.service.Input.run|12|ast|1"
+  ],
+  "unresolvedReferences": [
+    "import|io.codeatlas.store.Repository|3|7|ast",
+    "implements|Runnable|5|30|ast",
+    "call|repository.save|14|8|ast"
+  ],
+  "errors": []
+}

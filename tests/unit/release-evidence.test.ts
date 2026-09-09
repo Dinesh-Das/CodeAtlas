@@ -22,8 +22,8 @@ function validEvidence(): ReleaseEvidence {
       codeAtlasVersion: "1.0.0-rc.1",
       atlasSha256: `${index}`.padStart(64, "a"),
       operatingSystem: (["linux", "macos", "windows"] as const)[index % 3]!,
-      languages: (["typescript", "javascript", "python"] as const).filter(
-        (_, languageIndex) => languageIndex === index % 3,
+      languages: (["typescript", "javascript", "python", "go", "java", "rust"] as const).filter(
+        (_, languageIndex) => languageIndex === index % 6,
       ),
       checks: {
         install: true,

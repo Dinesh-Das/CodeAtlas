@@ -6,6 +6,9 @@ export type BuiltInLanguage =
   | "javascript"
   | "jsx"
   | "python"
+  | "go"
+  | "java"
+  | "rust"
   | "json"
   | "yaml"
   | "toml";
@@ -23,6 +26,9 @@ const EXTENSION_LANGUAGES = new Map<string, DetectedLanguage>([
   [".jsx", "jsx"],
   [".py", "python"],
   [".pyi", "python"],
+  [".go", "go"],
+  [".java", "java"],
+  [".rs", "rust"],
   [".json", "json"],
   [".jsonc", "json"],
   [".yaml", "yaml"],
@@ -30,7 +36,7 @@ const EXTENSION_LANGUAGES = new Map<string, DetectedLanguage>([
   [".toml", "toml"],
 ]);
 const SOURCE_LANGUAGES = new Set<DetectedLanguage>([
-  "typescript", "tsx", "javascript", "jsx", "python",
+  "typescript", "tsx", "javascript", "jsx", "python", "go", "java", "rust",
 ]);
 
 export function registerLanguageExtensions(
@@ -77,10 +83,20 @@ export function isSourceLanguage(language: DetectedLanguage | null): boolean {
 
 export function isLanguageEnabled(
   language: DetectedLanguage | null,
-  enabled: { typescript: boolean; javascript: boolean; python: boolean },
+  enabled: {
+    typescript: boolean;
+    javascript: boolean;
+    python: boolean;
+    go?: boolean;
+    java?: boolean;
+    rust?: boolean;
+  },
 ): boolean {
   if (language === "typescript" || language === "tsx") return enabled.typescript;
   if (language === "javascript" || language === "jsx") return enabled.javascript;
   if (language === "python") return enabled.python;
+  if (language === "go") return enabled.go !== false;
+  if (language === "java") return enabled.java !== false;
+  if (language === "rust") return enabled.rust !== false;
   return language !== null;
 }

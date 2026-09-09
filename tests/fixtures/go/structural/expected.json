@@ -1,0 +1,28 @@
+{
+  "nodes": [
+    "module|src/input.go|1|-|-|ast|1",
+    "interface|service.Runner|5|Runner interface { Run() error }|public|ast|1",
+    "method|service.Runner.Run|6|Run() error|public|ast|1",
+    "class|service.Worker|9|Worker struct { repository *store.Repository }|public|ast|1",
+    "function|service.NewWorker|13|func NewWorker(repository *store.Repository) *Worker|public|ast|1",
+    "method|service.Worker.Run|17|func (worker *Worker) Run() error|public|ast|1"
+  ],
+  "edges": [
+    "CONTAINS|file:src/input.go|module:src/input.go|1|ast|1",
+    "CONTAINS|module:src/input.go|interface:service.Runner|5|ast|1",
+    "EXPORTS|module:src/input.go|interface:service.Runner|5|ast|1",
+    "CONTAINS|interface:service.Runner|method:service.Runner.Run|6|ast|1",
+    "EXPORTS|module:src/input.go|method:service.Runner.Run|6|ast|1",
+    "CONTAINS|module:src/input.go|class:service.Worker|9|ast|1",
+    "EXPORTS|module:src/input.go|class:service.Worker|9|ast|1",
+    "CONTAINS|module:src/input.go|function:service.NewWorker|13|ast|1",
+    "EXPORTS|module:src/input.go|function:service.NewWorker|13|ast|1",
+    "CONTAINS|class:service.Worker|method:service.Worker.Run|17|ast|1",
+    "EXPORTS|module:src/input.go|method:service.Worker.Run|17|ast|1"
+  ],
+  "unresolvedReferences": [
+    "import|example.com/codeatlas/store|3|7|ast",
+    "call|worker.repository.Save|18|8|ast"
+  ],
+  "errors": []
+}

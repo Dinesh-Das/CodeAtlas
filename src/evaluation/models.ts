@@ -22,7 +22,9 @@ const pinnedRepositorySchema = z.object({
   fixture_root: z.string().min(1),
   content_sha256: z.string().regex(/^[0-9a-f]{64}$/u),
   license: z.string().min(1),
-  languages: z.array(z.enum(["typescript", "javascript", "python", "unsupported"])).min(1),
+  languages: z.array(z.enum([
+    "typescript", "javascript", "python", "go", "java", "rust", "unsupported",
+  ])).min(1),
   negative_coverage: z.boolean(),
 }).strict();
 

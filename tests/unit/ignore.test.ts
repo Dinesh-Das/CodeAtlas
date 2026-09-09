@@ -31,6 +31,8 @@ describe("ignore handling", () => {
     await write(root, ".codeatlasignore", "fixtures/\n");
     await write(root, ".codeatlas.yml", "version: 1\nindex:\n  exclude:\n    - generated-config/**\n");
     await write(root, "src/index.ts");
+    await write(root, "src/io/codeatlas/Service.java");
+    await write(root, "codeatlas/generated/index.html");
     await write(root, "src/.gitignore", "generated/\n");
     await write(root, "src/generated/types.ts");
     await write(root, "ignored-by-git/file.ts");
@@ -47,6 +49,7 @@ describe("ignore handling", () => {
       ".gitignore",
       "src/.gitignore",
       "src/index.ts",
+      "src/io/codeatlas/Service.java",
     ]);
   });
 
