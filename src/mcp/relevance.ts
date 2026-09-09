@@ -19,11 +19,22 @@ const KIND_WEIGHT: Record<NodeKind, number> = {
   configuration: 8,
   documentation: 9,
   external_service: 13,
+  external_actor: 12,
+  service: 17,
+  process: 12,
+  http_contract: 18,
+  contract_schema: 15,
+  contract_drift: 19,
+  job: 12,
+  datastore: 16,
+  environment_variable: 10,
+  configuration_key: 10,
   test: 10,
   feature: 18,
   domain: 12,
   event: 13,
   queue: 13,
+  topic: 13,
 };
 
 function terms(value: string): string[] {

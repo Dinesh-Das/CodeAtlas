@@ -64,9 +64,22 @@ const SEARCHABLE_KINDS: readonly NodeKind[] = [
   "database_model",
   "database_table",
   "external_service",
+  "external_actor",
+  "service",
+  "process",
+  "http_contract",
+  "contract_schema",
+  "contract_drift",
+  "job",
+  "datastore",
+  "environment_variable",
+  "configuration_key",
   "test",
   "feature",
   "domain",
+  "event",
+  "queue",
+  "topic",
 ];
 
 const DEPENDENCY_EDGE_TYPES: readonly EdgeType[] = [
@@ -94,6 +107,9 @@ const DEPENDENCY_EDGE_TYPES: readonly EdgeType[] = [
   "ROUTE_PREFIX",
   "QUERIES",
   "UPDATES",
+  "ACCEPTS",
+  "RETURNS",
+  "IMPLEMENTS_CONTRACT",
 ];
 
 const TRACE_EDGE_TYPES: readonly EdgeType[] = [
@@ -117,6 +133,9 @@ const TRACE_EDGE_TYPES: readonly EdgeType[] = [
   "ROUTE_PREFIX",
   "QUERIES",
   "UPDATES",
+  "ACCEPTS",
+  "RETURNS",
+  "IMPLEMENTS_CONTRACT",
 ];
 
 const TRACE_EDGE_PRIORITY: Readonly<Record<EdgeType, number>> = {
@@ -127,6 +146,9 @@ const TRACE_EDGE_PRIORITY: Readonly<Record<EdgeType, number>> = {
   CALLS: 92,
   QUERIES: 90,
   UPDATES: 90,
+  IMPLEMENTS_CONTRACT: 99,
+  ACCEPTS: 87,
+  RETURNS: 87,
   PUBLISHES: 88,
   SUBSCRIBES: 88,
   TRIGGERS: 86,

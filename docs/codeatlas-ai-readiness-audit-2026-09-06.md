@@ -301,6 +301,20 @@ Acceptance:
 - Dynamic registration stays explicit and never becomes a verified runtime edge without sufficient evidence.
 - One public Node/TypeScript repository demonstrates the complete flow with a pinned expected graph.
 
+Implementation status on 2026-09-09: the graph now has first-class actor, service, process,
+HTTP contract, contract schema/drift, event, topic, job, datastore, environment-variable, and
+configuration-key nodes. OpenAPI 3/Swagger JSON and YAML operations link to Express, Fastify,
+and FastAPI routes by method plus source-private route hash; request, response, security, and
+runtime-implementation edges retain file/line evidence. AsyncAPI 2/3 JSON and basic YAML,
+Prisma/SQLAlchemy, compose services, and selected Kubernetes resources are indexed as contract
+or deployment evidence. The framework projection reports declared-but-unimplemented and
+implemented-but-undocumented HTTP drift and refreshes those findings incrementally. A pinned
+integration fixture independently asserts perfect precision and recall for its supported
+`IMPLEMENTS_CONTRACT`, `ACCEPTS`, `RETURNS`, `PROTECTED_BY`, and `PUBLISHES` edges and verifies
+that route, server, and channel literals do not enter SQLite. Incompatible schema evolution,
+retry/dead-letter semantics, missing event consumers, and validation on independent public
+repositories remain open P4 expansion work; no unsupported acceptance claim is made for them.
+
 ### P5 — Package change planning and review as the primary workflow
 
 Effort: 2-3 weeks. Dependencies: P0-P2; benefits from P4.

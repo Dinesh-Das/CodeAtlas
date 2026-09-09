@@ -1,11 +1,12 @@
-import { createEdgeId } from "../graph/ids.js";
+import { createEdgeId, createNodeId } from "../graph/ids.js";
 import { sha256 } from "../core/hashing.js";
 import { isPathInside } from "../core/paths.js";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import type { EdgeType, GraphEdge, ProvenanceCategory, SourceType } from "../graph/types.js";
+import type { EdgeType, GraphEdge, GraphNode, ProvenanceCategory, SourceType } from "../graph/types.js";
 import type { AtlasDatabase } from "../storage/database.js";
 import { upsertEdge } from "../storage/edges.js";
+import { upsertNode } from "../storage/nodes.js";
 
 interface EdgeRow {
   source_node_id: string;
@@ -75,6 +76,7 @@ function derivedEdge(
     evidence: EdgeRow | NodeRow;
     relationship: string;
     confidence?: number;
+    framework?: string;
     metadata?: Record<string, unknown>;
   },
 ): GraphEdge {
@@ -106,10 +108,66 @@ function derivedEdge(
         line: line ?? 1,
         column: 0,
       },
-      framework: "fastify",
+      framework: input.framework ?? "fastify",
       relationship: input.relationship,
       derived_from_verified_framework_edges: true,
       ...(input.metadata ?? {}),
+    },
+  };
+}
+
+function contractKey(method: unknown, routeHash: unknown): string | null {
+  return typeof method === "string" && typeof routeHash === "string"
+    ? `${method.toUpperCase()}\0${routeHash}`
+    : null;
+}
+
+function contractDriftNode(
+  repositoryId: string,
+  source: NodeRow,
+  driftKind: "declared_but_unimplemented" | "implemented_but_undocumented",
+): GraphNode {
+  const sourceMetadata = metadata(source.metadata_json);
+  const method = typeof sourceMetadata.http_method === "string"
+    ? sourceMetadata.http_method.toUpperCase()
+    : "UNKNOWN";
+  const routeHash = typeof sourceMetadata.route_path_hash === "string"
+    ? sourceMetadata.route_path_hash
+    : "dynamic";
+  const filePath = source.file_path ?? ".";
+  const sourceType: SourceType = driftKind === "declared_but_unimplemented" ? "config" : "framework";
+  const qualifiedName = `contract-drift:${driftKind}:${method}:${routeHash}:${source.id}`;
+  return {
+    id: createNodeId(repositoryId, "contract_drift", filePath, qualifiedName),
+    kind: "contract_drift",
+    name: driftKind === "declared_but_unimplemented"
+      ? `${method} contract has no implementation`
+      : `${method} route has no contract`,
+    qualifiedName,
+    filePath: source.file_path,
+    language: null,
+    startLine: source.start_line,
+    startColumn: 0,
+    endLine: source.start_line,
+    endColumn: 1,
+    signature: null,
+    visibility: null,
+    contentHash: sha256(`${driftKind}:${source.id}:${routeHash}`),
+    sourceType,
+    provenance: "verified",
+    confidence: 1,
+    metadata: {
+      evidence: {
+        source_type: sourceType,
+        file: filePath,
+        line: source.start_line ?? 1,
+        column: 0,
+      },
+      framework: "openapi",
+      contract_drift: driftKind,
+      http_method: method,
+      route_path_hash: routeHash,
+      compared_by: "http_method_and_static_route_hash",
     },
   };
 }
@@ -197,7 +255,7 @@ function hookImplementations(database: AtlasDatabase, hookNodeId: string): strin
   return implementations.length === 0 ? [hookNodeId] : implementations;
 }
 
-/** Materializes deterministic Fastify composition edges after symbol resolution. */
+/** Materializes deterministic cross-file framework projections after symbol resolution. */
 export function materializeFrameworkRelationships(
   database: AtlasDatabase,
   repositoryId: string,
@@ -213,6 +271,10 @@ export function materializeFrameworkRelationships(
        WHERE owner_kind = 'framework_projection'`,
     )
     .run();
+  // Drift findings are a projection over the current runtime and declared
+  // contracts. Rebuild them atomically to prevent removed routes from leaving
+  // stale findings behind.
+  database.prepare("DELETE FROM nodes WHERE kind = 'contract_drift'").run();
 
   const written = new Set<string>();
   const write = (edge: GraphEdge): void => {
@@ -420,6 +482,99 @@ export function materializeFrameworkRelationships(
           );
         }
       }
+    }
+  }
+
+  const contracts = database
+    .prepare(
+      `SELECT id, file_path, start_line, metadata_json
+       FROM nodes
+       WHERE kind = 'http_contract'
+         AND json_extract(metadata_json, '$.openapi_entity') = 'operation'
+       ORDER BY id`,
+    )
+    .all() as NodeRow[];
+  if (contracts.length > 0) {
+    const runtimeRoutes = database
+      .prepare(
+        `SELECT id, file_path, start_line, metadata_json
+         FROM nodes
+         WHERE kind = 'api_route'
+         ORDER BY id`,
+      )
+      .all() as NodeRow[];
+    const routesByKey = new Map<string, NodeRow[]>();
+    const routeKeys = new Map<string, Set<string>>();
+    for (const route of runtimeRoutes) {
+      const routeMetadata = metadata(route.metadata_json);
+      const keys = new Set<string>();
+      const direct = contractKey(routeMetadata.http_method, routeMetadata.route_path_hash);
+      if (direct !== null) keys.add(direct);
+      const prefixes = database
+        .prepare(
+          `SELECT metadata_json
+           FROM edges
+           WHERE edge_type = 'ROUTE_PREFIX' AND target_node_id = ?
+           ORDER BY id`,
+        )
+        .all(route.id) as Array<{ metadata_json: string | null }>;
+      for (const prefix of prefixes) {
+        const effective = metadata(prefix.metadata_json).effective_route_path_hash;
+        const key = contractKey(routeMetadata.http_method, effective);
+        if (key !== null) keys.add(key);
+      }
+      routeKeys.set(route.id, keys);
+      for (const key of keys) {
+        const matches = routesByKey.get(key) ?? [];
+        matches.push(route);
+        routesByKey.set(key, matches);
+      }
+    }
+
+    const implementedRuntimeIds = new Set<string>();
+    for (const contract of contracts) {
+      const contractMetadata = metadata(contract.metadata_json);
+      const key = contractKey(contractMetadata.http_method, contractMetadata.route_path_hash);
+      const matches = key === null ? [] : routesByKey.get(key) ?? [];
+      for (const route of matches) {
+        implementedRuntimeIds.add(route.id);
+        write(derivedEdge(repositoryId, {
+          edgeType: "IMPLEMENTS_CONTRACT",
+          sourceNodeId: route.id,
+          targetNodeId: contract.id,
+          evidence: contract,
+          relationship: "runtime_route_matches_declared_operation",
+          framework: "openapi",
+          metadata: { matched_by: "http_method_and_static_route_hash" },
+        }));
+      }
+      if (matches.length === 0) {
+        const drift = contractDriftNode(repositoryId, contract, "declared_but_unimplemented");
+        upsertNode(database, drift, timestamp);
+        write(derivedEdge(repositoryId, {
+          edgeType: "REFERENCES",
+          sourceNodeId: drift.id,
+          targetNodeId: contract.id,
+          evidence: contract,
+          relationship: "contract_drift_evidence",
+          framework: "openapi",
+          metadata: { drift_kind: "declared_but_unimplemented" },
+        }));
+      }
+    }
+    for (const route of runtimeRoutes) {
+      if (implementedRuntimeIds.has(route.id) || (routeKeys.get(route.id)?.size ?? 0) === 0) continue;
+      const drift = contractDriftNode(repositoryId, route, "implemented_but_undocumented");
+      upsertNode(database, drift, timestamp);
+      write(derivedEdge(repositoryId, {
+        edgeType: "REFERENCES",
+        sourceNodeId: drift.id,
+        targetNodeId: route.id,
+        evidence: route,
+        relationship: "contract_drift_evidence",
+        framework: "openapi",
+        metadata: { drift_kind: "implemented_but_undocumented" },
+      }));
     }
   }
 

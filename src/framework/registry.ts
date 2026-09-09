@@ -2,10 +2,14 @@ import type { DetectedLanguage } from "../core/languages.js";
 import type { GraphEdge, GraphNode } from "../graph/types.js";
 import type { ParsedFile } from "../parser/parser.js";
 import { expressAdapter } from "./express.js";
+import { asyncApiAdapter } from "./asyncapi.js";
+import { deploymentAdapter } from "./deployment.js";
+import { environmentAdapter } from "./environment.js";
 import { fastApiAdapter } from "./fastapi.js";
 import { fastifyAdapter } from "./fastify.js";
 import { prismaAdapter } from "./prisma.js";
 import { sqlAlchemyAdapter } from "./sqlalchemy.js";
+import { openApiAdapter } from "./openapi.js";
 import type {
   FrameworkAdapter,
   FrameworkExtraction,
@@ -33,7 +37,17 @@ export function registerFrameworkAdapter(
   };
 }
 
-for (const adapter of [expressAdapter, fastApiAdapter, fastifyAdapter, prismaAdapter, sqlAlchemyAdapter]) {
+for (const adapter of [
+  asyncApiAdapter,
+  deploymentAdapter,
+  environmentAdapter,
+  expressAdapter,
+  fastApiAdapter,
+  fastifyAdapter,
+  openApiAdapter,
+  prismaAdapter,
+  sqlAlchemyAdapter,
+]) {
   registerFrameworkAdapter(adapter);
 }
 

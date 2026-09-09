@@ -309,7 +309,12 @@ export function buildFileSemanticFacts(
     ["framework", "schema", "config"].includes(edge.sourceType),
   );
   const architectureNodes = nodes.filter((node) =>
-    ["module", "api_route", "database_model", "database_table", "configuration", "external_service", "event", "queue"].includes(node.kind),
+    [
+      "module", "api_route", "database_model", "database_table", "configuration",
+      "external_service", "external_actor", "service", "process", "http_contract",
+      "contract_schema", "contract_drift", "job", "datastore", "environment_variable",
+      "configuration_key", "event", "queue", "topic",
+    ].includes(node.kind),
   );
   const architectureReferences = references.map(semanticReferenceIdentity);
 

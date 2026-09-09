@@ -15,11 +15,22 @@ export const NODE_KINDS = [
   "configuration",
   "documentation",
   "external_service",
+  "external_actor",
+  "service",
+  "process",
+  "http_contract",
+  "contract_schema",
+  "contract_drift",
+  "job",
+  "datastore",
+  "environment_variable",
+  "configuration_key",
   "test",
   "feature",
   "domain",
   "event",
   "queue",
+  "topic",
 ] as const;
 
 export type NodeKind = (typeof NODE_KINDS)[number];
@@ -55,6 +66,9 @@ export const EDGE_TYPES = [
   "QUERIES",
   "UPDATES",
   "RENAMED_FROM",
+  "ACCEPTS",
+  "RETURNS",
+  "IMPLEMENTS_CONTRACT",
 ] as const;
 
 export type EdgeType = (typeof EDGE_TYPES)[number];
