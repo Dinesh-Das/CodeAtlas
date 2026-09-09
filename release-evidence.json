@@ -1,10 +1,10 @@
 {
   "schemaVersion": 4,
-  "targetVersion": "0.10.0",
+  "targetVersion": "0.11.0",
   "releaseArtifact": {
-    "codeAtlasVersion": "0.10.0",
-    "packageSha256": "a626a13a57670a11e49130db7e9a4dbdfdc8e8cfad962891912ec186fbf4c2d4",
-    "packedFileCount": 590
+    "codeAtlasVersion": "0.11.0-beta.1",
+    "packageSha256": "42cc10a0e36e06e0f5ee40693f962793db8f4eb18d0e9195953a6b5bdb998a4f",
+    "packedFileCount": 610
   },
   "providerEvaluation": null,
   "independentRepositories": [

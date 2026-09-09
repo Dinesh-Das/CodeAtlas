@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  releaseArtifactSchema,
   STABLE_RELEASE_BUDGETS,
   validateStableReleaseEvidence,
   type ReleaseEvidence,
@@ -73,6 +74,14 @@ function validate(version: string, evidence: ReleaseEvidence) {
 }
 
 describe("stable release evidence", () => {
+  it("accepts an exact prerelease package identity", () => {
+    expect(releaseArtifactSchema.parse({
+      codeAtlasVersion: "1.0.0-beta.1",
+      packageSha256: "f".repeat(64),
+      packedFileCount: 500,
+    }).codeAtlasVersion).toBe("1.0.0-beta.1");
+  });
+
   it("accepts a complete independent validation matrix", () => {
     expect(validate("1.0.0", validEvidence())).toEqual({
       ready: true,

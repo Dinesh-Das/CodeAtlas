@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { registerCodeAtlasLanguage } from "../../src/api.js";
 import { detectLanguage, isSourceLanguage } from "../../src/core/languages.js";
-import { availableFrameworkAdapters, registerFrameworkAdapter } from "../../src/framework/registry.js";
+import {
+  availableFrameworkAdapters,
+  extractFrameworkGraph,
+  registerFrameworkAdapter,
+} from "../../src/framework/registry.js";
 import type { FrameworkAdapter } from "../../src/framework/types.js";
 import type { LanguageAdapter } from "../../src/parser/parser.js";
 import {
@@ -82,5 +86,55 @@ describe("language and framework adapter architecture", () => {
     expect(availableFrameworkAdapters().find((adapter) => adapter.name === original.name)).toBe(replacement);
     unregister();
     expect(availableFrameworkAdapters().find((adapter) => adapter.name === original.name)).toBe(original);
+  });
+
+  it("isolates framework facts that violate the runtime evidence contract", () => {
+    const malformed: FrameworkAdapter = {
+      name: "malformed-contract-fixture",
+      version: "1",
+      supports: (file) => file === "fixture.bad",
+      detect: () => true,
+      extractRoutes: () => [{
+        id: "bad-node",
+        kind: "api_route",
+        name: "bad",
+        qualifiedName: "bad",
+        filePath: "fixture.bad",
+        language: null,
+        startLine: 1,
+        startColumn: 0,
+        endLine: 1,
+        endColumn: 1,
+        signature: null,
+        visibility: null,
+        contentHash: "hash",
+        sourceType: "framework",
+        provenance: "verified",
+        confidence: 2,
+        metadata: { evidence: { source_type: "framework", file: "fixture.bad", line: 1, column: 0 } },
+      }],
+      extractModels: () => [],
+      extractFrameworkRelationships: () => [],
+    };
+    const unregister = registerFrameworkAdapter(malformed);
+    try {
+      const extraction = extractFrameworkGraph({
+        repositoryId: "repo",
+        repositoryRoot: ".",
+        relativeFilePath: "fixture.bad",
+        language: null,
+        content: "fixture",
+        contentHash: "hash",
+        parsedFile: null,
+      });
+      expect(extraction.nodes).toEqual([]);
+      expect(extraction.detectedFrameworks).toEqual([]);
+      expect(extraction.failures).toEqual([{
+        adapter: "malformed-contract-fixture",
+        message: "malformed-contract-fixture node 0 confidence must be between 0 and 1.",
+      }]);
+    } finally {
+      unregister();
+    }
   });
 });

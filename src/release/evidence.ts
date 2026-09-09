@@ -78,7 +78,7 @@ const providerEvaluationSchema = z.object({
 }).strict();
 
 export const releaseArtifactSchema = z.object({
-  codeAtlasVersion: z.string().regex(/^\d+\.\d+\.\d+$/u),
+  codeAtlasVersion: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u),
   packageSha256: z.string().regex(/^[0-9a-f]{64}$/iu),
   packedFileCount: z.number().int().positive(),
 }).strict();
