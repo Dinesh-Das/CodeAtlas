@@ -1,4 +1,6 @@
 import { describeImpact } from "../analysis/impact.js";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { isPrimaryArchitectureSymbol } from "../analysis/scope.js";
 import { CodeAtlasError } from "../core/errors.js";
 import { workspacePaths } from "../core/workspace.js";
@@ -26,9 +28,12 @@ import {
   type ChangeContextFlow,
   type ChangeContextFormat,
   type ChangeContextGap,
+  type ChangeContextInvariant,
   type ChangeContextPath,
   type ChangeContextSymbolRef,
   type ChangeContextTest,
+  type ChangeValidationCommand,
+  type ChangeVerificationItem,
   type ContextPlannerSnapshot,
   validateChangeContextGrounding,
 } from "./packet.js";
@@ -58,7 +63,122 @@ const CONTRACT_KINDS = new Map<string, ChangeContextContract["contract_kind"]>([
   ["database_model", "data"],
   ["database_table", "data"],
   ["external_service", "external"],
+  ["external_actor", "external"],
+  ["http_contract", "api"],
+  ["contract_schema", "type"],
+  ["contract_drift", "api"],
+  ["event", "event"],
+  ["queue", "event"],
+  ["topic", "event"],
+  ["environment_variable", "configuration"],
+  ["configuration_key", "configuration"],
+  ["service", "deployment"],
+  ["process", "deployment"],
+  ["job", "deployment"],
+  ["datastore", "deployment"],
 ]);
+
+const VALIDATION_SCRIPTS = ["test", "typecheck", "lint", "build", "check"] as const;
+
+function validationCommands(atlas: Atlas, repositoryRoot: string): ChangeValidationCommand[] {
+  const manifest = "package.json";
+  const manifestPath = path.join(repositoryRoot, manifest);
+  if (!existsSync(manifestPath)) return [];
+  let scripts: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(readFileSync(manifestPath, "utf8")) as { scripts?: unknown };
+    scripts = typeof parsed.scripts === "object" && parsed.scripts !== null
+      ? parsed.scripts as Record<string, unknown>
+      : {};
+  } catch {
+    return [];
+  }
+  const evidenceIds = atlas.evidence
+    .filter((item) => item.file === manifest)
+    .map((item) => item.id)
+    .slice(0, 1);
+  if (evidenceIds.length === 0) return [];
+  const runner = existsSync(path.join(repositoryRoot, "pnpm-lock.yaml"))
+    ? "pnpm"
+    : existsSync(path.join(repositoryRoot, "yarn.lock")) ? "yarn" : "npm";
+  return VALIDATION_SCRIPTS.flatMap((script): ChangeValidationCommand[] => {
+    if (typeof scripts[script] !== "string") return [];
+    return [{
+      id: `package-script:${script}`,
+      command: `${runner} run ${script}`,
+      purpose: script,
+      source_file: manifest,
+      evidence_ids: evidenceIds,
+    }];
+  });
+}
+
+function verificationChecklist(input: {
+  edits: ChangeContext["edit_locations"];
+  contracts: ChangeContextContract[];
+  invariants: ChangeContextInvariant[];
+  tests: ChangeContextTest[];
+  commands: ChangeValidationCommand[];
+  gaps: ChangeContextGap[];
+}): ChangeVerificationItem[] {
+  return [
+    ...input.edits.slice(0, 6).map((item): ChangeVerificationItem => ({
+      id: `edit:${item.symbol_id}`,
+      status: "pending",
+      kind: "edit_location",
+      instruction: `Inspect the source-backed edit location ${item.file}:${item.start_line}.`,
+      target_ids: [item.symbol_id],
+      command_id: null,
+      evidence_ids: item.evidence_ids,
+    })),
+    ...input.contracts.slice(0, 6).map((item): ChangeVerificationItem => ({
+      id: `contract:${item.symbol.id}`,
+      status: "pending",
+      kind: "contract",
+      instruction: `Confirm the ${item.contract_kind} contract ${item.symbol.qualified_name ?? item.symbol.name} remains compatible.`,
+      target_ids: [item.symbol.id],
+      command_id: null,
+      evidence_ids: item.evidence_ids,
+    })),
+    ...input.invariants.slice(0, 4).map((item): ChangeVerificationItem => ({
+      id: `invariant:${item.id}`,
+      status: "pending",
+      kind: "invariant",
+      instruction: item.statement,
+      target_ids: [item.id],
+      command_id: null,
+      evidence_ids: item.evidence_ids,
+    })),
+    ...input.tests.slice(0, 6).map((item): ChangeVerificationItem => ({
+      id: `test:${item.symbol.id}`,
+      status: "pending",
+      kind: "test",
+      instruction: `Run or inspect ${item.symbol.file}.`,
+      target_ids: [item.symbol.id],
+      command_id: null,
+      evidence_ids: item.evidence_ids,
+    })),
+    ...(input.commands.length === 0 ? [] : [{
+      id: "command:validation",
+      status: "pending" as const,
+      kind: "command" as const,
+      instruction: "Run every validation_commands entry and record each result.",
+      target_ids: input.commands.map((item) => item.id),
+      command_id: null,
+      evidence_ids: [...new Set(input.commands.flatMap((item) => item.evidence_ids))],
+    }]),
+    ...input.gaps.filter((item) => item.evidence_ids.length > 0).slice(0, 4)
+      .map((item, index): ChangeVerificationItem => ({
+        id: `gap:${item.code}:${index}`,
+        status: "pending",
+        kind: "gap",
+        instruction: `Resolve before editing: ${item.message}`,
+        target_ids: item.candidate_ids,
+        command_id: null,
+        evidence_ids: item.evidence_ids,
+      })),
+  ];
+}
 
 function symbolRef(symbol: AtlasSymbol): ChangeContextSymbolRef | null {
   if (symbol.file === null || symbol.location === null || symbol.evidence_ids.length === 0) return null;
@@ -461,16 +581,52 @@ export function compileChangeContextFromAtlas(
     const evidence = evidenceById.get(id);
     return evidence === undefined ? [] : [evidence];
   });
+  const editLocations: ChangeContext["edit_locations"] = candidates.map((candidate) => ({
+    symbol_id: candidate.symbol.id,
+    file: candidate.symbol.file,
+    start_line: candidate.symbol.location.start_line,
+    end_line: candidate.symbol.location.end_line,
+    action: candidate.recommendation.action,
+    confidence: candidate.recommendation.confidence,
+    evidence_ids: candidate.symbol.evidence_ids,
+  }));
+  const constraints = relevantConstraints(atlas, relevantIds);
+  const invariants: ChangeContextInvariant[] = [
+    ...constraints.map((constraint) => ({
+      id: constraint.id,
+      statement: constraint.summary,
+      source: constraint.kind === "decision" ? "decision" as const : "architecture" as const,
+      evidence_ids: constraint.evidence_ids,
+    })),
+    ...contracts.map((contract) => ({
+      id: contract.symbol.id,
+      statement: `Preserve the ${contract.contract_kind} contract ${contract.symbol.qualified_name ?? contract.symbol.name}.`,
+      source: "contract" as const,
+      evidence_ids: contract.evidence_ids,
+    })),
+  ];
+  const commands = validationCommands(atlas, repositoryRoot);
+  const checklist = verificationChecklist({
+    edits: editLocations,
+    contracts,
+    invariants,
+    tests,
+    commands,
+    gaps,
+  });
   const collectionEvidenceIds = [...new Set([
     ...candidates.flatMap((item) => item.evidence_ids),
+    ...editLocations.flatMap((item) => item.evidence_ids),
     ...allPaths.flatMap((item) => item.evidence_ids),
     ...flows.flatMap((item) => item.evidence_ids),
     ...contracts.flatMap((item) => item.evidence_ids),
     ...tests.flatMap((item) => item.evidence_ids),
+    ...constraints.flatMap((item) => item.evidence_ids),
+    ...invariants.flatMap((item) => item.evidence_ids),
+    ...commands.flatMap((item) => item.evidence_ids),
+    ...checklist.flatMap((item) => item.evidence_ids),
     ...gaps.flatMap((item) => item.evidence_ids),
   ])];
-  const constraints = relevantConstraints(atlas, relevantIds);
-  collectionEvidenceIds.push(...constraints.flatMap((item) => item.evidence_ids));
   const packet = fitChangeContextToBudget({
     schema_version: CHANGE_CONTEXT_SCHEMA_VERSION,
     snapshot,
@@ -489,12 +645,16 @@ export function compileChangeContextFromAtlas(
     content_trust: "untrusted_repository_content",
   }, {
     change_candidates: candidates,
+    edit_locations: editLocations,
     verified_paths: allPaths.filter((item) => item.classification === "verified"),
     potential_paths: allPaths.filter((item) => item.classification === "potential"),
     relevant_flows: flows,
     affected_contracts: contracts,
     relevant_tests: tests,
     constraints,
+    invariants,
+    validation_commands: commands,
+    verification_checklist: checklist,
     gaps: uniqueById(gaps.map((gap, index) => ({ ...gap, id: `${gap.code}:${gap.target ?? index}` })))
       .map(({ id: _id, ...gap }) => gap),
   }, validEvidence(collectionEvidenceIds), {

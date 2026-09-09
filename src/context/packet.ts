@@ -5,7 +5,7 @@ import type {
   AtlasTargetResolution,
 } from "../ir/models.js";
 
-export const CHANGE_CONTEXT_SCHEMA_VERSION = "1.1" as const;
+export const CHANGE_CONTEXT_SCHEMA_VERSION = "1.2" as const;
 export type ChangeContextFormat = "json" | "markdown";
 export type ChangeIntentKind =
   | "architecture"
@@ -62,7 +62,7 @@ export interface ChangeContextFlow {
 
 export interface ChangeContextContract {
   symbol: ChangeContextSymbolRef;
-  contract_kind: "api" | "type" | "data" | "external";
+  contract_kind: "api" | "type" | "data" | "external" | "event" | "configuration" | "deployment";
   evidence_ids: string[];
 }
 
@@ -76,6 +76,41 @@ export interface ChangeContextConstraint {
   id: string;
   kind: "architecture_rule" | "architecture_violation" | "decision";
   summary: string;
+  evidence_ids: string[];
+}
+
+export interface ChangeEditLocation {
+  symbol_id: string;
+  file: string;
+  start_line: number;
+  end_line: number;
+  action: "inspect" | "modify";
+  confidence: number;
+  evidence_ids: string[];
+}
+
+export interface ChangeContextInvariant {
+  id: string;
+  statement: string;
+  source: "architecture" | "decision" | "contract";
+  evidence_ids: string[];
+}
+
+export interface ChangeValidationCommand {
+  id: string;
+  command: string;
+  purpose: "test" | "typecheck" | "lint" | "build" | "check";
+  source_file: string;
+  evidence_ids: string[];
+}
+
+export interface ChangeVerificationItem {
+  id: string;
+  status: "pending" | "passed" | "failed" | "skipped";
+  kind: "edit_location" | "contract" | "invariant" | "test" | "command" | "gap";
+  instruction: string;
+  target_ids: string[];
+  command_id: string | null;
   evidence_ids: string[];
 }
 
@@ -124,12 +159,16 @@ export interface ChangeContext {
   };
   summary: string;
   change_candidates: ChangeCandidate[];
+  edit_locations: ChangeEditLocation[];
   verified_paths: ChangeContextPath[];
   potential_paths: ChangeContextPath[];
   relevant_flows: ChangeContextFlow[];
   affected_contracts: ChangeContextContract[];
   relevant_tests: ChangeContextTest[];
   constraints: ChangeContextConstraint[];
+  invariants: ChangeContextInvariant[];
+  validation_commands: ChangeValidationCommand[];
+  verification_checklist: ChangeVerificationItem[];
   evidence: ChangeContextEvidence[];
   gaps: ChangeContextGap[];
   budget: {
@@ -185,6 +224,9 @@ export function renderChangeContextMarkdown(packet: ChangeContext): string {
       `  Recommendation (${candidate.recommendation.fact_class}): ${candidate.recommendation.action} — ${candidate.recommendation.rationale}`,
       `  Evidence: ${candidate.evidence_ids.join(", ")}`,
     ]),
+    ...packet.edit_locations.map((item) =>
+      `- ${item.action}: ${item.file}:${item.start_line}-${item.end_line} (${Math.round(item.confidence * 100)}%)`
+    ),
     "",
     "## Verified paths",
     ...packet.verified_paths.map((item) =>
@@ -203,6 +245,11 @@ export function renderChangeContextMarkdown(packet: ChangeContext): string {
     ...packet.affected_contracts.map((item) =>
       `- ${item.contract_kind}: ${item.symbol.qualified_name ?? item.symbol.name} (${item.symbol.file}) [${item.evidence_ids.join(", ")}]`
     ),
+    ...packet.invariants.map((item) => `- Invariant: ${item.statement} [${item.evidence_ids.join(", ")}]`),
+    "",
+    "## Validation",
+    ...packet.validation_commands.map((item) => `- ${item.purpose}: \`${item.command}\` (${item.source_file})`),
+    ...packet.verification_checklist.map((item) => `- [ ] ${item.instruction}`),
     "",
     "## Constraints and gaps",
     ...packet.constraints.map((item) => `- ${item.kind}: ${item.summary} [${item.evidence_ids.join(", ")}]`),
@@ -234,12 +281,16 @@ export function validateChangeContextGrounding(packet: ChangeContext): string[] 
   const errors: string[] = [];
   const factualCollections: Array<[string, readonly { evidence_ids: string[] }[]]> = [
     ["change_candidates", packet.change_candidates],
+    ["edit_locations", packet.edit_locations],
     ["verified_paths", packet.verified_paths],
     ["potential_paths", packet.potential_paths],
     ["relevant_flows", packet.relevant_flows],
     ["affected_contracts", packet.affected_contracts],
     ["relevant_tests", packet.relevant_tests],
     ["constraints", packet.constraints],
+    ["invariants", packet.invariants],
+    ["validation_commands", packet.validation_commands],
+    ["verification_checklist", packet.verification_checklist],
   ];
   for (const [name, items] of factualCollections) {
     for (const [index, item] of items.entries()) {

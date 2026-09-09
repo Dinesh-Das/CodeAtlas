@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { Command, InvalidArgumentError } from "commander";
+import { writeFile } from "node:fs/promises";
 import { CodeAtlasError } from "../core/errors.js";
 import { CODEATLAS_VERSION } from "../version.js";
 import { createIndexProgressReporter } from "./progress.js";
@@ -208,6 +209,30 @@ export function createProgram(): Command {
       const { formatReviewResult, reviewRepository } = await import("./review.js");
       const result = await reviewRepository(targetPath, options.base, options.head);
       console.log(options.json ? JSON.stringify(result, null, 2) : formatReviewResult(result));
+    });
+
+  program
+    .command("review-report")
+    .description("Generate a source-free architecture review artifact for CI and pull requests.")
+    .argument("[path]", "A path inside the repository", process.cwd())
+    .option("--base <ref>", "Base Git ref", "HEAD")
+    .option("--head <ref>", "Head Git ref", "HEAD")
+    .option("--format <format>", "Output format: markdown or json", "markdown")
+    .option("--output <file>", "Write the report to a file instead of stdout")
+    .action(async (
+      targetPath: string,
+      options: { base: string; head: string; format: string; output?: string },
+    ) => {
+      if (options.format !== "markdown" && options.format !== "json") {
+        throw new CodeAtlasError("Error: review-report format must be markdown or json.");
+      }
+      const { createSourceFreeReviewReport, formatSourceFreeReviewReport } = await import("./review.js");
+      const report = await createSourceFreeReviewReport(targetPath, options.base, options.head);
+      const serialized = options.format === "json"
+        ? JSON.stringify(report, null, 2)
+        : formatSourceFreeReviewReport(report);
+      if (options.output === undefined) console.log(serialized);
+      else await writeFile(options.output, `${serialized}\n`, "utf8");
     });
 
   const snapshot = program.command("snapshot").description("Manage persistent architecture snapshots.");

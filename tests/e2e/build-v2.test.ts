@@ -283,6 +283,11 @@ describe("codeatlas build v2", () => {
       .toContain("authenticate");
     const diff = await compareSnapshots(workspacePaths(root).snapshots, first.snapshotId, second.snapshotId);
     expect(diff.symbols.modified.length).toBeGreaterThan(0);
+    expect(diff).toMatchObject({
+      ownership: { added: expect.any(Array), removed: expect.any(Array) },
+      contracts: { added: expect.any(Array), removed: expect.any(Array), modified: expect.any(Array) },
+      risks: { introduced_findings: expect.any(Array), resolved_findings: expect.any(Array) },
+    });
   }, 60_000);
 
   it("classifies added, deleted, modified, and moved symbols with PR-aware detail", async () => {

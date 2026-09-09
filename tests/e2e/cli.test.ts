@@ -25,7 +25,7 @@ describe("compiled CLI", () => {
   it("exposes the complete v2 command surface through Commander", async () => {
     const help = await runCli("--help");
     for (const command of [
-      "build", "update", "watch", "context", "search", "symbol", "impact", "diff", "check", "review", "ask", "snapshot", "mcp",
+      "build", "update", "watch", "context", "search", "symbol", "impact", "diff", "check", "review", "review-report", "ask", "snapshot", "mcp",
     ]) {
       expect(help.stdout).toMatch(new RegExp(`\\b${command}\\b`, "u"));
     }
@@ -155,6 +155,30 @@ describe("compiled CLI", () => {
       expect.objectContaining({ status: "MODIFIED", qualified_name: "value" }),
       expect.objectContaining({ status: "ADDED", qualified_name: "added" }),
     ]));
+
+    const reviewResult = await runCli(
+      "review-report",
+      repository.root,
+      "--base",
+      base,
+      "--head",
+      head,
+      "--format",
+      "json",
+    );
+    const review = JSON.parse(reviewResult.stdout) as {
+      source_policy: string;
+      files: Array<{ file: string; changed_symbol_ids: string[] }>;
+      evidence_locations: Array<{ file: string; start_line: number }>;
+    };
+    expect(review.source_policy).toBe("locations_and_graph_facts_only");
+    expect(review.files).toEqual(expect.arrayContaining([
+      expect.objectContaining({ file: "src/index.ts" }),
+    ]));
+    expect(review.evidence_locations.every((item) => item.file.length > 0 && item.start_line > 0)).toBe(true);
+    expect(reviewResult.stdout).not.toContain("source_diff");
+    expect(reviewResult.stdout).not.toContain("excerpt");
+    expect(reviewResult.stdout).not.toContain("return 2");
 
     expect((await repository.git("rev-parse", "HEAD")).trim()).toBe(base);
   }, 90_000);

@@ -31,6 +31,19 @@ export interface ArchitectureDiff {
     added: string[];
     removed: string[];
   };
+  ownership: {
+    added: string[];
+    removed: string[];
+  };
+  contracts: {
+    added: string[];
+    removed: string[];
+    modified: string[];
+  };
+  risks: {
+    introduced_findings: string[];
+    resolved_findings: string[];
+  };
   cycles: {
     added: string[][];
     resolved: string[][];
@@ -57,6 +70,27 @@ const NON_DEPENDENCY_EDGE_TYPES = new Set([
   "RENAMED_FROM",
   "ROUTE_PREFIX",
 ]);
+
+const CONTRACT_SYMBOL_KINDS = new Set([
+  "endpoint",
+  "http_contract",
+  "contract_schema",
+  "contract_drift",
+  "database_model",
+  "database_table",
+  "external_service",
+  "environment_variable",
+  "configuration_key",
+  "event",
+  "queue",
+  "topic",
+]);
+
+function ownershipIds(atlas: Atlas): Set<string> {
+  return new Set(atlas.symbols.flatMap((symbol) =>
+    symbol.domain_ids.map((domainId) => `${symbol.id}:${domainId}`)
+  ));
+}
 
 function movementKey(symbol: Atlas["symbols"][number]): string {
   return [
@@ -205,6 +239,16 @@ export function compareArchitecture(oldAtlas: Atlas, newAtlas: Atlas): Architect
   const newApiIds = new Set(newAtlas.symbols.filter((symbol) => symbol.kind === "endpoint").map((symbol) => symbol.id));
   const oldViolationIds = new Set(oldAtlas.rule_violations.map((violation) => violation.id));
   const newViolationIds = new Set(newAtlas.rule_violations.map((violation) => violation.id));
+  const oldOwnership = ownershipIds(oldAtlas);
+  const newOwnership = ownershipIds(newAtlas);
+  const oldContractIds = new Set(oldAtlas.symbols
+    .filter((symbol) => CONTRACT_SYMBOL_KINDS.has(symbol.kind))
+    .map((symbol) => symbol.id));
+  const newContractIds = new Set(newAtlas.symbols
+    .filter((symbol) => CONTRACT_SYMBOL_KINDS.has(symbol.kind))
+    .map((symbol) => symbol.id));
+  const oldFindingIds = new Set(oldAtlas.review_findings.map((finding) => finding.id));
+  const newFindingIds = new Set(newAtlas.review_findings.map((finding) => finding.id));
   return {
     old_snapshot: oldAtlas.snapshot.id,
     new_snapshot: newAtlas.snapshot.id,
@@ -236,6 +280,20 @@ export function compareArchitecture(oldAtlas: Atlas, newAtlas: Atlas): Architect
     apis: {
       added: difference(newApiIds, oldApiIds),
       removed: difference(oldApiIds, newApiIds),
+    },
+    ownership: {
+      added: difference(newOwnership, oldOwnership),
+      removed: difference(oldOwnership, newOwnership),
+    },
+    contracts: {
+      added: difference(newContractIds, oldContractIds),
+      removed: difference(oldContractIds, newContractIds),
+      modified: modified.filter((id) => oldContractIds.has(id) && newContractIds.has(id))
+        .sort((left, right) => left.localeCompare(right)),
+    },
+    risks: {
+      introduced_findings: difference(newFindingIds, oldFindingIds),
+      resolved_findings: difference(oldFindingIds, newFindingIds),
     },
     cycles: {
       added: difference(new Set(newCycles.keys()), new Set(oldCycles.keys())).map((key) => newCycles.get(key)!),

@@ -334,6 +334,18 @@ Acceptance:
 - Unsupported tasks trigger calibrated native-tool fallback rather than a confident empty plan.
 - PR reports contain no source excerpts under the source-free policy.
 
+Implementation status on 2026-09-09: change-context schema 1.2 adds explicit edit locations,
+affected contracts, invariants, manifest-backed validation commands, and a pending/pass/fail/skip
+verification checklist while retaining the caller's byte ceiling and explicit native-tool fallback
+gaps. Snapshot comparison now reports ownership membership, contract, and review-risk deltas. The
+evaluation harness records planned files, actual edits, named regressions, unnecessary edits,
+planned-file precision/recall, plan/edit alignment, and unplanned files. `review-report` emits
+graph facts and evidence locations without source diffs or excerpts; the included pull-request
+workflow uploads both formats and updates one compact comment when write access is available.
+Focused tests verify the source-free policy and default-budget retention. The 20% model-context,
+two-point task-success, and 90% held-out recall targets still require a paired provider-backed run;
+they are not inferred from deterministic fixtures.
+
 ### P6 — Build a living repository knowledge system
 
 Effort: 2-3 weeks. Dependencies: P2 and P3.

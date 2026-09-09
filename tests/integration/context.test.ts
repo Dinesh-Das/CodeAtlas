@@ -27,6 +27,9 @@ function referencedEvidenceIds(value: unknown): string[] {
 async function contextRepository(): Promise<TestRepository> {
   const repository = await createTestRepository();
   repositories.push(repository);
+  await repository.write("package.json", JSON.stringify({
+    scripts: { test: "vitest run", typecheck: "tsc --noEmit", lint: "oxlint src" },
+  }, null, 2));
   await repository.write("src/auth/service.ts", [
     "export function authenticate(password: string): boolean {",
     "  return password.length >= 8;",
@@ -81,6 +84,14 @@ describe("task-context compiler", () => {
       }),
     ]));
     expect(packet.relevant_tests.map((item) => item.symbol.file)).toContain("tests/auth.test.ts");
+    expect(packet.edit_locations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ file: "src/auth/service.ts", action: "modify" }),
+    ]));
+    expect(packet.validation_commands.map((item) => item.command)).toContain("npm run test");
+    expect(packet.verification_checklist).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "edit_location", status: "pending" }),
+      expect.objectContaining({ kind: "command", id: "command:validation" }),
+    ]));
     const selectedEvidence = new Set(packet.evidence.map((item) => item.id));
     expect(referencedEvidenceIds(packet).every((id) => selectedEvidence.has(id))).toBe(true);
     expect(packet.evidence.every((item) => item.trust === "untrusted_repository_content")).toBe(true);

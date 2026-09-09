@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const EVALUATION_SCHEMA_VERSION = 1 as const;
-export const EVALUATION_HARNESS_VERSION = "1.1.0";
+export const EVALUATION_HARNESS_VERSION = "1.2.0";
 
 export const evaluationVariantSchema = z.enum(["native", "codeatlas"]);
 export const evaluationTaskCategorySchema = z.enum([
@@ -171,6 +171,9 @@ const patchMeasurementSchema = z.object({
   tests_passed: z.boolean(),
   regressions: z.number().int().nonnegative(),
   unnecessary_changed_files: z.number().int().nonnegative(),
+  planned_files: z.array(z.string().min(1)).default([]),
+  actual_changed_files: z.array(z.string().min(1)).default([]),
+  regression_ids: z.array(z.string().min(1)).default([]),
 }).strict();
 
 const knowledgeTransferMeasurementSchema = z.object({

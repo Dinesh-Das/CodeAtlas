@@ -150,7 +150,7 @@ All optional `[path]` arguments default to the current directory.
 | `codeatlas build --no-snapshot` | Build without persisting a snapshot |
 | `codeatlas update [path]` | Incrementally regenerate all architecture artifacts |
 | `codeatlas watch [path]` | Poll for changes and regenerate; minimum interval is 250 ms |
-| `codeatlas context "<task>" [path]` | Compile a budgeted implementation brief with candidates, impact paths, tests, constraints, evidence, and gaps |
+| `codeatlas context "<task>" [path]` | Compile a budgeted implementation brief with edit locations, contracts, invariants, tests, commands, paths, evidence, gaps, and a verification checklist |
 | `codeatlas ask "<question>" [path]` | Answer locally from graph facts and validated evidence |
 | `codeatlas search <query> [path]` | Search the canonical graph |
 | `codeatlas symbol <id> [path]` | Resolve an exact ID, qualified name, or unique search term |
@@ -158,6 +158,7 @@ All optional `[path]` arguments default to the current directory.
 | `codeatlas diff [path] --base <ref> --head <ref>` | Map a Git diff to symbols and impact |
 | `codeatlas check [path]` | Evaluate architecture rules and fail on error-severity violations |
 | `codeatlas review [path] --base <ref> --head <ref>` | Produce deterministic, evidence-gated review findings |
+| `codeatlas review-report [path] --base <ref> --head <ref>` | Generate a source-free Markdown or JSON architecture review artifact |
 | `codeatlas snapshot list [path]` | List retained snapshots |
 | `codeatlas snapshot show <id> [path]` | Print one snapshot |
 | `codeatlas snapshot diff <old> <new> [path]` | Compare two snapshots |
@@ -171,7 +172,7 @@ All optional `[path]` arguments default to the current directory.
 | `codeatlas mcp [path]` | Start the MCP server over stdio |
 | `codeatlas clean [path]` | Remove `.codeatlas/` after confirmation |
 
-Machine-readable output is available from `build`, `update`, `ask`, `diff`, `check`, `review`,
+Machine-readable output is available from `build`, `update`, `ask`, `diff`, `check`, `review`, `review-report`,
 `index`, `overview`, and `status` with `--json`. Query limits are available through
 `search --limit`, `impact --depth/--limit`, and `watch --interval`. Use `init --shared-ignore` only
 when the team deliberately wants `.codeatlas/` added to the tracked `.gitignore`.

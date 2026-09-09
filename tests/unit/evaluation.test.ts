@@ -66,7 +66,7 @@ function suite(): EvaluationSuite {
 function run(): EvaluationRun {
   return {
     schema_version: 1,
-    evaluator_version: "1.1.0",
+    evaluator_version: "1.2.0",
     id: "evaluation-run-v1",
     suite_id: "evaluation-test-v1",
     created_at: "2026-09-06T12:00:00.000+05:30",
@@ -152,6 +152,36 @@ describe("outcome evaluation runner", () => {
     expect(report.complete).toBe(false);
     expect(report.launch_gate.status).toBe("incomplete");
     expect(report.errors).toContain("Missing observation unanswerable-task:codeatlas:3.");
+  });
+
+  it("compares planned files with actual edits and regressions", () => {
+    const observations = completeObservations();
+    for (const item of observations.filter((candidate) =>
+      candidate.task_id === "answerable-task" && candidate.variant === "codeatlas"
+    )) {
+      item.patch = {
+        tests_passed: false,
+        regressions: 1,
+        unnecessary_changed_files: 1,
+        planned_files: ["src/a.ts", "src/extra.ts"],
+        actual_changed_files: ["src/a.ts", "src/unplanned.ts"],
+        regression_ids: ["test:regression"],
+      };
+    }
+
+    const report = evaluateRun(suite(), run(), observations);
+
+    expect(report.variants.codeatlas).toMatchObject({
+      patch_tasks_measured: 1,
+      patch_tests_passed: 0,
+      patch_regressions: 1,
+      unnecessary_changed_files: 1,
+      change_plans_measured: 1,
+      mean_planned_file_precision: 0.5,
+      mean_planned_file_recall: 0.5,
+      mean_plan_edit_alignment: 0.3333,
+      unplanned_changed_files: 1,
+    });
   });
 
   it("rejects answerable tasks without expected evidence", () => {

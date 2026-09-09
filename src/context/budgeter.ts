@@ -89,7 +89,8 @@ function canonicalizeEvidence(
 function tryAdd<K extends keyof Pick<
   ChangeContext,
   "change_candidates" | "verified_paths" | "potential_paths" | "relevant_flows" |
-  "affected_contracts" | "relevant_tests" | "constraints" | "gaps"
+  "affected_contracts" | "relevant_tests" | "constraints" | "edit_locations" |
+  "invariants" | "validation_commands" | "verification_checklist" | "gaps"
 >>(
   packet: ChangeContext,
   key: K,
@@ -124,22 +125,28 @@ function compactCandidate(candidate: ChangeContext["change_candidates"][number])
 
 export function fitChangeContextToBudget(
   base: Omit<ChangeContext, "change_candidates" | "verified_paths" | "potential_paths" |
-    "relevant_flows" | "affected_contracts" | "relevant_tests" | "constraints" | "evidence" |
-    "gaps" | "budget" | "continuation">,
+    "relevant_flows" | "affected_contracts" | "relevant_tests" | "constraints" |
+    "edit_locations" | "invariants" | "validation_commands" | "verification_checklist" |
+    "evidence" | "gaps" | "budget" | "continuation">,
   collections: Pick<ChangeContext, "change_candidates" | "verified_paths" | "potential_paths" |
-    "relevant_flows" | "affected_contracts" | "relevant_tests" | "constraints" | "gaps">,
+    "relevant_flows" | "affected_contracts" | "relevant_tests" | "constraints" |
+    "edit_locations" | "invariants" | "validation_commands" | "verification_checklist" | "gaps">,
   evidence: readonly AtlasEvidence[],
   budget: ContextBudgetInput,
 ): ChangeContext {
   const packet: ChangeContext = {
     ...base,
     change_candidates: [],
+    edit_locations: [],
     verified_paths: [],
     potential_paths: [],
     relevant_flows: [],
     affected_contracts: [],
     relevant_tests: [],
     constraints: [],
+    invariants: [],
+    validation_commands: [],
+    verification_checklist: [],
     evidence: [],
     gaps: [],
     budget: {
@@ -169,19 +176,30 @@ export function fitChangeContextToBudget(
     ["ambiguous_target", "insufficient_task_specificity", "unsupported_coverage"].includes(gap.code)
   );
   const resolutionGaps = collections.gaps.filter((gap) => !priorityGaps.includes(gap));
+  const priorityChecklist = [
+    collections.verification_checklist.find((item) => item.kind === "edit_location"),
+    collections.verification_checklist.find((item) => item.kind === "command"),
+  ].filter((item): item is ChangeContext["verification_checklist"][number] => item !== undefined);
   const ordered: Array<[keyof typeof collections, readonly unknown[]]> = [
     ["change_candidates", collections.change_candidates.slice(0, 1)],
+    ["edit_locations", collections.edit_locations.slice(0, 2)],
     ["gaps", priorityGaps],
     ["relevant_tests", collections.relevant_tests.slice(0, 1)],
+    ["verification_checklist", priorityChecklist],
+    ["validation_commands", collections.validation_commands],
     ["verified_paths", collections.verified_paths.slice(0, 2)],
     ["change_candidates", collections.change_candidates.slice(1, 4).map(compactCandidate)],
     ["affected_contracts", collections.affected_contracts],
+    ["invariants", collections.invariants],
     ["constraints", collections.constraints],
     ["relevant_flows", collections.relevant_flows],
     ["verified_paths", collections.verified_paths.slice(2)],
     ["relevant_tests", collections.relevant_tests.slice(1)],
     ["gaps", resolutionGaps],
     ["potential_paths", collections.potential_paths],
+    ["verification_checklist", collections.verification_checklist.filter((item) =>
+      item.kind !== "command" && item.kind !== "edit_location"
+    )],
     ["change_candidates", collections.change_candidates.slice(4).map(compactCandidate)],
   ];
   for (const [key, items] of ordered) {

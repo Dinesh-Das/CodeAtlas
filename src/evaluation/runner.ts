@@ -38,6 +38,11 @@ interface VariantReport {
   patch_tests_passed: number;
   patch_regressions: number;
   unnecessary_changed_files: number;
+  change_plans_measured: number;
+  mean_planned_file_precision: number | null;
+  mean_planned_file_recall: number | null;
+  mean_plan_edit_alignment: number | null;
+  unplanned_changed_files: number;
   knowledge_transfer_samples: number;
   median_time_to_locate_ms: number | null;
   flow_explanation_accuracy: number | null;
@@ -126,6 +131,11 @@ interface TaskAggregate {
   patchTestsPassed: boolean;
   patchRegressions: number;
   unnecessaryChangedFiles: number;
+  changePlanMeasured: boolean;
+  plannedFilePrecision: number;
+  plannedFileRecall: number;
+  planEditAlignment: number;
+  unplannedChangedFiles: number;
   knowledgeTransferMeasured: boolean;
   timeToLocateMs: number;
   flowExplanationCorrect: boolean;
@@ -277,6 +287,14 @@ function evidenceRecall(task: EvaluationTask, evidenceFiles: readonly string[]):
   ));
 }
 
+function fileSet(values: readonly string[]): Set<string> {
+  return new Set(values.map(normalizeFile));
+}
+
+function overlapCount(left: ReadonlySet<string>, right: ReadonlySet<string>): number {
+  return [...left].filter((value) => right.has(value)).length;
+}
+
 function taskAggregate(
   task: EvaluationTask,
   variant: EvaluationVariant,
@@ -292,6 +310,21 @@ function taskAggregate(
   const patches = observations.flatMap((observation) =>
     observation.patch === null ? [] : [observation.patch]
   );
+  const measuredPlans = patches.filter((patch) =>
+    patch.planned_files.length > 0 || patch.actual_changed_files.length > 0
+  );
+  const planMeasurements = measuredPlans.map((patch) => {
+    const planned = fileSet(patch.planned_files);
+    const actual = fileSet(patch.actual_changed_files);
+    const overlap = overlapCount(planned, actual);
+    const union = new Set([...planned, ...actual]);
+    return {
+      precision: planned.size === 0 ? 0 : overlap / planned.size,
+      recall: actual.size === 0 ? 1 : overlap / actual.size,
+      alignment: union.size === 0 ? 1 : overlap / union.size,
+      unplanned: [...actual].filter((file) => !planned.has(file)).length,
+    };
+  });
   const knowledgeTransfer = observations.flatMap((observation) =>
     observation.knowledge_transfer === null ? [] : [observation.knowledge_transfer]
   );
@@ -339,6 +372,11 @@ function taskAggregate(
     patchTestsPassed: patches.length > 0 && mean(patches.map((item) => Number(item.tests_passed))) >= 0.5,
     patchRegressions: median(patches.map((item) => item.regressions)),
     unnecessaryChangedFiles: median(patches.map((item) => item.unnecessary_changed_files)),
+    changePlanMeasured: measuredPlans.length > 0,
+    plannedFilePrecision: median(planMeasurements.map((item) => item.precision)),
+    plannedFileRecall: median(planMeasurements.map((item) => item.recall)),
+    planEditAlignment: median(planMeasurements.map((item) => item.alignment)),
+    unplannedChangedFiles: median(planMeasurements.map((item) => item.unplanned)),
     knowledgeTransferMeasured: knowledgeTransfer.length > 0,
     timeToLocateMs: median(knowledgeTransfer.map((item) => item.time_to_locate_ms)),
     flowExplanationCorrect: knowledgeTransfer.length > 0 &&
@@ -392,6 +430,7 @@ function variantReport(aggregates: readonly TaskAggregate[]): VariantReport {
     aggregate.explanationCompleteness === null ? [] : [aggregate.explanationCompleteness]
   );
   const patchAggregates = aggregates.filter((aggregate) => aggregate.patchMeasured);
+  const changePlanAggregates = aggregates.filter((aggregate) => aggregate.changePlanMeasured);
   const knowledgeTransfer = aggregates.filter((aggregate) => aggregate.knowledgeTransferMeasured);
   const expectationAggregates = aggregates.filter((aggregate) => aggregate.expectationMeasured);
   return {
@@ -418,6 +457,20 @@ function variantReport(aggregates: readonly TaskAggregate[]): VariantReport {
     patch_regressions: patchAggregates.reduce((sum, aggregate) => sum + aggregate.patchRegressions, 0),
     unnecessary_changed_files: patchAggregates.reduce(
       (sum, aggregate) => sum + aggregate.unnecessaryChangedFiles,
+      0,
+    ),
+    change_plans_measured: changePlanAggregates.length,
+    mean_planned_file_precision: changePlanAggregates.length === 0
+      ? null
+      : rounded(mean(changePlanAggregates.map((aggregate) => aggregate.plannedFilePrecision))),
+    mean_planned_file_recall: changePlanAggregates.length === 0
+      ? null
+      : rounded(mean(changePlanAggregates.map((aggregate) => aggregate.plannedFileRecall))),
+    mean_plan_edit_alignment: changePlanAggregates.length === 0
+      ? null
+      : rounded(mean(changePlanAggregates.map((aggregate) => aggregate.planEditAlignment))),
+    unplanned_changed_files: changePlanAggregates.reduce(
+      (sum, aggregate) => sum + aggregate.unplannedChangedFiles,
       0,
     ),
     knowledge_transfer_samples: knowledgeTransfer.length,
