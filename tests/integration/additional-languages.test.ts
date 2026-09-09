@@ -64,6 +64,45 @@ describe("additional built-in languages", () => {
     }
   }, 60_000);
 
+  it("keeps ambiguous runtime selectors visible without materializing guessed edges", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write("src/a.ts", "export function duplicate(): void {}\n");
+    await repository.write("src/b.ts", "export function duplicate(): void {}\n");
+    await repository.write("src/source.ts", "export function dispatch(): void {}\n");
+    await repository.write("codeatlas.runtime.json", JSON.stringify({
+      version: 1,
+      relationships: [{ source: "dispatch", target: "duplicate", type: "CALLS" }],
+    }, null, 2));
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "ambiguous runtime evidence fixture");
+    await initializeRepository(repository.root);
+
+    const database = openDatabase(workspacePaths(repository.root).database, { readonly: true });
+    try {
+      expect(
+        database
+          .prepare(
+            `SELECT count(*) FROM edges
+             WHERE json_extract(metadata_json, '$.evidence_class') = 'runtime_observation'`,
+          )
+          .pluck()
+          .get(),
+      ).toBe(0);
+      expect(
+        database
+          .prepare(
+            `SELECT count(*) FROM nodes
+             WHERE json_extract(metadata_json, '$.runtime_evidence') = 1`,
+          )
+          .pluck()
+          .get(),
+      ).toBe(1);
+    } finally {
+      database.close();
+    }
+  }, 60_000);
+
   it("indexes Go, Java, and Rust symbols and resolves repository-local relationships", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);
