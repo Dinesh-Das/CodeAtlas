@@ -55,9 +55,12 @@ export async function ensureFreshIndex(
   requirement: FreshnessRequirement = "all",
   options: { authoritative?: boolean } = {},
 ): Promise<FreshContext> {
-  // The watcher-backed status cache keeps warm agent queries bounded. Callers that
-  // publish an explicit status audit can still require a full reconciliation.
-  let status = await getFastStatus(repositoryPath, { forceReconcile: options.authoritative === true });
+  // Agent answers default to an authoritative Git reconciliation. Watchers can be
+  // delayed or coalesced by the operating system, so a watcher-only cache is unsafe
+  // for source-backed answers immediately after a write. Internal callers may opt in
+  // to the bounded-staleness cache when they are rendering advisory status only.
+  const authoritative = options.authoritative !== false;
+  let status = await getFastStatus(repositoryPath, { forceReconcile: authoritative });
   if (!satisfies(status, requirement)) {
     await refreshOnce(status.root);
     clearFastStatusCache(status.root);

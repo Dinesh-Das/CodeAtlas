@@ -203,7 +203,11 @@ async function prepareArchitecture(startPath: string): Promise<{
   let initializedByBuild = false;
   let repositoryRoot: string;
   try {
-    status = (await ensureFreshIndex(startPath, "architecture")).status;
+    // Source-backed answers must reconcile Git before reusing the runtime. File-system
+    // watchers are an optimization signal, and macOS can deliver their notification
+    // after a request has already reached this point. An authoritative check here keeps
+    // a just-written file from receiving an answer from the previous generation.
+    status = (await ensureFreshIndex(startPath, "architecture", { authoritative: true })).status;
     repositoryRoot = status.root;
   } catch (error) {
     const repository = await detectRepository(startPath);
