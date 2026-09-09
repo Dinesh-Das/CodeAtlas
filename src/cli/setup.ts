@@ -10,7 +10,14 @@ import { repositoryOverviewIr } from "../mcp/ir-tools.js";
 
 const execFile = promisify(execFileCallback);
 
-export const SETUP_TARGETS = ["codex", "claude", "cursor", "antigravity"] as const;
+export const SETUP_TARGETS = [
+  "codex",
+  "claude",
+  "cursor",
+  "vscode",
+  "copilot",
+  "antigravity",
+] as const;
 export type SetupTarget = (typeof SETUP_TARGETS)[number];
 export type SetupStatus =
   | "configured"
@@ -62,6 +69,7 @@ export async function detectSetupTargets(): Promise<SetupTarget[]> {
     commandAvailable("codex"),
     commandAvailable("claude"),
     commandAvailable("cursor"),
+    commandAvailable("code"),
     commandAvailable("agy"),
   ]);
   const detected = new Set<SetupTarget>();
@@ -70,8 +78,11 @@ export async function detectSetupTargets(): Promise<SetupTarget[]> {
   if (availability[2] || await optionalText(path.join(home, ".cursor", "mcp.json")) !== "") {
     detected.add("cursor");
   }
+  if (availability[3] || await optionalText(path.join(home, ".vscode", "mcp.json")) !== "") {
+    detected.add("vscode");
+  }
   if (
-    availability[3] ||
+    availability[4] ||
     await optionalText(path.join(home, ".gemini", "config", "mcp_config.json")) !== ""
   ) {
     detected.add("antigravity");
@@ -90,6 +101,7 @@ async function mergeJsonServer(
   filePath: string,
   server: Record<string, unknown>,
   dryRun: boolean,
+  collection = "mcpServers",
 ): Promise<"configured" | "already_configured" | "planned"> {
   const currentText = await optionalText(filePath);
   let current: Record<string, unknown> = {};
@@ -101,9 +113,9 @@ async function mergeJsonServer(
       throw new CodeAtlasError(`Error: ${filePath} contains invalid JSON.`, { cause: error });
     }
   }
-  const servers = current.mcpServers === undefined
+  const servers = current[collection] === undefined
     ? {}
-    : jsonObject(current.mcpServers, `${filePath}#mcpServers`);
+    : jsonObject(current[collection], `${filePath}#${collection}`);
   const existing = servers.codeatlas;
   if (existing !== undefined) {
     if (JSON.stringify(existing) === JSON.stringify(server)) return "already_configured";
@@ -115,7 +127,7 @@ async function mergeJsonServer(
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(
     filePath,
-    `${JSON.stringify({ ...current, mcpServers: { ...servers, codeatlas: server } }, null, 2)}\n`,
+    `${JSON.stringify({ ...current, [collection]: { ...servers, codeatlas: server } }, null, 2)}\n`,
     "utf8",
   );
   return "configured";
@@ -195,7 +207,7 @@ export async function setupRepository(
     : [...new Set(options.targets)];
   if (targets.length === 0) {
     throw new CodeAtlasError(
-      "Error: no supported coding agent was detected. Use --target codex,claude,cursor,antigravity.",
+      `Error: no supported coding agent was detected. Use --target ${SETUP_TARGETS.join(",")}.`,
     );
   }
   const dryRun = options.dryRun === true;
@@ -215,8 +227,16 @@ export async function setupRepository(
         ? `${path.join(os.homedir(), ".claude.json")} (local project scope)`
         : target === "cursor"
           ? path.join(repository.root, ".cursor", "mcp.json")
-          : path.join(repository.root, ".agents", "mcp_config.json");
-    if (detectedTargets !== null && !detectedTargets.has(target)) {
+          : target === "vscode"
+            ? path.join(repository.root, ".vscode", "mcp.json")
+            : target === "copilot"
+              ? path.join(repository.root, ".codeatlas", "agent", "copilot-mcp.json")
+              : path.join(repository.root, ".agents", "mcp_config.json");
+    if (
+      detectedTargets !== null &&
+      (target === "codex" || target === "claude") &&
+      !detectedTargets.has(target)
+    ) {
       results.push({
         target,
         status: "not_installed",
@@ -240,13 +260,30 @@ export async function setupRepository(
         });
         continue;
       }
-      const server = target === "cursor"
+      const server = target === "cursor" || target === "vscode"
         ? { type: "stdio", command: "codeatlas", args: ["mcp", "${workspaceFolder}"] }
-        : { command: "codeatlas", args: ["mcp", repository.root], cwd: repository.root };
+        : target === "copilot"
+          ? {
+              type: "local",
+              command: "codeatlas",
+              args: ["mcp", repository.root],
+              tools: ["search", "prepare_change", "trace", "get_evidence"],
+            }
+          : { command: "codeatlas", args: ["mcp", repository.root], cwd: repository.root };
       results.push({
         target,
-        status: await mergeJsonServer(destination, server, dryRun),
+        status: await mergeJsonServer(
+          destination,
+          server,
+          dryRun,
+          target === "vscode" ? "servers" : "mcpServers",
+        ),
         destination,
+        ...(target === "copilot"
+          ? {
+              detail: "Repository-settings payload generated; an administrator can paste it into Copilot coding agent MCP settings.",
+            }
+          : {}),
       });
     } catch (error) {
       if (!continueOnError) throw error;

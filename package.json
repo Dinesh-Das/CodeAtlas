@@ -1,6 +1,7 @@
 {
   "name": "@dinesh-das/codeatlas",
   "version": "0.10.0",
+  "mcpName": "io.github.dinesh-das/codeatlas",
   "description": "Evidence-first code intelligence for AI coding agents, with verified and inferred repository relationships through MCP.",
   "author": {
     "name": "Dinesh Das",
@@ -22,7 +23,9 @@
     "LICENSE",
     "CHANGELOG.md",
     "SECURITY.md",
-    "examples"
+    "examples",
+    "server.json",
+    "compatibility.json"
   ],
   "scripts": {
     "clean:dist": "node scripts/clean-dist.mjs",
@@ -41,9 +44,11 @@
     "check": "npm run typecheck && npm run lint && npm test && node scripts/evaluate.mjs --suite evals/development.json --verify-fixtures",
     "prepack": "npm run build",
     "package:smoke": "node scripts/package-smoke.mjs",
+    "distribution:check": "node scripts/validate-distribution.mjs",
+    "adapter:check": "node scripts/validate-adapter-fixture.mjs examples/adapter-kit/expected.json examples/adapter-kit/actual.json",
     "release:gate": "node scripts/release-gate.mjs",
     "validate:repository": "npm run build && node scripts/validate-release-repository.mjs",
-    "release:check": "npm run check && npm run package:smoke && npm run release:gate",
+    "release:check": "npm run check && npm run distribution:check && npm run package:smoke && npm run release:gate",
     "stable:check": "npm run release:check && node scripts/release-gate.mjs --stable"
   },
   "engines": {

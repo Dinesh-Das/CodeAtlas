@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "codeatlas": {
+      "type": "stdio",
+      "command": "codeatlas",
+      "args": ["mcp", "${workspaceFolder}"]
+    }
+  }
+}

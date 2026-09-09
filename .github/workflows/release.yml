@@ -125,3 +125,50 @@ jobs:
           expected_sha="$(node -p "require('./release-evidence.json').releaseArtifact.packageSha256")"
           actual_sha="$(sha256sum "$artifact" | cut -d' ' -f1)"
           test "$actual_sha" = "$expected_sha"
+      - name: Install and validate the MCP Registry publisher
+        shell: bash
+        run: |
+          set -euo pipefail
+          publisher_version="v1.7.9"
+          publisher_archive="$RUNNER_TEMP/mcp-publisher.tar.gz"
+          curl --fail --location --silent --show-error \
+            "https://github.com/modelcontextprotocol/registry/releases/download/$publisher_version/mcp-publisher_linux_amd64.tar.gz" \
+            --output "$publisher_archive"
+          echo "ab128162b0616090b47cf245afe0a23f3ef08936fdce19074f5ba0a4469281ac  $publisher_archive" \
+            | sha256sum --check
+          tar --extract --gzip --file "$publisher_archive" --directory "$RUNNER_TEMP" mcp-publisher
+          "$RUNNER_TEMP/mcp-publisher" validate
+      - name: Publish the verified MCP metadata with GitHub OIDC
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/mcp-publisher" login github-oidc
+          "$RUNNER_TEMP/mcp-publisher" publish server.json
+      - name: Verify the MCP Registry version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          response="$RUNNER_TEMP/mcp-registry-response.json"
+          for attempt in {1..12}; do
+            curl --fail --silent --show-error \
+              "https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.dinesh-das%2Fcodeatlas" \
+              --output "$response"
+            if MCP_REGISTRY_EXPECTED_VERSION="$version" MCP_REGISTRY_RESPONSE="$response" node --input-type=module --eval '
+              import { readFileSync } from "node:fs";
+              const response = JSON.parse(readFileSync(process.env.MCP_REGISTRY_RESPONSE, "utf8"));
+              const found = (response.servers ?? []).some((entry) => {
+                const server = entry.server ?? entry;
+                return server.name === "io.github.dinesh-das/codeatlas" &&
+                  server.version === process.env.MCP_REGISTRY_EXPECTED_VERSION;
+              });
+              if (!found) process.exit(1);
+            '; then
+              exit 0
+            fi
+            if [[ "$attempt" == 12 ]]; then
+              echo "::error::MCP Registry did not expose the published CodeAtlas version."
+              exit 1
+            fi
+            sleep 10
+          done

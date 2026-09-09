@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "codeAtlasVersion": "0.10.0",
+  "lastVerified": "2026-09-09",
+  "transport": "stdio",
+  "targets": [
+    { "id": "codex", "setupTarget": "codex", "tools": true, "resources": true, "prompts": true, "status": "configuration-tested" },
+    { "id": "claude-code", "setupTarget": "claude", "tools": true, "resources": true, "prompts": true, "status": "configuration-tested" },
+    { "id": "cursor", "setupTarget": "cursor", "tools": true, "resources": true, "prompts": true, "status": "configuration-tested" },
+    { "id": "vscode", "setupTarget": "vscode", "tools": true, "resources": true, "prompts": true, "status": "configuration-tested" },
+    { "id": "github-copilot-coding-agent", "setupTarget": "copilot", "tools": true, "resources": false, "prompts": false, "status": "configuration-tested" },
+    { "id": "antigravity", "setupTarget": "antigravity", "tools": true, "resources": true, "prompts": true, "status": "configuration-tested" }
+  ],
+  "continuousIntegration": {
+    "operatingSystems": ["linux", "macos", "windows"],
+    "nodeVersions": ["22.12", "24"]
+  }
+}

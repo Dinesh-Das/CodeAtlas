@@ -26,14 +26,19 @@ describe("setup and direct overview", () => {
     await initializeRepository(repository.root);
 
     const result = await setupRepository(repository.root, {
-      targets: ["cursor", "antigravity"],
+      targets: ["cursor", "vscode", "copilot", "antigravity"],
     });
     expect(result.verification).toMatchObject({
       resource: "codeatlas://repository/overview",
       schemaVersion: "1.2",
       snapshotId: expect.any(String),
     });
-    expect(result.targets.map((target) => target.status)).toEqual(["configured", "configured"]);
+    expect(result.targets.map((target) => target.status)).toEqual([
+      "configured",
+      "configured",
+      "configured",
+      "configured",
+    ]);
     const cursor = JSON.parse(
       await readFile(path.join(repository.root, ".cursor", "mcp.json"), "utf8"),
     ) as { mcpServers: Record<string, unknown> };
@@ -45,6 +50,23 @@ describe("setup and direct overview", () => {
         args: ["mcp", "${workspaceFolder}"],
       },
     });
+    const vscode = JSON.parse(
+      await readFile(path.join(repository.root, ".vscode", "mcp.json"), "utf8"),
+    ) as { servers: Record<string, unknown> };
+    expect(vscode.servers.codeatlas).toEqual({
+      type: "stdio",
+      command: "codeatlas",
+      args: ["mcp", "${workspaceFolder}"],
+    });
+    const copilot = JSON.parse(
+      await readFile(path.join(repository.root, ".codeatlas", "agent", "copilot-mcp.json"), "utf8"),
+    ) as { mcpServers: Record<string, unknown> };
+    expect(copilot.mcpServers.codeatlas).toMatchObject({
+      type: "local",
+      command: "codeatlas",
+      args: ["mcp", result.repositoryRoot],
+      tools: ["search", "prepare_change", "trace", "get_evidence"],
+    });
     const antigravity = JSON.parse(
       await readFile(path.join(repository.root, ".agents", "mcp_config.json"), "utf8"),
     ) as { mcpServers: Record<string, unknown> };
@@ -54,10 +76,12 @@ describe("setup and direct overview", () => {
       cwd: result.repositoryRoot,
     });
     await expect(setupRepository(repository.root, {
-      targets: ["cursor", "antigravity"],
+      targets: ["cursor", "vscode", "copilot", "antigravity"],
     })).resolves.toMatchObject({
       targets: [
         { target: "cursor", status: "already_configured" },
+        { target: "vscode", status: "already_configured" },
+        { target: "copilot", status: "already_configured" },
         { target: "antigravity", status: "already_configured" },
       ],
     });
@@ -101,7 +125,7 @@ describe("setup and direct overview", () => {
     await initializeRepository(repository.root);
 
     await expect(setupRepository(repository.root, {
-      targets: ["codex", "claude", "cursor", "antigravity"],
+      targets: ["codex", "claude", "cursor", "vscode", "copilot", "antigravity"],
       dryRun: true,
       continueOnError: true,
       detectedTargets: ["cursor", "antigravity"],
@@ -110,6 +134,8 @@ describe("setup and direct overview", () => {
         { target: "codex", status: "not_installed" },
         { target: "claude", status: "not_installed" },
         { target: "cursor", status: "failed" },
+        { target: "vscode", status: "planned" },
+        { target: "copilot", status: "planned" },
         { target: "antigravity", status: "planned" },
       ],
     });

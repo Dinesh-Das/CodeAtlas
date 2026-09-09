@@ -398,6 +398,24 @@ Acceptance:
 - Public claims link to reproducible manifests and do not rely on generated capability counts alone.
 - Adoption is tracked through opt-in or user-run local reports while source and prompts remain private by default.
 
+Implementation status on 2026-09-09: the npm package and official MCP Registry manifest now share
+a validated `mcpName`, repository identity, immutable version, and stdio package declaration.
+`codeatlas setup` covers Codex, Claude Code, Cursor, VS Code, GitHub Copilot coding agent, and
+Antigravity while preserving existing JSON servers; repository-scoped VS Code and Copilot examples
+ship in the package. `codeatlas report` generates opt-in local JSON with a pinned commit and
+fingerprint, standard query latency, observed RSS, index size, graph-fact distribution, and
+privacy-schema checks without source excerpts, result names, or prompt text. Distribution checks
+bind these manifests to the package version, six-host compatibility matrix, 12 independent pinned
+repository validations across all three operating systems, and adapter precision/recall gates.
+The disposable-consumer package smoke enforces a three-minute install-to-first-overview ceiling and
+completed the Windows local run in 25.4 seconds.
+The contribution kit, starter issue form, monthly dogfood protocol, and controlled two-minute demo
+script are checked in. The tag release workflow verifies the npm artifact, downloads a checksummed
+official publisher, validates the manifest, publishes through GitHub OIDC, and confirms the exact
+registry version. Actual release execution, live hosted-host smoke runs, demo recording, and
+final-version repository reruns remain external operations; the codebase does not claim those
+actions have occurred.
+
 ## Delivery order
 
 | Window | Deliverable | Release decision |

@@ -170,6 +170,7 @@ All optional `[path]` arguments default to the current directory.
 | `codeatlas status [path]` | Compare the working tree with the indexed fingerprint |
 | `codeatlas doctor [path]` | Check configuration, runtime, parsers, storage, and graph health |
 | `codeatlas knowledge [path] --check` | Generate the short agent map and validate owners, ADRs, journeys, invariants, and canonical names |
+| `codeatlas report [path] --output <file>` | Generate a local source-free quality, latency, memory, storage, and privacy report |
 | `codeatlas mcp [path]` | Start the MCP server over stdio |
 | `codeatlas clean [path]` | Remove `.codeatlas/` after confirmation |
 
@@ -191,6 +192,10 @@ Use `--target cursor,codex` to choose clients, `--all` to configure every suppor
 `--dry-run` to preview destinations. Unrelated servers are preserved and a conflicting
 `codeatlas` entry is not overwritten.
 
+Setup supports Codex, Claude Code, Cursor, VS Code, GitHub Copilot coding agent, and Antigravity.
+The Copilot target generates a repository-settings payload for an administrator to apply. See the
+[compatibility matrix](docs/compatibility.md) and [distribution guide](docs/distribution.md).
+
 For any other MCP-compatible host, configure a local stdio server:
 
 ```json
@@ -205,6 +210,15 @@ For any other MCP-compatible host, configure a local stdio server:
 ```
 
 See the copyable [MCP configuration example](examples/mcp-config.json).
+
+To generate proof for a pinned public checkout without uploading source or prompts:
+
+```bash
+codeatlas report . --output reports/local-proof.json --include-repository-url
+```
+
+The [report protocol](reports/README.md), [two-minute demo](docs/demo/difficult-change.md), and
+[adapter contribution kit](docs/adapter-kit.md) keep public claims tied to reproducible evidence.
 
 The default server exposes four compact, read-only tools:
 

@@ -331,7 +331,10 @@ export function createProgram(): Command {
     .command("setup")
     .description("Configure supported coding agents to launch the CodeAtlas MCP server.")
     .argument("[path]", "A path inside the repository", process.cwd())
-    .option("--target <clients>", "Comma-separated: codex, claude, cursor, antigravity")
+    .option(
+      "--target <clients>",
+      "Comma-separated: codex, claude, cursor, vscode, copilot, antigravity",
+    )
     .option("--all", "Configure all supported clients", false)
     .option("--dry-run", "Show configuration destinations without changing them", false)
     .action(async (
@@ -385,6 +388,32 @@ export function createProgram(): Command {
       console.log(options.json ? JSON.stringify(report, null, 2) : formatKnowledgeReport(report));
       if (options.check && report.findings.some((finding) => finding.severity === "error")) {
         process.exitCode = 1;
+      }
+    });
+
+  program
+    .command("report")
+    .description("Generate a local, source-free performance, quality, and privacy proof report.")
+    .argument("[path]", "A path inside the repository", process.cwd())
+    .option("--output <file>", "Write JSON to a file instead of stdout")
+    .option("--include-repository-url", "Include a credential-free HTTPS origin URL", false)
+    .action(async (
+      targetPath: string,
+      options: { output?: string; includeRepositoryUrl: boolean },
+    ) => {
+      const {
+        createLocalProofReport,
+        formatLocalProofReport,
+        writeLocalProofReport,
+      } = await import("../report/local.js");
+      const report = await createLocalProofReport(targetPath, {
+        includeRepositoryUrl: options.includeRepositoryUrl,
+      });
+      if (options.output === undefined) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        const output = await writeLocalProofReport(report, options.output);
+        console.log(`${formatLocalProofReport(report)}\nWritten: ${output}`);
       }
     });
 

@@ -1,0 +1,7 @@
+{
+  "framework": "acme-web",
+  "fixture": "fixture/routes.ts",
+  "edges": [
+    { "source": "GET /orders", "type": "ROUTES_TO", "target": "listOrders" }
+  ]
+}

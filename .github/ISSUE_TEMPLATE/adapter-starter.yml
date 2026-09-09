@@ -1,0 +1,47 @@
+name: Adapter starter
+description: Propose one bounded parser or framework adapter contribution.
+title: "[adapter] "
+labels: ["adapter", "starter"]
+body:
+  - type: input
+    id: ecosystem
+    attributes:
+      label: Ecosystem and pinned version
+      placeholder: NestJS 11.0
+    validations:
+      required: true
+  - type: dropdown
+    id: slice
+    attributes:
+      label: First evidence slice
+      options:
+        - Route to handler
+        - Middleware or authentication
+        - Datastore operation
+        - Event producer or consumer
+        - Contract declaration
+    validations:
+      required: true
+  - type: textarea
+    id: fixture
+    attributes:
+      label: Minimal positive and negative fixtures
+      description: Link or paste sanitized syntax. Include dynamic and near-match behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected evidence and edge set
+      description: List source/type/target triples, provenance, and the precision/recall threshold.
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Contribution contract
+      options:
+        - label: Fixtures contain no credentials or private source.
+          required: true
+        - label: Every expected edge has a file and line evidence location.
+          required: true

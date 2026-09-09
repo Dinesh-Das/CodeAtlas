@@ -35,6 +35,12 @@ export {
 } from "./knowledge/system.js";
 export { createCodeAtlasServer } from "./mcp/server.js";
 export { CODEATLAS_VERSION } from "./version.js";
+export {
+  createLocalProofReport,
+  formatLocalProofReport,
+  writeLocalProofReport,
+  type LocalProofReport,
+} from "./report/local.js";
 export { registerFrameworkAdapter } from "./framework/registry.js";
 export {
   compileChangeContext,

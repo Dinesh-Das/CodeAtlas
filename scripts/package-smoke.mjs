@@ -54,7 +54,11 @@ try {
     "dist/api.js",
     "dist/api.d.ts",
     "examples/mcp-config.json",
+    "examples/vscode-mcp.json",
+    "examples/copilot-mcp.json",
     "examples/README.md",
+    "server.json",
+    "compatibility.json",
   ]) {
     if (!paths.has(required)) throw new Error(`Packed package is missing ${required}.`);
   }
@@ -91,6 +95,7 @@ try {
   await run("git", ["commit", "-m", "package smoke fixture"], fixtureRoot);
 
   const tarballPath = path.join(temporaryRoot, packageResult.filename);
+  const firstAnswerStartedAt = Date.now();
   progress("Installing the tarball in a disposable consumer");
   await runNpm([
     "install",
@@ -147,6 +152,10 @@ try {
   if (!overviewOutput.includes("Ask your coding agent")) {
     throw new Error("Installed CLI did not produce the direct architecture overview.");
   }
+  const firstAnswerMs = Date.now() - firstAnswerStartedAt;
+  if (firstAnswerMs > 180_000) {
+    throw new Error(`Install-to-first-answer exceeded three minutes: ${firstAnswerMs} ms.`);
+  }
   const { stdout: answerOutput } = await execute(
     "ask",
     "Explain the repository architecture and where an AI coding agent should start.",
@@ -165,10 +174,21 @@ try {
     throw new Error("Installed CLI did not produce a relevant, production-scoped architecture answer.");
   }
   await execute("setup", "--all", "--dry-run", fixtureRoot);
+  const { stdout: reportOutput } = await execute("report", fixtureRoot);
+  const report = JSON.parse(reportOutput);
+  if (
+    report.schema_version !== "1.0" ||
+    report.performance?.samples !== 25 ||
+    report.privacy?.passed !== true ||
+    reportOutput.includes("function checkout")
+  ) {
+    throw new Error("Installed CLI did not produce a source-free local proof report.");
+  }
 
   process.stdout.write(
-    `✓ Packed ${packageResult.filename} (${packageResult.entryCount} files)\n` +
+      `✓ Packed ${packageResult.filename} (${packageResult.entryCount} files)\n` +
       `✓ Installed ${packageMetadata.name} and ran codeatlas ${packageMetadata.version}\n` +
+      `✓ Reached the first architecture answer in ${(firstAnswerMs / 1_000).toFixed(1)} seconds\n` +
       "✓ Initialized and queried a disposable Git repository\n",
   );
 } finally {

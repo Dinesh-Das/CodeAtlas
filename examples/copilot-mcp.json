@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "codeatlas": {
+      "type": "local",
+      "command": "codeatlas",
+      "args": ["mcp", "/absolute/path/to/repository"],
+      "tools": ["search", "prepare_change", "trace", "get_evidence"]
+    }
+  }
+}
