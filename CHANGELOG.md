@@ -31,6 +31,8 @@ All notable changes follow semantic versioning.
 
 ### Fixed
 
+- Kept JVM package namespaces such as `com/example` in production scope and excluded deliberately
+  inferred domain/feature membership from the semantic relationship-quality percentage.
 - Made source-backed CLI and MCP reads reconcile Git authoritatively so delayed macOS file-watcher
   notifications cannot return a stale architecture generation.
 - Anchored the generated `codeatlas/` bundle exclusion at the repository root so Java and other

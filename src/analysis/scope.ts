@@ -25,7 +25,21 @@ export function classifyArchitecturalScope(filePath: string | null): Architectur
       new RegExp(`${SEGMENT}(?:fixtures?|__fixtures__)(?:/|$)`, "u").test(normalized)) {
     return "fixture";
   }
-  if (new RegExp(`${SEGMENT}(?:examples?|samples?|demos?)(?:/|$)`, "u").test(normalized)) {
+  const exampleDirectory = new RegExp(
+    `${SEGMENT}(?:examples?|samples?|demos?)(?:/|$)`,
+    "u",
+  ).exec(normalized);
+  const jvmSourceNamespace = new RegExp(
+    `${SEGMENT}src/[^/]+/(?:java|kotlin)/(?:[^/]+/)*`,
+    "u",
+  ).exec(normalized);
+  // `com/example/...` is the conventional namespace used by many JVM projects. A
+  // package segment must not make real code look like sample code, while a repository
+  // or workspace directory named examples should retain the example classification.
+  if (
+    exampleDirectory !== null &&
+    (jvmSourceNamespace === null || exampleDirectory.index < jvmSourceNamespace.index)
+  ) {
     return "example";
   }
   if (new RegExp(`${SEGMENT}(?:tests?|__tests__|specs?)(?:/|$)`, "u").test(normalized) ||

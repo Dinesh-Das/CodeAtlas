@@ -318,7 +318,8 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
         .prepare(
           `SELECT provenance_category AS provenance, file_path AS filePath
            FROM edges
-           WHERE provenance_category IN ('verified', 'inferred', 'dynamic')`,
+           WHERE provenance_category IN ('verified', 'inferred', 'dynamic')
+             AND edge_type NOT IN ('BELONGS_TO_DOMAIN', 'BELONGS_TO_FEATURE')`,
         )
         .all() as Array<{
           provenance: "verified" | "inferred" | "dynamic";
@@ -394,7 +395,7 @@ export async function runDoctor(startPath = process.cwd()): Promise<DoctorCheck[
           `inferred=${relationshipQuality.inferred} (${percentage(relationshipQuality.inferred)}%), ` +
           `dynamic=${relationshipQuality.dynamic} (${percentage(relationshipQuality.dynamic)}%), ` +
           `actionable_unresolved=${unresolvedRelationships} (${percentage(unresolvedRelationships)}%); ` +
-          "scope=production+configuration; " +
+          "scope=production+configuration; excludes=derived_taxonomy_membership; " +
           `thresholds verified>=${config.limits.minimumVerifiedRelationshipPercent}%, ` +
           `unresolved<=${config.limits.maximumUnresolvedRelationshipPercent}%`,
         severity: relationshipQualityOk ? "info" : "warning",
