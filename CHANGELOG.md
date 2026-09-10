@@ -2,6 +2,33 @@
 
 All notable changes follow semantic versioning.
 
+## Unreleased
+
+### Added
+
+- Added bounded SQLite task projections for change preparation, source evidence, symbol context,
+  path tracing, repository overview, execution tours, and current-change resources, with query and
+  resident-memory telemetry in canonical MCP responses.
+- Added scoped project knowledge to change briefs, including canonical names, owners, invariants,
+  applicable architecture rules, and owner validation commands.
+
+### Changed
+
+- Reordered default-budget change packets around an edit anchor and a runnable validation step or
+  an explicit validation gap, while keeping omitted context progressively accessible through the
+  default MCP tools and resources.
+- Ranked exact symbol IDs, names, qualified names, and file paths ahead of enriched lexical search
+  matches, and selected executable tests using canonical test and fixture scope.
+
+### Fixed
+
+- Preserved distinct evidence identities for overlapping source ranges and now verify that retained
+  evidence covers each edit location's full range.
+- Resolved bare root filenames and documentation intent correctly, prevented prose capitalization
+  from becoming accidental symbol references, and connected the review prompt to a valid current
+  change resource with enforced fingerprint freshness.
+- Shared in-flight source reads so concurrent evidence hydration does not reopen the same file.
+
 ## 0.11.0-beta.1 - 2026-09-09
 
 ### Added

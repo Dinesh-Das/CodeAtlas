@@ -179,7 +179,7 @@ describe("ArchitectureService", () => {
     const evidenceId = result.control_flow!.nodes.find((node) => node.kind === "CONDITION")!.evidence_ids[0]!;
     await expect(evidenceIr(repository.root, evidenceId)).resolves.toMatchObject({
       evidence: [expect.objectContaining({ id: evidenceId, symbol_id: missing.id })],
-      retrieval: { source: "generation_projection" },
+      retrieval: { source: "sqlite_projection" },
     });
   }, 60_000);
 

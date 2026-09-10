@@ -1,7 +1,8 @@
 import { describeImpact } from "../analysis/impact.js";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { isPrimaryArchitectureSymbol } from "../analysis/scope.js";
+import picomatch from "picomatch";
+import { isPrimaryArchitectureSymbol, symbolArchitecturalScope } from "../analysis/scope.js";
 import { CodeAtlasError } from "../core/errors.js";
 import { workspacePaths } from "../core/workspace.js";
 import { buildAtlasAtGitHead } from "../git/ref-atlas.js";
@@ -13,6 +14,8 @@ import type {
   ImpactPath,
 } from "../ir/models.js";
 import { architectureService } from "../service/architecture-service.js";
+import { loadV2Config } from "../rules/config.js";
+import type { CodeAtlasV2Config } from "../rules/types.js";
 import { createAtlasProjection, type AtlasProjection } from "../service/atlas-projection.js";
 import { openDatabase } from "../storage/database.js";
 import type { QueryStore } from "../storage/query-store.js";
@@ -49,6 +52,7 @@ export interface CompileChangeContextOptions {
 export interface ChangeContextResources {
   projection?: AtlasProjection;
   queryStore?: QueryStore;
+  v2Config?: CodeAtlasV2Config;
 }
 
 const TEST_PATTERN = /(?:^|\/)(?:tests?|__tests__)(?:\/|$)|\.(?:spec|test)\.[^/]+$/iu;
@@ -302,6 +306,11 @@ function relevantConstraints(
       ? symbol.metadata.document_kind
       : "";
     if (documentKind !== "decision" && documentKind !== "adr") return [];
+    const linkedToTask = relevantIds.has(symbol.id) || atlas.relationships.some((relationship) =>
+      (relationship.source === symbol.id && relevantIds.has(relationship.target)) ||
+      (relationship.target === symbol.id && relevantIds.has(relationship.source))
+    );
+    if (!linkedToTask) return [];
     return [{
       id: symbol.id,
       kind: "decision",
@@ -310,6 +319,89 @@ function relevantConstraints(
     }];
   });
   return uniqueById([...violations, ...decisions]).slice(0, 20);
+}
+
+function configEvidenceIds(atlas: Atlas): string[] {
+  return atlas.evidence.filter((item) => item.file === ".codeatlas.yml")
+    .map((item) => item.id)
+    .slice(0, 2);
+}
+
+function selectorMatchesSymbol(atlas: Atlas, symbol: AtlasSymbol, selector: Record<string, string>): boolean {
+  return Object.entries(selector).every(([key, expected]) => {
+    const value = expected.toLocaleLowerCase();
+    if (key === "kind") return symbol.kind.toLocaleLowerCase() === value;
+    if (key === "matches_path") return (symbol.file ?? "").toLocaleLowerCase().includes(value);
+    if (key === "domain") return symbol.domain_ids.some((id) =>
+      atlas.domains.find((domain) => domain.id === id)?.name.toLocaleLowerCase() === value
+    );
+    return String(symbol.metadata[key] ?? "").toLocaleLowerCase() === value;
+  });
+}
+
+function configuredKnowledge(
+  atlas: Atlas,
+  config: CodeAtlasV2Config | undefined,
+  selectedSymbols: readonly AtlasSymbol[],
+): {
+  constraints: ChangeContextConstraint[];
+  invariants: ChangeContextInvariant[];
+  commands: ChangeValidationCommand[];
+  canonicalNameBySymbolId: Map<string, string>;
+} {
+  const canonicalNameBySymbolId = new Map<string, string>();
+  if (config === undefined) return { constraints: [], invariants: [], commands: [], canonicalNameBySymbolId };
+  const evidenceIds = configEvidenceIds(atlas);
+  const resolve = (selector: string): AtlasSymbol | undefined => {
+    const normalized = selector.toLocaleLowerCase();
+    const matches = atlas.symbols.filter((symbol) => symbol.id === selector ||
+      symbol.name.toLocaleLowerCase() === normalized ||
+      symbol.qualified_name?.toLocaleLowerCase() === normalized);
+    return matches.length === 1 ? matches[0] : undefined;
+  };
+  for (const canonical of config.knowledge.canonical_names) {
+    const symbol = resolve(canonical.symbol);
+    if (symbol !== undefined) canonicalNameBySymbolId.set(symbol.id, canonical.name);
+  }
+  if (evidenceIds.length === 0) return { constraints: [], invariants: [], commands: [], canonicalNameBySymbolId };
+  const selectedFiles = [...new Set(selectedSymbols.flatMap((symbol) => symbol.file ?? []))];
+  const ownerMatches = config.knowledge.owners.filter((owner) => {
+    const matchers = owner.include.map((pattern) => picomatch(pattern, { dot: true }));
+    return selectedFiles.some((file) => matchers.some((matches) => matches(file)));
+  });
+  const constraints: ChangeContextConstraint[] = [
+    ...ownerMatches.map((owner) => ({
+      id: `knowledge-owner:${owner.id}`,
+      kind: "knowledge_owner" as const,
+      summary: `${owner.id} is owned by ${owner.owner}: ${owner.purpose}`,
+      evidence_ids: evidenceIds,
+    })),
+    ...config.architecture.rules.filter((rule) =>
+      selectedSymbols.some((symbol) => selectorMatchesSymbol(atlas, symbol, rule.source))
+    ).map((rule) => ({
+      id: `architecture-rule:${rule.id}`,
+      kind: "architecture_rule" as const,
+      summary: rule.description,
+      evidence_ids: evidenceIds,
+    })),
+  ];
+  const invariants = config.knowledge.invariants.filter((invariant) => {
+    const matchers = invariant.applies_to.map((pattern) => picomatch(pattern, { dot: true }));
+    return selectedFiles.some((file) => matchers.some((matches) => matches(file)));
+  }).map((invariant): ChangeContextInvariant => ({
+    id: invariant.id,
+    statement: invariant.statement,
+    source: "human_config",
+    evidence_ids: evidenceIds,
+  }));
+  const commands = ownerMatches.flatMap((owner): ChangeValidationCommand[] => owner.validation_command === null ? [] : [{
+    id: `knowledge-validation:${owner.id}`,
+    command: owner.validation_command,
+    purpose: "check",
+    source_file: ".codeatlas.yml",
+    evidence_ids: evidenceIds,
+  }]);
+  return { constraints, invariants, commands, canonicalNameBySymbolId };
 }
 
 function resolutionGaps(
@@ -423,12 +515,14 @@ export function compileChangeContextFromAtlas(
     ? ftsCandidates(repositoryRoot, ftsQuery)
     : resources.queryStore.searchSymbols(intent.terms.join(" "), 100).items;
   const projection = resources.projection ?? createAtlasProjection(atlas);
+  const preliminaryKnowledge = configuredKnowledge(atlas, resources.v2Config, []);
   const ranked = rankChangeCandidates(atlas, intent, {
     fts,
     changedSymbolIds,
     prioritizeChangedSymbols: options.gitBase !== undefined ||
       /\b(?:current|diff|changes?|review|working[- ]tree)\b/iu.test(trimmedTask),
     searchTextBySymbolId: projection.searchTextBySymbolId,
+    canonicalNameBySymbolId: preliminaryKnowledge.canonicalNameBySymbolId,
   });
   const symbolById = projection.symbolById;
   let selectedSymbols = diversifyRankedCandidates(ranked, projection.symbolById, 12).flatMap((item) => {
@@ -509,34 +603,51 @@ export function compileChangeContextFromAtlas(
     contract_kind: CONTRACT_KINDS.get(symbol.kind)!,
     evidence_ids: symbol.evidence_ids,
   })).slice(0, 20);
-  const impactedIds = new Set(allPaths.flatMap((item) => item.symbol_ids));
+  const impactedIds = new Set(allPaths
+    .filter((item) => item.classification === "verified")
+    .flatMap((item) => item.symbol_ids));
+  const selectedCandidateIds = new Set(candidates.map((candidate) => candidate.symbol.id));
+  const verifiedTestPaths = allPaths.filter((path) => path.classification === "verified");
+  const ftsPosition = new Map(fts.map((item, index) => [item.id, index]));
   const testCandidates = atlas.symbols.flatMap((symbol): Array<{
     test: ChangeContextTest;
     taskScore: number;
+    relationshipScore: number;
   }> => {
-    const executableTestSymbol = TEST_PATTERN.test(symbol.file ?? "") &&
+    const testScope = symbolArchitecturalScope(symbol);
+    const executableTestSymbol = testScope === "test" && TEST_PATTERN.test(symbol.file ?? "") &&
       ["function", "method", "class"].includes(symbol.kind);
-    if (symbolRef(symbol) === null || (symbol.kind !== "test" && !executableTestSymbol)) {
+    if (testScope !== "test" || symbolRef(symbol) === null ||
+      (symbol.kind !== "test" && !executableTestSymbol)) {
       return [];
     }
     const taskText = `${symbol.name} ${symbol.qualified_name ?? ""} ${symbol.file ?? ""}`
       .toLocaleLowerCase();
-    const taskScore = intent.terms.filter((term) => term.length >= 3 && taskText.includes(term)).length;
+    const ftsRank = ftsPosition.get(symbol.id);
+    const taskScore = intent.terms.filter((term) => term.length >= 3 && taskText.includes(term)).length * 100 +
+      (ftsRank === undefined ? 0 : Math.max(1, 100 - ftsRank));
     const taskMatch = fts.some((item) => item.id === symbol.id) || taskScore > 0;
-    if (!relevantIds.has(symbol.id) && !impactedIds.has(symbol.id) && !taskMatch) return [];
+    const supportingPaths = verifiedTestPaths.filter((path) =>
+      path.symbol_ids.includes(symbol.id) && path.symbol_ids.some((id) => selectedCandidateIds.has(id))
+    );
+    const direct = supportingPaths.some((item) => item.symbol_ids.length === 2);
+    const impacted = supportingPaths.length > 0 || impactedIds.has(symbol.id);
+    if (!impacted && !taskMatch) return [];
     return [{
       test: {
         symbol: symbolRef(symbol)!,
-        relationship: relevantIds.has(symbol.id)
-          ? "direct"
-          : impactedIds.has(symbol.id) ? "impacted" : "task_match",
-        evidence_ids: symbol.evidence_ids,
+        relationship: direct ? "direct" : impacted ? "impacted" : "task_match",
+        evidence_ids: [...new Set([
+          ...symbol.evidence_ids,
+          ...supportingPaths.slice(0, 2).flatMap((item) => item.evidence_ids),
+        ])],
       },
       taskScore,
+      relationshipScore: direct ? 2 : impacted ? 1 : 0,
     }];
   }).sort((left, right) =>
+    right.relationshipScore - left.relationshipScore ||
     right.taskScore - left.taskScore ||
-    Number(right.test.relationship !== "task_match") - Number(left.test.relationship !== "task_match") ||
     Number(right.test.symbol.kind !== "test") - Number(left.test.symbol.kind !== "test") ||
     left.test.symbol.id.localeCompare(right.test.symbol.id)
   );
@@ -590,8 +701,10 @@ export function compileChangeContextFromAtlas(
     confidence: candidate.recommendation.confidence,
     evidence_ids: candidate.symbol.evidence_ids,
   }));
-  const constraints = relevantConstraints(atlas, relevantIds);
+  const knowledge = configuredKnowledge(atlas, resources.v2Config, selectedSymbols.map((item) => item.symbol));
+  const constraints = uniqueById([...knowledge.constraints, ...relevantConstraints(atlas, relevantIds)]);
   const invariants: ChangeContextInvariant[] = [
+    ...knowledge.invariants,
     ...constraints.map((constraint) => ({
       id: constraint.id,
       statement: constraint.summary,
@@ -605,7 +718,16 @@ export function compileChangeContextFromAtlas(
       evidence_ids: contract.evidence_ids,
     })),
   ];
-  const commands = validationCommands(atlas, repositoryRoot);
+  const commands = uniqueById([...knowledge.commands, ...validationCommands(atlas, repositoryRoot)]);
+  if (commands.length === 0) {
+    gaps.push({
+      code: "validation_unavailable",
+      message: "No repository or owner validation command is available for this task; inspect the owning package before editing.",
+      target: null,
+      candidate_ids: candidates.map((candidate) => candidate.symbol.id),
+      evidence_ids: [],
+    });
+  }
   const checklist = verificationChecklist({
     edits: editLocations,
     contracts,
@@ -681,16 +803,18 @@ export async function compileChangeContext(
   if (options.gitBase !== undefined) {
     const atlas = await buildAtlasAtGitHead(startPath, options.gitBase, "HEAD", { snapshot: false });
     const current = await architectureService.load(startPath);
+    const v2Config = await loadV2Config(current.repositoryRoot);
     return compileChangeContextFromAtlas(atlas, current.repositoryRoot, {
       id: atlas.snapshot.id,
       fingerprint: current.fingerprint,
       generations: current.status.generations,
-    }, task, options, { projection: createAtlasProjection(atlas) });
+    }, task, options, { projection: createAtlasProjection(atlas), v2Config });
   }
   const context = await architectureService.load(startPath);
+  const v2Config = await loadV2Config(context.repositoryRoot);
   return compileChangeContextFromAtlas(context.atlas, context.repositoryRoot, {
     id: context.atlas.snapshot.id,
     fingerprint: context.fingerprint,
     generations: context.status.generations,
-  }, task, options, { projection: context.projection, queryStore: context.queryStore });
+  }, task, options, { projection: context.projection, queryStore: context.queryStore, v2Config });
 }

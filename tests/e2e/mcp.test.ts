@@ -180,6 +180,7 @@ describe("MCP stdio contract", () => {
           }
           const resources = await defaultClient.listResources();
           expect(resources.resources.map((resource) => resource.uri)).toContain("codeatlas://repository/overview");
+          expect(resources.resources.map((resource) => resource.uri)).toContain("codeatlas://change/current");
           const templates = await defaultClient.listResourceTemplates();
           expect(templates.resourceTemplates.map((resource) => resource.uriTemplate).sort()).toEqual([
             "codeatlas://change/{fingerprint}",
@@ -201,6 +202,40 @@ describe("MCP stdio contract", () => {
             type: "text",
             text: expect.stringContaining("prepare_change"),
           });
+          const reviewPrompt = await defaultClient.getPrompt({ name: "review_diff" });
+          expect(reviewPrompt.messages[0]?.content).toMatchObject({
+            type: "text",
+            text: expect.stringContaining("codeatlas://change/current"),
+          });
+          const currentChange = await defaultClient.readResource({ uri: "codeatlas://change/current" });
+          const currentChangeContent = JSON.parse(String(currentChange.contents[0]?.text)) as {
+            fingerprint: string;
+            changes: unknown[];
+          };
+          expect(currentChangeContent).toHaveProperty("changes");
+          const fingerprintedChange = await defaultClient.readResource({
+            uri: `codeatlas://change/${currentChangeContent.fingerprint}`,
+          });
+          expect(JSON.parse(String(fingerprintedChange.contents[0]?.text))).toMatchObject({
+            fingerprint: currentChangeContent.fingerprint,
+          });
+          const staleChange = await defaultClient.readResource({ uri: "codeatlas://change/stale" });
+          expect(JSON.parse(String(staleChange.contents[0]?.text))).toMatchObject({
+            status: "error",
+            error: { code: "stale_resource", recoverable: true },
+            next_actions: ["Read codeatlas://change/current and use its fingerprint."],
+          });
+          const defaultEvidence = await defaultClient.callTool({
+            name: "get_evidence",
+            arguments: { target: runCheckoutId },
+          });
+          expect(defaultEvidence.isError).not.toBe(true);
+          expect(defaultEvidence.structuredContent).toEqual(expect.objectContaining({
+            symbol: expect.objectContaining({ id: runCheckoutId }),
+            evidence: expect.arrayContaining([
+              expect.objectContaining({ file: "src/checkout/service.ts", excerpt_status: "complete" }),
+            ]),
+          }));
         } finally {
           await defaultClient.close();
         }
@@ -316,6 +351,8 @@ describe("MCP stdio contract", () => {
           name: "search",
           arguments: { query: "runCheckout", limit: 10 },
         });
+        expect((primarySearch.structuredContent as { results: Array<{ id: string }> }).results[0]?.id)
+          .toBe(runCheckoutId);
         expect(primarySearch.structuredContent).toEqual(expect.objectContaining({
           resource_links: expect.arrayContaining([
             expect.objectContaining({ uri: `codeatlas://symbol/${encodeURIComponent(runCheckoutId)}` }),
