@@ -194,7 +194,7 @@ Acceptance:
 - Statistics equal the normalized array counts in unit, integration, and self-build tests.
 - A completed paired model run is checked in as structured observations; development fixtures remain clearly separate from publishable claims.
 
-Implementation status on 2026-09-06: the engineering work in items 1-7 is implemented and covered by self-dogfood regression tests. A fresh self-build now validates exact canonical counters, the MCP question returns distinct retrieval and response paths, and a 3,000-byte context packet retains a source-backed target. The evaluation harness now rejects a claimed success when required concepts, relationship types, or starting files are missing, or when a forbidden distractor is present. A provider-backed paired model observation set is still required before publishing an outcome claim; this repository does not include a model runner or credentials, so no synthetic observations were recorded as model results.
+Implementation status on 2026-09-10: the engineering work in items 1-7 is implemented and covered by self-dogfood regression tests. A fresh self-build now validates exact canonical counters, the MCP question returns distinct retrieval and response paths, and a 3,000-byte context packet retains a source-backed target. The evaluation harness now rejects a claimed success when required concepts, relationship types, or starting files are missing, or when a forbidden distractor is present. The repository includes a provider-command runner and strict evidence schema, but a provider-backed, independently reviewed, held-out observation set is still required before publishing an outcome claim. No deterministic fixture or synthetic observation is recorded as a model result.
 
 ### P1 — Make SQLite the interactive source of truth
 
@@ -398,23 +398,26 @@ Acceptance:
 - Public claims link to reproducible manifests and do not rely on generated capability counts alone.
 - Adoption is tracked through opt-in or user-run local reports while source and prompts remain private by default.
 
-Implementation status on 2026-09-09: the npm package and official MCP Registry manifest now share
+Implementation status on 2026-09-10: the npm package and official MCP Registry manifest now share
 a validated `mcpName`, repository identity, immutable version, and stdio package declaration.
 `codeatlas setup` covers Codex, Claude Code, Cursor, VS Code, GitHub Copilot coding agent, and
 Antigravity while preserving existing JSON servers; repository-scoped VS Code and Copilot examples
 ship in the package. `codeatlas report` generates opt-in local JSON with a pinned commit and
 fingerprint, standard query latency, observed RSS, index size, graph-fact distribution, and
 privacy-schema checks without source excerpts, result names, or prompt text. Distribution checks
-bind these manifests to the package version, six-host compatibility matrix, 12 independent pinned
-repository validations across all three operating systems, and adapter precision/recall gates.
+bind these manifests to the package version, six-host compatibility matrix, ten independent pinned
+repository validations across Linux, macOS, and Windows, and adapter precision/recall gates. The
+fresh 0.11 candidate matrix covers JavaScript, TypeScript, Python, Go, Java, and Rust; every install,
+index, overview, grounded-answer, and no-indexing-failure check passed at the pinned commits.
 The disposable-consumer package smoke enforces a three-minute install-to-first-overview ceiling and
 completed the Windows local run in 25.4 seconds.
 The contribution kit, starter issue form, monthly dogfood protocol, and controlled two-minute demo
 script are checked in. The tag release workflow verifies the npm artifact, downloads a checksummed
 official publisher, validates the manifest, publishes through GitHub OIDC, and confirms the exact
-registry version. Actual release execution, live hosted-host smoke runs, demo recording, and
-final-version repository reruns remain external operations; the codebase does not claim those
-actions have occurred.
+registry version. Candidate repository reruns are recorded in `release-evidence.json`. Actual release
+execution, live hosted-host smoke runs, demo recording, the large-repository benchmark refresh, and
+the independently reviewed held-out provider run remain external operations; the codebase does not
+claim those actions have occurred.
 
 ## Delivery order
 
