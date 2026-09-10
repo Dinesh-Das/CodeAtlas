@@ -31,6 +31,9 @@ All notable changes follow semantic versioning.
 
 ### Fixed
 
+- Blinded provider evaluations to hidden rubric fields, bound runs to the exact suite, counterbalanced
+  paired execution order, included CodeAtlas setup in duration, validated structured answers, and
+  retained checksummed private transcripts for independent review.
 - Kept JVM package namespaces such as `com/example` in production scope and excluded deliberately
   inferred domain/feature membership from the semantic relationship-quality percentage.
 - Made source-backed CLI and MCP reads reconcile Git authoritatively so delayed macOS file-watcher

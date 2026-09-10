@@ -30,9 +30,16 @@ The runner copies every pinned fixture into a fresh temporary Git repository for
 repeat, and variant. Native runs may use normal repository tools but are prohibited from running
 CodeAtlas. CodeAtlas runs initialize the local index first and must begin with a budgeted `context`
 packet. Both variants use the same read-only model, output schema, task, and cold-workspace policy.
-Success is computed from required evidence recall, calibrated abstention, required concepts,
-relationship types, allowed starting files, and forbidden distractors; the model does not grade
-itself. Provider token events and tool calls are retained in the observation records.
+The runner never sends `expected_behavior` or other rubric fields to the model, alternates which
+variant runs first, and includes CodeAtlas initialization in its duration. Success is computed from
+required evidence recall, calibrated abstention, required concepts, relationship types, allowed
+starting files, and forbidden distractors; the model does not grade itself.
+
+Every successful provider call writes its raw JSONL event stream below the private run directory's
+`transcripts/` folder. `transcripts/manifest.json` binds each transcript and prompt to SHA-256
+digests. These files may contain source excerpts or tool output: retain them for independent review,
+but scrub them before any publication. Structured observations contain only answer and aggregate
+usage fields.
 
 Use `--dry-run` to validate the model metadata and observation count without making provider calls.
 Run artifacts can contain model answers and file names; review them before publishing.
@@ -42,9 +49,10 @@ An experiment has two inputs in addition to the suite. The run manifest pins the
 ```json
 {
   "schema_version": 1,
-  "evaluator_version": "1.2.0",
+  "evaluator_version": "1.3.0",
   "id": "pilot-2026-09-06",
   "suite_id": "codeatlas-development-v1",
+  "suite_sha256": "sha256-of-the-parsed-suite",
   "created_at": "2026-09-06T12:00:00.000+05:30",
   "model": {
     "provider": "provider-name",

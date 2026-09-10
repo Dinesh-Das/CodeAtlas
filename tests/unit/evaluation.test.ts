@@ -8,6 +8,7 @@ import {
   type EvaluationRun,
   type EvaluationSuite,
 } from "../../src/evaluation/models.js";
+import { evaluationSuiteSha256 } from "../../src/evaluation/provider.js";
 import {
   evaluateRun,
   fixtureContentSha256,
@@ -66,9 +67,10 @@ function suite(): EvaluationSuite {
 function run(): EvaluationRun {
   return {
     schema_version: 1,
-    evaluator_version: "1.2.0",
+    evaluator_version: "1.3.0",
     id: "evaluation-run-v1",
     suite_id: "evaluation-test-v1",
+    suite_sha256: evaluationSuiteSha256(suite()),
     created_at: "2026-09-06T12:00:00.000+05:30",
     model: { provider: "test", id: "fixed-model", version: "2026-09-06" },
     harness: { id: "test-harness", version: "1.0.0" },
@@ -152,6 +154,15 @@ describe("outcome evaluation runner", () => {
     expect(report.complete).toBe(false);
     expect(report.launch_gate.status).toBe("incomplete");
     expect(report.errors).toContain("Missing observation unanswerable-task:codeatlas:3.");
+  });
+
+  it("rejects a run bound to a different suite definition", () => {
+    const mismatched = run();
+    mismatched.suite_sha256 = "b".repeat(64);
+    const report = evaluateRun(suite(), mismatched, completeObservations());
+
+    expect(report.complete).toBe(false);
+    expect(report.errors).toContain("Run suite SHA-256 does not match the evaluated suite.");
   });
 
   it("compares planned files with actual edits and regressions", () => {

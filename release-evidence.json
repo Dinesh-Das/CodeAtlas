@@ -3,8 +3,8 @@
   "targetVersion": "0.11.0",
   "releaseArtifact": {
     "codeAtlasVersion": "0.11.0-beta.1",
-    "packageSha256": "6797c5720cff3d0ccc970b8a7806e40d38096d5bf5f3ccc751824d484c7e5fd5",
-    "packedFileCount": 610
+    "packageSha256": "66cfde7998fbe0db8052f9addcd7720b5d8efdbcfaedfa607b31c0247b69331a",
+    "packedFileCount": 614
   },
   "providerEvaluation": null,
   "independentRepositories": [

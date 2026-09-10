@@ -9,6 +9,7 @@ import {
   evaluationRunSchema,
   evaluationSuiteSchema,
 } from "./models.js";
+import { evaluationSuiteSha256 } from "./provider.js";
 
 interface ConfidenceInterval {
   low: number;
@@ -542,6 +543,9 @@ export function evaluateRun(
   const suite = suiteResult.data;
   const run = runResult.data;
   if (run.suite_id !== suite.id) errors.push(`Run targets ${run.suite_id}, not suite ${suite.id}.`);
+  if (run.suite_sha256 !== evaluationSuiteSha256(suite)) {
+    errors.push("Run suite SHA-256 does not match the evaluated suite.");
+  }
   if (run.repeats < suite.minimum_repeats) {
     errors.push(`Run has ${run.repeats} repeats; suite requires ${suite.minimum_repeats}.`);
   }

@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+evals/runs/
 *.log
 .codeatlas/
 codeatlas.html
