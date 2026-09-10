@@ -44,13 +44,6 @@ function contextEvidence(evidence: AtlasEvidence): ChangeContextEvidence {
   };
 }
 
-function overlaps(
-  left: Pick<AtlasEvidence, "file" | "start_line" | "end_line">,
-  right: Pick<AtlasEvidence, "file" | "start_line" | "end_line">,
-): boolean {
-  return left.file === right.file && left.start_line <= right.end_line && right.start_line <= left.end_line;
-}
-
 function canonicalizeEvidence(
   item: unknown,
   evidenceById: ReadonlyMap<string, AtlasEvidence>,
@@ -71,11 +64,8 @@ function canonicalizeEvidence(
         if (typeof id !== "string") continue;
         const evidence = evidenceById.get(id);
         if (evidence === undefined) continue;
-        const existing = [...selected, ...additions].find((selectedEvidence) =>
-          selectedEvidence.id === id || overlaps(selectedEvidence, evidence)
-        );
-        const canonicalId = existing?.id ?? id;
-        if (!canonicalIds.includes(canonicalId)) canonicalIds.push(canonicalId);
+        const existing = [...selected, ...additions].find((selectedEvidence) => selectedEvidence.id === id);
+        if (!canonicalIds.includes(id)) canonicalIds.push(id);
         if (existing === undefined) additions.push(contextEvidence(evidence));
       }
       record.evidence_ids = canonicalIds;
@@ -157,7 +147,7 @@ export function fitChangeContextToBudget(
       envelope_reserved: budget.envelopeReserve,
       format: budget.format,
     },
-    continuation: "Use exact candidate IDs with get_symbol, analyze_impact, and get_evidence for omitted detail.",
+    continuation: "Read candidate resource_links, then use trace between stable IDs and get_evidence for source proof.",
   };
   const evidenceById = new Map(evidence.map((item) => [item.id, item]));
   if (updateUsed(packet) > budget.requested) {
@@ -173,21 +163,34 @@ export function fitChangeContextToBudget(
   }
   let omitted = 0;
   const priorityGaps = collections.gaps.filter((gap) =>
-    ["ambiguous_target", "insufficient_task_specificity", "unsupported_coverage"].includes(gap.code)
+    ["ambiguous_target", "insufficient_task_specificity", "unsupported_coverage", "validation_unavailable"]
+      .includes(gap.code)
   );
   const resolutionGaps = collections.gaps.filter((gap) => !priorityGaps.includes(gap));
-  const priorityChecklist = [
-    collections.verification_checklist.find((item) => item.kind === "edit_location"),
-    collections.verification_checklist.find((item) => item.kind === "command"),
-  ].filter((item): item is ChangeContext["verification_checklist"][number] => item !== undefined);
+  const firstCommand = collections.validation_commands[0];
+  const editChecklist = collections.verification_checklist.find((item) => item.kind === "edit_location");
+  const rawCommandChecklist = collections.verification_checklist.find((item) => item.kind === "command");
+  const commandChecklist = rawCommandChecklist === undefined || firstCommand === undefined
+    ? undefined
+    : {
+        ...rawCommandChecklist,
+        instruction: "Run the included validation command and record its result.",
+        target_ids: [firstCommand.id],
+        evidence_ids: firstCommand.evidence_ids,
+      };
+  const priorityChecklist = [editChecklist, commandChecklist]
+    .filter((item): item is ChangeContext["verification_checklist"][number] => item !== undefined);
   const ordered: Array<[keyof typeof collections, readonly unknown[]]> = [
-    ["change_candidates", collections.change_candidates.slice(0, 1)],
-    ["edit_locations", collections.edit_locations.slice(0, 2)],
+    ["change_candidates", collections.change_candidates.slice(0, 1).map(compactCandidate)],
+    ["edit_locations", collections.edit_locations.slice(0, 1)],
+    ["validation_commands", collections.validation_commands.slice(0, 1)],
     ["gaps", priorityGaps],
     ["relevant_tests", collections.relevant_tests.slice(0, 1)],
     ["verification_checklist", priorityChecklist],
-    ["validation_commands", collections.validation_commands],
-    ["verified_paths", collections.verified_paths.slice(0, 2)],
+    ["verified_paths", collections.verified_paths.slice(0, 1)],
+    ["edit_locations", collections.edit_locations.slice(1, 2)],
+    ["validation_commands", collections.validation_commands.slice(1)],
+    ["verified_paths", collections.verified_paths.slice(1, 2)],
     ["change_candidates", collections.change_candidates.slice(1, 4).map(compactCandidate)],
     ["affected_contracts", collections.affected_contracts],
     ["invariants", collections.invariants],

@@ -99,6 +99,10 @@ async function canonicalMcpResult(
     const records = [
       ...((Array.isArray(value.results) ? value.results : []) as Array<Record<string, unknown>>),
       ...((Array.isArray(value.symbols) ? value.symbols : []) as Array<Record<string, unknown>>),
+      ...((Array.isArray(value.change_candidates) ? value.change_candidates : []) as Array<Record<string, unknown>>)
+        .flatMap((candidate) => typeof candidate.symbol === "object" && candidate.symbol !== null
+          ? [candidate.symbol as Record<string, unknown>]
+          : []),
       ...(typeof value.symbol === "object" && value.symbol !== null
         ? [value.symbol as Record<string, unknown>]
         : []),
@@ -313,13 +317,32 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
     async (uri, variables) => jsonResource(uri, await flowIr(repositoryPath, String(variables.id))),
   );
   server.registerResource(
+    "current-change",
+    "codeatlas://change/current",
+    { title: "Current architecture change", description: "Current bounded working-tree change and impact projection.", mimeType: "application/json" },
+    async (uri) => jsonResource(uri, await changesIr(repositoryPath, 100)),
+  );
+  server.registerResource(
     "change",
     new ResourceTemplate("codeatlas://change/{fingerprint}", { list: undefined }),
     { title: "Architecture change", description: "Current bounded change and impact projection.", mimeType: "application/json" },
-    async (uri, variables) => jsonResource(uri, {
-      requested_fingerprint: String(variables.fingerprint),
-      ...(await changesIr(repositoryPath, 100)),
-    }),
+    async (uri, variables) => {
+      const requestedFingerprint = String(variables.fingerprint);
+      const current = await changesIr(repositoryPath, 100);
+      if (requestedFingerprint !== current.fingerprint) {
+        return jsonResource(uri, {
+          status: "error",
+          error: {
+            code: "stale_resource",
+            message: "The requested change fingerprint is stale or unknown.",
+            recoverable: true,
+            details: { requested_fingerprint: requestedFingerprint, current_fingerprint: current.fingerprint },
+          },
+          next_actions: ["Read codeatlas://change/current and use its fingerprint."],
+        });
+      }
+      return jsonResource(uri, current);
+    },
   );
 
   server.registerPrompt(
@@ -335,7 +358,7 @@ export function createCodeAtlasServer(repositoryPath = process.cwd()): McpServer
   server.registerPrompt(
     "review_diff",
     { title: "Review a diff", description: "Review current edits against architecture evidence." },
-    async () => ({ messages: [{ role: "user", content: { type: "text", text: "Read the current codeatlas://change resource, compare the actual edits with affected contracts and tests, and report only evidence-backed risks. Separate verified paths from potential paths." } }] }),
+    async () => ({ messages: [{ role: "user", content: { type: "text", text: "Read codeatlas://change/current, compare the actual edits with affected contracts and tests, and report only evidence-backed risks. Separate verified paths from potential paths." } }] }),
   );
   server.registerPrompt(
     "explain_runtime_journey",

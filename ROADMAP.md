@@ -26,17 +26,20 @@ file is the single source for planned work; completed behavior belongs in the RE
 - Public registration APIs for third-party language and framework adapters.
 - Scope-aware architecture, branch-preserving execution/impact paths, architecture rules, Git
   changes, snapshots, and deterministic review findings.
+- A task-context compiler that resolves explicit anchors, returns evidence-complete edit and
+  validation context within a byte budget, filters fixture decoys, and incorporates scoped owners,
+  invariants, canonical names, and architecture rules.
+- Bounded SQLite projections and lazy evidence hydration for the default MCP tools and progressive
+  resources, with per-response storage, latency, and resident-memory telemetry.
 - Type checking, linting, coverage, dependency audit, CodeQL, package smoke tests, multi-OS CI, and
   a release-evidence gate tied to the exact packed artifact.
 
 ## Next
 
-- Build an outcome-evaluation harness and a pinned development corpus that measures whether
-  evidence improves architecture discovery, change planning, and impact analysis.
-- Add a task-context compiler that returns the smallest evidence-complete packet for a requested
-  change, including relevant tests, rules, unresolved boundaries, and token/byte budgets.
-- Query large canonical artifacts from indexes and projections without loading the entire atlas for
-  every request.
+- Run and publish held-out paired provider evaluations that measure context cost, required-file
+  recall, wrong edit locations, irrelevant tests, unsupported claims, and validated task success.
+- Extend the paired evaluation corpus with executable changes in disposable repositories and
+  task-specific patch validation.
 - Improve framework projection incrementality and TypeScript compiler memory reuse in large
   monorepos.
 - Broaden Fastify, Prisma, and cross-language contract fixtures from real public repositories.

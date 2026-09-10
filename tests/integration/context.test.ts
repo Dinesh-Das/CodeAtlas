@@ -51,6 +51,21 @@ async function contextRepository(): Promise<TestRepository> {
   ].join("\n"));
   await repository.write("src/duplicate-a.ts", "export function duplicate(): string { return 'a'; }\n");
   await repository.write("src/duplicate-b.ts", "export function duplicate(): string { return 'b'; }\n");
+  await repository.write("README.md", [
+    "# Fixture repository",
+    "",
+    "The prepare_change workflow gives agents implementation context.",
+    "",
+  ].join("\n"));
+  await repository.write("docs/adrs/0001-unrelated.md", [
+    "# Use a separate analytics warehouse",
+    "",
+    "Status: Accepted",
+    "",
+    "## Decision",
+    "Analytics data stays outside the authentication service.",
+    "",
+  ].join("\n"));
   await repository.git("add", ".");
   await repository.git("commit", "-m", "context fixture");
   await initializeRepository(repository.root);
@@ -88,6 +103,7 @@ describe("task-context compiler", () => {
       expect.objectContaining({ file: "src/auth/service.ts", action: "modify" }),
     ]));
     expect(packet.validation_commands.map((item) => item.command)).toContain("npm run test");
+    expect(packet.constraints.some((item) => item.kind === "decision")).toBe(false);
     expect(packet.verification_checklist).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "edit_location", status: "pending" }),
       expect.objectContaining({ kind: "command", id: "command:validation" }),
@@ -145,6 +161,65 @@ describe("task-context compiler", () => {
         symbol: expect.objectContaining({ name: "authenticate" }),
         retrieval_reasons: expect.arrayContaining(["changed symbol"]),
       }),
+    ]));
+  }, 30_000);
+
+  it("resolves root documentation files and applies scoped human knowledge", async () => {
+    const repository = await contextRepository();
+    const documentation = await compileChangeContext(
+      "Document the prepare_change workflow in README.md",
+      repository.root,
+      { budget: 8_000, format: "json" },
+    );
+    expect(documentation.intent).toMatchObject({
+      kind: "documentation",
+      explicit_files: expect.arrayContaining(["README.md"]),
+    });
+    expect(documentation.change_candidates[0]?.symbol.file).toBe("README.md");
+
+    await repository.write(".codeatlas.yml", [
+      "version: 1",
+      "architecture:",
+      "  rules:",
+      "    - id: auth-boundary",
+      "      description: Authentication must not call legacy code",
+      "      source:",
+      "        matches_path: src/auth/",
+      "      forbid:",
+      "        calls:",
+      "          matches_path: src/legacy/",
+      "knowledge:",
+      "  owners:",
+      "    - id: authentication",
+      "      owner: identity-team",
+      "      purpose: Authenticate users",
+      "      include: [src/auth/**]",
+      "      entrypoint: authenticate",
+      "      validation_command: npm run test",
+      "  invariants:",
+      "    - id: passwords-never-logged",
+      "      statement: Passwords never enter logs",
+      "      applies_to: [src/auth/**]",
+      "  canonical_names:",
+      "    - symbol: authenticate",
+      "      name: credential verification",
+      "",
+    ].join("\n"));
+    const knowledge = await compileChangeContext(
+      "Change credential verification",
+      repository.root,
+      { budget: 12_000, format: "json" },
+    );
+    expect(knowledge.change_candidates[0]?.symbol.name).toBe("authenticate");
+    expect(knowledge.constraints).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "knowledge_owner", summary: expect.stringContaining("identity-team") }),
+      expect.objectContaining({ kind: "architecture_rule", summary: expect.stringContaining("legacy code") }),
+    ]));
+    expect(knowledge.invariants).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "passwords-never-logged", source: "human_config" }),
+    ]));
+    expect(knowledge.validation_commands).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "knowledge-validation:authentication", command: "npm run test" }),
     ]));
   }, 30_000);
 });

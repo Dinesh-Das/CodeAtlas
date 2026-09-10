@@ -74,7 +74,7 @@ export interface ChangeContextTest {
 
 export interface ChangeContextConstraint {
   id: string;
-  kind: "architecture_rule" | "architecture_violation" | "decision";
+  kind: "architecture_rule" | "architecture_violation" | "decision" | "knowledge_owner";
   summary: string;
   evidence_ids: string[];
 }
@@ -92,7 +92,7 @@ export interface ChangeEditLocation {
 export interface ChangeContextInvariant {
   id: string;
   statement: string;
-  source: "architecture" | "decision" | "contract";
+  source: "architecture" | "decision" | "contract" | "human_config";
   evidence_ids: string[];
 }
 
@@ -121,6 +121,7 @@ export interface ChangeContextGap {
     | "unresolved_reference"
     | "dynamic_relationship"
     | "unsupported_coverage"
+    | "validation_unavailable"
     | "budget_truncated";
   message: string;
   target: string | null;
@@ -277,7 +278,7 @@ export function serializeChangeContext(
 }
 
 export function validateChangeContextGrounding(packet: ChangeContext): string[] {
-  const selected = new Set(packet.evidence.map((item) => item.id));
+  const selected = new Map(packet.evidence.map((item) => [item.id, item]));
   const errors: string[] = [];
   const factualCollections: Array<[string, readonly { evidence_ids: string[] }[]]> = [
     ["change_candidates", packet.change_candidates],
@@ -316,5 +317,13 @@ export function validateChangeContextGrounding(packet: ChangeContext): string[] 
     }
   };
   visit(packet, "packet");
+  for (const [index, edit] of packet.edit_locations.entries()) {
+    const compatible = edit.evidence_ids.some((id) => {
+      const evidence = selected.get(id);
+      return evidence !== undefined && evidence.file === edit.file &&
+        evidence.start_line <= edit.start_line && evidence.end_line >= edit.end_line;
+    });
+    if (!compatible) errors.push(`edit_locations.${index} has no evidence covering its source range.`);
+  }
   return errors;
 }

@@ -1,5 +1,9 @@
 import { rankSymbolSearch, symbolSearchTerms } from "../analysis/simplification.js";
-import { isPrimaryArchitectureSymbol } from "../analysis/scope.js";
+import {
+  isArchitecturalEntrypoint,
+  isPrimaryArchitectureSymbol,
+  symbolArchitecturalScope,
+} from "../analysis/scope.js";
 import type { Atlas, AtlasSymbol } from "../ir/models.js";
 import type { SearchResult } from "../storage/search.js";
 import type { ChangeTaskIntent } from "./intent.js";
@@ -10,11 +14,12 @@ export interface ContextRetrievalInput {
   changedSymbolIds: ReadonlySet<string>;
   prioritizeChangedSymbols: boolean;
   searchTextBySymbolId?: ReadonlyMap<string, string>;
+  canonicalNameBySymbolId?: ReadonlyMap<string, string>;
 }
 
 const EDIT_CANDIDATE_KINDS = new Set([
   "class", "configuration", "database_model", "database_table", "endpoint", "file", "function",
-  "interface", "method", "module", "test", "type",
+  "documentation", "interface", "method", "module", "test", "type",
 ]);
 const TEST_FILE = /(?:^|\/)(?:tests?|__tests__)(?:\/|$)|\.(?:spec|test)\.[^/]+$/iu;
 
@@ -28,6 +33,9 @@ function identifierOverlap(symbol: AtlasSymbol, intent: ChangeTaskIntent): numbe
 }
 
 function roleScore(symbol: AtlasSymbol, intent: ChangeTaskIntent): number {
+  if (intent.kind === "documentation") {
+    return symbolArchitecturalScope(symbol) === "documentation" || symbol.kind === "documentation" ? 300 : -250;
+  }
   if (intent.kind === "test_change") {
     return symbol.kind === "test" || /(?:^|\/)(?:tests?|__tests__)(?:\/|$)|\.(?:spec|test)\./iu.test(symbol.file ?? "")
       ? 260
@@ -62,10 +70,14 @@ export function rankChangeCandidates(
     .flatMap((domain) => domain.member_ids));
   return atlas.symbols.flatMap((symbol): RankedContextSymbol[] => {
     if (symbol.file === null || symbol.location === null || symbol.evidence_ids.length === 0) return [];
+    const symbolFile = symbol.file;
     const exact = exactReferences(symbol, intent);
     if (!EDIT_CANDIDATE_KINDS.has(symbol.kind) && exact.length === 0) return [];
     if (intent.kind !== "test_change" && (symbol.kind === "test" || TEST_FILE.test(symbol.file))) return [];
-    const symbolFile = symbol.file;
+    if (intent.kind !== "documentation" && symbolArchitecturalScope(symbol) === "documentation") return [];
+    if (intent.kind === "documentation" &&
+      symbolArchitecturalScope(symbol) !== "documentation" && symbol.kind !== "documentation" &&
+      !intent.explicit_files.some((file) => symbolFile === file || symbolFile.endsWith(`/${file}`))) return [];
     const reasons: string[] = [];
     const textScore = Math.max(0, rankSymbolSearch(
       symbol,
@@ -103,6 +115,28 @@ export function rankChangeCandidates(
     if (retrieval.prioritizeChangedSymbols && retrieval.changedSymbolIds.has(symbol.id)) {
       score += 1_200;
       reasons.push("changed symbol");
+    }
+    if (intent.terms.includes("mcp") && /(?:^|\/)mcp(?:\/|$)/u.test(symbolFile.toLocaleLowerCase())) {
+      score += 600;
+      reasons.push("MCP subsystem match");
+      if (isArchitecturalEntrypoint(symbol)) {
+        score += 900;
+        reasons.push("MCP entrypoint");
+      }
+    }
+    if (intent.terms.some((term) => ["index", "query", "retrieval", "search"].includes(term)) &&
+      /(?:find|index|query|search|retriev)/iu.test(`${symbol.name} ${symbol.qualified_name ?? ""}`)) {
+      score += 180;
+      reasons.push("retrieval role match");
+    }
+    const canonicalName = retrieval.canonicalNameBySymbolId?.get(symbol.id);
+    if (canonicalName !== undefined) {
+      const canonicalTerms = new Set(symbolSearchTerms(canonicalName));
+      const canonicalOverlap = intent.terms.filter((term) => canonicalTerms.has(term)).length;
+      if (canonicalOverlap > 0) {
+        score += canonicalOverlap * 300;
+        reasons.push(`canonical name: ${canonicalName}`);
+      }
     }
     const overlap = identifierOverlap(symbol, intent);
     if (overlap > 0) {

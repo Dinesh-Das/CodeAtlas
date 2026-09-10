@@ -36,6 +36,7 @@ export function createEvidenceId(input: {
 
 export class EvidenceExcerptReader {
   private readonly linesByFile = new Map<string, string[] | null>();
+  private readonly pendingLinesByFile = new Map<string, Promise<string[] | null>>();
 
   constructor(
     private readonly repositoryRoot: string,
@@ -43,24 +44,36 @@ export class EvidenceExcerptReader {
     private readonly maxBytes = 1_000,
   ) {}
 
-  async read(file: string, startLine: number, endLine: number): Promise<EvidenceExcerpt> {
-    let lines = this.linesByFile.get(file);
-    if (lines === undefined) {
-      const absolutePath = await resolveExistingPathInside(
-        this.repositoryRoot,
-        path.resolve(this.repositoryRoot, file),
-      );
-      if (absolutePath === null) {
-        this.linesByFile.set(file, null);
-        return { excerpt: null, status: "unavailable" };
-      }
-      try {
-        lines = (await readFile(absolutePath, "utf8")).split(/\r?\n/u);
-      } catch {
-        lines = null;
-      }
-      this.linesByFile.set(file, lines);
+  private async loadLines(file: string): Promise<string[] | null> {
+    const cached = this.linesByFile.get(file);
+    if (cached !== undefined || this.linesByFile.has(file)) return cached ?? null;
+    let pending = this.pendingLinesByFile.get(file);
+    if (pending === undefined) {
+      pending = (async () => {
+        const absolutePath = await resolveExistingPathInside(
+          this.repositoryRoot,
+          path.resolve(this.repositoryRoot, file),
+        );
+        if (absolutePath === null) return null;
+        try {
+          return (await readFile(absolutePath, "utf8")).split(/\r?\n/u);
+        } catch {
+          return null;
+        }
+      })();
+      this.pendingLinesByFile.set(file, pending);
     }
+    try {
+      const lines = await pending;
+      this.linesByFile.set(file, lines);
+      return lines;
+    } finally {
+      if (this.pendingLinesByFile.get(file) === pending) this.pendingLinesByFile.delete(file);
+    }
+  }
+
+  async read(file: string, startLine: number, endLine: number): Promise<EvidenceExcerpt> {
+    const lines = await this.loadLines(file);
     if (lines === null) return { excerpt: null, status: "unavailable" };
     const first = Math.max(0, startLine - 1);
     const last = Math.min(lines.length, Math.max(startLine, endLine), first + this.maxLines);

@@ -1,6 +1,12 @@
 import { openDatabase } from "./database.js";
 import { createEvidenceId } from "../ir/evidence.js";
-import type { AtlasControlFlow, AtlasSymbol } from "../ir/models.js";
+import type {
+  AtlasControlFlow,
+  AtlasEvidence,
+  AtlasFlow,
+  AtlasResolutionIssue,
+  AtlasSymbol,
+} from "../ir/models.js";
 import { ftsQueryFromText, searchNodeCandidates, type SearchResult } from "./search.js";
 import { performance } from "node:perf_hooks";
 
@@ -65,8 +71,17 @@ export interface QueryProjection {
 export interface QueryStore {
   searchSymbols(query: string, limit: number): SymbolCandidateProjection;
   getSymbols(ids: readonly string[], limit: number): BoundedProjection<AtlasSymbol>;
+  getSymbolsByFiles(files: readonly string[], limit: number): BoundedProjection<AtlasSymbol>;
+  getResolutionIssuesForSymbols(
+    symbolIds: readonly string[],
+    limit: number,
+  ): BoundedProjection<AtlasResolutionIssue>;
+  getResolutionIssueSummary(): { total: number; byReason: Record<string, number> };
+  getFlowsByEntrypoints(entrypointIds: readonly string[], limit: number): BoundedProjection<AtlasFlow>;
+  getEvidenceByFiles(files: readonly string[], limit: number): BoundedProjection<AtlasEvidence>;
   getSection<T>(section: string, limit: number, offset?: number): BoundedProjection<T>;
-  cacheControlFlow(flow: AtlasControlFlow): void;
+  getSectionItems<T>(section: string, ids: readonly string[], limit: number): BoundedProjection<T>;
+  cacheControlFlow(flow: AtlasControlFlow, evidence?: readonly AtlasEvidence[]): void;
   queryProjection(request: QueryProjectionRequest): QueryProjection;
   metrics(): QueryStoreMetrics;
 }
@@ -335,6 +350,121 @@ export class SqliteQueryStore implements QueryStore {
     }
   }
 
+  getSymbolsByFiles(files: readonly string[], limit: number): BoundedProjection<AtlasSymbol> {
+    const requested = Math.max(1, Math.min(10_000, limit));
+    const selectedFiles = [...new Set(files.map((file) => file.replaceAll("\\", "/")))];
+    if (selectedFiles.length === 0) return { items: [], truncated: false };
+    const database = openDatabase(this.databasePath, { readonly: true });
+    const startedAt = performance.now();
+    try {
+      const ids = database.prepare(
+        `SELECT id FROM nodes WHERE file_path IN (${placeholders(selectedFiles)}) ORDER BY id LIMIT ?`,
+      ).all(...selectedFiles, requested + 1) as Array<{ id: string }>;
+      const selectedIds = ids.map((row) => row.id);
+      const rows = selectedIds.length === 0 ? [] : database.prepare(
+        `SELECT item_id, payload_json FROM atlas_sections
+         WHERE section = 'symbols' AND item_id IN (${placeholders(selectedIds)})`,
+      ).all(...selectedIds) as Array<{ item_id: string; payload_json: string }>;
+      const values = new Map(rows.map((row) => [row.item_id, JSON.parse(row.payload_json) as AtlasSymbol]));
+      const items = selectedIds.flatMap((id) => values.get(id) ?? []);
+      this.record(startedAt, items);
+      return bounded(items, requested);
+    } finally {
+      database.close();
+    }
+  }
+
+  getResolutionIssuesForSymbols(
+    symbolIds: readonly string[],
+    limit: number,
+  ): BoundedProjection<AtlasResolutionIssue> {
+    const requested = Math.max(1, Math.min(10_000, limit));
+    const selectedIds = [...new Set(symbolIds)];
+    if (selectedIds.length === 0) return { items: [], truncated: false };
+    const database = openDatabase(this.databasePath, { readonly: true });
+    const startedAt = performance.now();
+    try {
+      const ids = database.prepare(
+        `SELECT id FROM resolution_issues
+         WHERE source_node_id IN (${placeholders(selectedIds)})
+         ORDER BY file_path, line, column_number LIMIT ?`,
+      ).all(...selectedIds, requested + 1) as Array<{ id: string }>;
+      const itemIds = ids.map((row) => row.id);
+      const rows = itemIds.length === 0 ? [] : database.prepare(
+        `SELECT item_id, payload_json FROM atlas_sections
+         WHERE section = 'resolution_issues' AND item_id IN (${placeholders(itemIds)})`,
+      ).all(...itemIds) as Array<{ item_id: string; payload_json: string }>;
+      const values = new Map(rows.map((row) => [row.item_id, JSON.parse(row.payload_json) as AtlasResolutionIssue]));
+      const items = itemIds.flatMap((id) => values.get(id) ?? []);
+      this.record(startedAt, items);
+      return bounded(items, requested);
+    } finally {
+      database.close();
+    }
+  }
+
+  getResolutionIssueSummary(): { total: number; byReason: Record<string, number> } {
+    const database = openDatabase(this.databasePath, { readonly: true });
+    const startedAt = performance.now();
+    try {
+      const rows = database.prepare(
+        "SELECT reason, COUNT(*) AS count FROM resolution_issues GROUP BY reason ORDER BY reason",
+      ).all() as Array<{ reason: string; count: number }>;
+      this.record(startedAt, rows);
+      return {
+        total: rows.reduce((sum, row) => sum + row.count, 0),
+        byReason: Object.fromEntries(rows.map((row) => [row.reason, row.count])),
+      };
+    } finally {
+      database.close();
+    }
+  }
+
+  getFlowsByEntrypoints(
+    entrypointIds: readonly string[],
+    limit: number,
+  ): BoundedProjection<AtlasFlow> {
+    const requested = Math.max(1, Math.min(10_000, limit));
+    const selectedIds = [...new Set(entrypointIds)];
+    if (selectedIds.length === 0) return { items: [], truncated: false };
+    const database = openDatabase(this.databasePath, { readonly: true });
+    const startedAt = performance.now();
+    try {
+      const rows = database.prepare(
+        `SELECT payload_json FROM atlas_sections
+         WHERE section = 'flows'
+           AND json_extract(payload_json, '$.entrypoint_id') IN (${placeholders(selectedIds)})
+         ORDER BY ordinal LIMIT ?`,
+      ).all(...selectedIds, requested + 1) as Array<{ payload_json: string }>;
+      const items = rows.map((row) => JSON.parse(row.payload_json) as AtlasFlow);
+      this.record(startedAt, items);
+      return bounded(items, requested);
+    } finally {
+      database.close();
+    }
+  }
+
+  getEvidenceByFiles(files: readonly string[], limit: number): BoundedProjection<AtlasEvidence> {
+    const requested = Math.max(1, Math.min(10_000, limit));
+    const selectedFiles = [...new Set(files.map((file) => file.replaceAll("\\", "/")))];
+    if (selectedFiles.length === 0) return { items: [], truncated: false };
+    const database = openDatabase(this.databasePath, { readonly: true });
+    const startedAt = performance.now();
+    try {
+      const rows = database.prepare(
+        `SELECT payload_json FROM atlas_sections
+         WHERE section = 'evidence'
+           AND json_extract(payload_json, '$.file') IN (${placeholders(selectedFiles)})
+         ORDER BY ordinal LIMIT ?`,
+      ).all(...selectedFiles, requested + 1) as Array<{ payload_json: string }>;
+      const items = rows.map((row) => JSON.parse(row.payload_json) as AtlasEvidence);
+      this.record(startedAt, items);
+      return bounded(items, requested);
+    } finally {
+      database.close();
+    }
+  }
+
   getSection<T>(section: string, limit: number, offset = 0): BoundedProjection<T> {
     const requested = Math.max(1, Math.min(10_000, limit));
     const safeOffset = Math.max(0, Math.floor(offset));
@@ -353,7 +483,32 @@ export class SqliteQueryStore implements QueryStore {
     }
   }
 
-  cacheControlFlow(flow: AtlasControlFlow): void {
+  getSectionItems<T>(section: string, ids: readonly string[], limit: number): BoundedProjection<T> {
+    const requested = Math.max(1, Math.min(10_000, limit));
+    const selectedIds = [...new Set(ids)].slice(0, requested + 1);
+    if (selectedIds.length === 0) return { items: [], truncated: false };
+    const database = openDatabase(this.databasePath, { readonly: true });
+    const startedAt = performance.now();
+    try {
+      const values = new Map<string, T>();
+      const chunkSize = 500;
+      for (let offset = 0; offset < selectedIds.length; offset += chunkSize) {
+        const chunk = selectedIds.slice(offset, offset + chunkSize);
+        const rows = database.prepare(
+          `SELECT item_id, payload_json FROM atlas_sections
+           WHERE section = ? AND item_id IN (${placeholders(chunk)})`,
+        ).all(section, ...chunk) as Array<{ item_id: string; payload_json: string }>;
+        for (const row of rows) values.set(row.item_id, JSON.parse(row.payload_json) as T);
+      }
+      const items = selectedIds.flatMap((id) => values.get(id) ?? []);
+      this.record(startedAt, items);
+      return bounded(items, requested);
+    } finally {
+      database.close();
+    }
+  }
+
+  cacheControlFlow(flow: AtlasControlFlow, evidence: readonly AtlasEvidence[] = []): void {
     const database = openDatabase(this.databasePath);
     try {
       database.transaction(() => {
@@ -364,6 +519,20 @@ export class SqliteQueryStore implements QueryStore {
              ?, ?)
            ON CONFLICT(section, item_id) DO UPDATE SET payload_json = excluded.payload_json`,
         ).run(flow.id, JSON.stringify(flow));
+        const insertEvidence = database.prepare(
+          `INSERT INTO atlas_sections(section, ordinal, item_id, payload_json)
+           VALUES ('evidence',
+             COALESCE((SELECT MAX(ordinal) + 1 FROM atlas_sections WHERE section = 'evidence'), 0),
+             ?, ?)
+           ON CONFLICT(section, item_id) DO UPDATE SET payload_json = excluded.payload_json`,
+        );
+        for (const item of evidence) {
+          insertEvidence.run(item.id, JSON.stringify({
+            ...item,
+            excerpt: null,
+            excerpt_status: "unavailable",
+          }));
+        }
         const metadata = database.prepare("SELECT payload_json FROM atlas_metadata WHERE id = 1").get() as
           | { payload_json: string }
           | undefined;
@@ -373,6 +542,9 @@ export class SqliteQueryStore implements QueryStore {
           };
           manifest.section_counts.control_flows = (database.prepare(
             "SELECT COUNT(*) AS count FROM atlas_sections WHERE section = 'control_flows'",
+          ).get() as { count: number }).count;
+          manifest.section_counts.evidence = (database.prepare(
+            "SELECT COUNT(*) AS count FROM atlas_sections WHERE section = 'evidence'",
           ).get() as { count: number }).count;
           database.prepare(
             "UPDATE atlas_metadata SET payload_json = ?, updated_at = ? WHERE id = 1",

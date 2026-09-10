@@ -23,12 +23,12 @@ const APPROVED_VOCABULARY: ReadonlyArray<{ pattern: RegExp; terms: readonly stri
 ];
 
 function classify(task: string): ChangeIntentKind {
-  if (/\b(?:architecture|flow|explain|overview|onboard)\b/iu.test(task)) return "architecture";
-  if (/\b(?:bug|broken|crash|error|fail|fix|incorrect|regression)\b/iu.test(task)) return "bug_fix";
-  if (/\b(?:refactor|rename|extract|move|split|simplif)\b/iu.test(task)) return "refactoring";
-  if (/\b(?:test|spec|fixture|coverage)\b/iu.test(task)) return "test_change";
   if (/\b(?:document|documentation|readme|guide|adr)\b/iu.test(task)) return "documentation";
-  if (/\b(?:add|create|implement|introduce|support)\b/iu.test(task)) return "feature";
+  if (/\b(?:refactor|rename|extract|move|split|simplif)\b/iu.test(task)) return "refactoring";
+  if (/\b(?:bug|broken|crash|error|fail|fix|incorrect|regression)\b/iu.test(task)) return "bug_fix";
+  if (/\b(?:architecture|flow|explain|overview|onboard)\b/iu.test(task)) return "architecture";
+  if (/\b(?:add|change|create|implement|introduce|support|update)\b/iu.test(task)) return "feature";
+  if (/\b(?:tests?|specs?|fixtures?|coverage)\b/iu.test(task)) return "test_change";
   return "unknown";
 }
 
@@ -53,6 +53,7 @@ export function classifyChangeTask(task: string, atlas: Atlas): ChangeTaskIntent
   const explicitFiles = unique([
     ...quoted,
     ...task.matchAll(/(?:^|\s)((?:\.?\.?[/\\])?[\w@.+-]+(?:[/\\][\w@.+-]+)+\.[A-Za-z0-9]+)/gu),
+    ...task.matchAll(/\b([\w@.+-]+\.(?:[A-Za-z][A-Za-z0-9]*))\b/gu),
   ].flatMap((value) => typeof value === "string" ? [value] : [value[1] ?? ""]))
     .filter((value) => /[/\\]|\.[A-Za-z0-9]+$/u.test(value))
     .map((value) => value.replaceAll("\\", "/").replace(/^\.\//u, ""));
@@ -66,16 +67,21 @@ export function classifyChangeTask(task: string, atlas: Atlas): ChangeTaskIntent
     return domainTerms.length > 0 && domainTerms.every((term) => rawTerms.includes(term));
   });
   const exactNames = new Set(atlas.symbols.flatMap((symbol) => [
-    symbol.name.toLocaleLowerCase(),
-    symbol.qualified_name?.toLocaleLowerCase() ?? "",
+    symbol.name,
+    symbol.qualified_name ?? "",
   ]));
+  const foldedNames = new Set([...exactNames].map((value) => value.toLocaleLowerCase()));
   const exactIdentifierTokens = task.match(/\b[A-Za-z_$][A-Za-z0-9_$:-]*\b/gu) ?? [];
   const codeLikeIdentifiers = exactIdentifierTokens.filter((value) =>
     /[a-z0-9][A-Z]|[_$:]/u.test(value) || /^[A-Z][a-z]/u.test(value)
   );
-  const explicitSymbols = unique([...quoted, ...identifiers, ...codeLikeIdentifiers])
+  const explicitSymbols = unique([
+    ...quoted.filter((value) => foldedNames.has(value.toLocaleLowerCase())),
+    ...identifiers.filter((value) => exactNames.has(value)),
+    ...codeLikeIdentifiers.filter((value) => exactNames.has(value)),
+  ])
     .filter((value) => !explicitFiles.includes(value) && !explicitEndpoints.includes(value))
-    .filter((value) => exactNames.has(value.toLocaleLowerCase()));
+    .filter((value) => foldedNames.has(value.toLocaleLowerCase()));
   return {
     kind: classify(task),
     terms,

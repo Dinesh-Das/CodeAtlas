@@ -40,6 +40,14 @@ beforeAll(async () => {
     'export function mcpFindSymbolTest() { return createCodeAtlasServer("symbol"); }',
     "",
   ].join("\n"));
+  await repository.write("tests/fixtures/auth/repository.ts", [
+    "export function findUserRepository(): string { return 'fixture'; }",
+    "",
+  ].join("\n"));
+  await repository.write(
+    "README.md",
+    "This repository does not contain a quantum payroll blockchain reconciler.\n",
+  );
   await repository.git("add", ".");
   await repository.git("commit", "-m", "agent context fixture");
   await initializeRepository(repository.root);
@@ -86,6 +94,22 @@ describe("P0 agent context quality", () => {
     expect(packet.change_candidates[0]?.symbol.kind).not.toBe("variable");
   });
 
+  it("keeps the MCP registration boundary in the default agent budget", async () => {
+    const packet = await compileChangeContext(
+      "Add a new MCP query that explains how indexed retrieval becomes evidence-backed output",
+      repository.root,
+      { budget: 6_000, format: "json" },
+    );
+    expect(packet.change_candidates[0]?.symbol).toMatchObject({
+      name: "createCodeAtlasServer",
+      file: "src/mcp/server.ts",
+    });
+    expect(
+      packet.validation_commands.length > 0 ||
+      packet.gaps.some((gap) => gap.code === "validation_unavailable"),
+    ).toBe(true);
+  });
+
   it("keeps a source-backed target in a 3000-byte packet", async () => {
     const packet = await compileChangeContext(
       "Change findSymbolIr retrieval behavior",
@@ -105,6 +129,8 @@ describe("P0 agent context quality", () => {
     );
     expect(impact.verified_paths.length).toBeGreaterThan(0);
     expect(impact.relevant_tests.map((test) => test.symbol.file)).toContain("tests/mcp.test.ts");
+    expect(impact.relevant_tests.map((test) => test.symbol.file))
+      .not.toContain("tests/fixtures/auth/repository.ts");
 
     const unsupported = await compileChangeContext(
       "Change the quantum payroll blockchain reconciler",
