@@ -21,6 +21,25 @@ afterEach(async () => {
 });
 
 describe("gap-fix evidence and resilience", () => {
+  it("keeps derived taxonomy membership out of semantic relationship quality", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write(
+      "src/orders/service.ts",
+      "export function submitOrder(): boolean { return true; }\n",
+    );
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "relationship quality fixture");
+    await initializeRepository(repository.root);
+
+    const relationshipQuality = (await runDoctor(repository.root)).find(
+      (check) => check.name === "Relationship quality",
+    );
+    expect(relationshipQuality).toMatchObject({ ok: true, severity: "info" });
+    expect(relationshipQuality?.detail).toContain("inferred=0 (0.0%)");
+    expect(relationshipQuality?.detail).toContain("excludes=derived_taxonomy_membership");
+  });
+
   it("records callbacks, events, queues, DI, reflection, and generated code without guessing", async () => {
     const repository = await createTestRepository();
     repositories.push(repository);

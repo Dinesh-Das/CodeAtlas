@@ -82,6 +82,13 @@ describe("architecture quality gates", () => {
     expect(classifyArchitecturalScope("LICENSE")).toBe("documentation");
     expect(classifyArchitecturalScope(".gitignore")).toBe("configuration");
     expect(classifyArchitecturalScope("src/service.ts")).toBe("production");
+    expect(
+      classifyArchitecturalScope("complete/src/main/java/com/example/restservice/Greeting.java"),
+    ).toBe("production");
+    expect(
+      classifyArchitecturalScope("complete/src/test/java/com/example/restservice/GreetingTest.java"),
+    ).toBe("test");
+    expect(classifyArchitecturalScope("examples/java/com/example/App.java")).toBe("example");
     expect(isArchitecturalEntrypoint(symbol("createProgram", {
       name: "createProgram",
       file: "src/cli/index.ts",
