@@ -414,10 +414,12 @@ completed the Windows local run in 25.4 seconds.
 The contribution kit, starter issue form, monthly dogfood protocol, and controlled two-minute demo
 script are checked in. The tag release workflow verifies the npm artifact, downloads a checksummed
 official publisher, validates the manifest, publishes through GitHub OIDC, and confirms the exact
-registry version. Candidate repository reruns are recorded in `release-evidence.json`. Actual release
-execution, live hosted-host smoke runs, demo recording, the large-repository benchmark refresh, and
-the independently reviewed held-out provider run remain external operations; the codebase does not
-claim those actions have occurred.
+registry version. Candidate repository reruns are recorded in `release-evidence.json`. A fresh
+222,160-LOC freeCodeCamp benchmark records a 135-second cold index, 2.45 GiB peak RSS, 687.7 MiB
+database, 13.48 ms search p95, 90.14 ms impact p95, and 907.27 ms freshness p95, all within the
+stable budgets. Actual release execution, live hosted-host smoke runs, demo recording, and the
+independently reviewed held-out provider run remain external operations; the codebase does not claim
+those actions have occurred.
 
 ## Delivery order
 
