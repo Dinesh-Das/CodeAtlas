@@ -2,8 +2,17 @@ import { execFile as execFileCallback } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
 import { evaluationSuiteSchema, EVALUATION_HARNESS_VERSION } from "../dist/evaluation/models.js";
+import {
+  evaluationSuiteSha256,
+  providerAnswerSchema,
+  providerEvaluationPrompt,
+  providerVariantOrder,
+  scoreProviderAnswer,
+  transcriptSha256,
+} from "../dist/evaluation/provider.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -57,33 +66,6 @@ function normalizeFile(value) {
   return value.replaceAll("\\", "/").replace(/^\.\//u, "");
 }
 
-function evidenceRecall(task, files) {
-  if (task.answerability === "unanswerable") return files.length === 0 ? 1 : 0;
-  const actual = new Set(files.map(normalizeFile));
-  return Math.max(...task.acceptable_evidence.map((set) =>
-    set.files.filter((file) => actual.has(normalizeFile(file))).length / set.files.length
-  ));
-}
-
-function expectationPassed(task, answer) {
-  const expectations = task.expectations;
-  if (expectations === undefined) return true;
-  const text = `${answer.answer_text}\n${answer.concepts.join("\n")}`.toLowerCase();
-  const relationships = new Set(answer.relationship_types.map((item) => item.toUpperCase()));
-  const starts = new Set(answer.starting_files.map(normalizeFile));
-  return expectations.required_concepts.every((concept) => text.includes(concept.toLowerCase())) &&
-    expectations.required_relationship_types.every((type) => relationships.has(type.toUpperCase())) &&
-    (expectations.allowed_starting_files.length === 0 ||
-      expectations.allowed_starting_files.some((file) => starts.has(normalizeFile(file)))) &&
-    expectations.forbidden_distractors.every((value) => !text.includes(value.toLowerCase()));
-}
-
-function scoredSuccess(task, answer) {
-  if (task.answerability === "unanswerable") return answer.abstained && answer.evidence_files.length === 0;
-  return !answer.abstained && evidenceRecall(task, answer.evidence_files) === 1 &&
-    expectationPassed(task, answer);
-}
-
 function visit(value, callback) {
   if (Array.isArray(value)) {
     for (const item of value) visit(item, callback);
@@ -130,23 +112,6 @@ async function createWorkspace(fixtureRoot, label) {
   return root;
 }
 
-function promptFor(task, variant, cliPath) {
-  const variantInstructions = variant === "codeatlas"
-    ? [
-        "Start with this repository-local CodeAtlas command and use its evidence before opening source files:",
-        `node ${JSON.stringify(cliPath)} context ${JSON.stringify(task.prompt)} . --budget ${task.context_token_budget} --format json`,
-        "You may use other read-only CodeAtlas commands when the first packet is insufficient.",
-      ].join("\n")
-    : "Do not run CodeAtlas. Use ordinary repository search and source-reading commands.";
-  return [
-    "Work read-only. Answer the repository question with source evidence.",
-    variantInstructions,
-    `Question: ${task.prompt}`,
-    `Expected behavior for grading: ${task.expected_behavior}`,
-    "Return only the requested structured result. List repository-relative evidence files, the files you inspected first, important concepts stated in the answer, and canonical relationship types you used. Abstain when the repository cannot support the answer.",
-  ].join("\n\n");
-}
-
 async function initializeCodeAtlas(cliPath, workspace) {
   await execFile(process.execPath, [cliPath, "init", workspace], {
     cwd: workspace,
@@ -157,7 +122,6 @@ async function initializeCodeAtlas(cliPath, workspace) {
 }
 
 async function runCodex({ workspace, prompt, model, schemaPath, answerPath }) {
-  const startedAt = performance.now();
   const executable = process.platform === "win32" ? "codex.cmd" : "codex";
   const { stdout } = await execFile(executable, [
     "exec",
@@ -178,7 +142,7 @@ async function runCodex({ workspace, prompt, model, schemaPath, answerPath }) {
     maxBuffer: 50 * 1024 * 1024,
     timeout: 15 * 60_000,
   });
-  return { stdout, durationMs: performance.now() - startedAt };
+  return { stdout };
 }
 
 const options = optionsFrom(process.argv.slice(2));
@@ -212,6 +176,7 @@ if (options.has("--dry-run")) {
     provider,
     model,
     model_version: modelVersion,
+    suite_sha256: evaluationSuiteSha256(suite),
     tasks: tasks.length,
     repeats,
     expected_observations: expectedRuns,
@@ -222,35 +187,74 @@ if (options.has("--dry-run")) {
 }
 
 await mkdir(outputDirectory, { recursive: true });
+const transcriptDirectory = path.join(outputDirectory, "transcripts");
+await mkdir(transcriptDirectory, { recursive: true });
 const observations = [];
+const transcriptEntries = [];
+const runId = `${safeId(suite.id)}-${new Date().toISOString().replace(/[:.]/gu, "-").toLowerCase()}`;
+const run = {
+  schema_version: 1,
+  evaluator_version: EVALUATION_HARNESS_VERSION,
+  id: runId,
+  suite_id: suite.id,
+  suite_sha256: evaluationSuiteSha256(suite),
+  created_at: new Date().toISOString(),
+  model: { provider: "openai-codex", id: model, version: modelVersion },
+  harness: { id: "codeatlas-provider-runner", version: "1.1.0" },
+  cache_state: "cold",
+  repeats,
+  variants: ["native", "codeatlas"],
+};
+const runPath = path.join(outputDirectory, "run.json");
+const observationsPath = path.join(outputDirectory, "observations.jsonl");
+const transcriptManifestPath = path.join(transcriptDirectory, "manifest.json");
+await writeFile(runPath, `${JSON.stringify(run, null, 2)}\n`, "utf8");
 let completed = 0;
 try {
-  for (const task of tasks) {
+  for (const [taskIndex, task] of tasks.entries()) {
     const repository = repositories.get(task.repository_id);
     if (repository === undefined) throw new Error(`Unknown repository ${task.repository_id}.`);
     const fixtureRoot = path.resolve(workspaceRoot, ...repository.fixture_root.split("/"));
     for (let repeat = 1; repeat <= repeats; repeat += 1) {
-      for (const variant of ["native", "codeatlas"]) {
+      for (const variant of providerVariantOrder(taskIndex, repeat)) {
         const label = `${task.id}-${variant}-${repeat}`;
         const workspace = await createWorkspace(fixtureRoot, label);
         const answerPath = path.join(temporaryRoot, `${safeId(label)}.json`);
         try {
+          const startedAt = performance.now();
           if (variant === "codeatlas") await initializeCodeAtlas(cliPath, workspace);
-          const run = await runCodex({
+          const prompt = providerEvaluationPrompt(task, variant, cliPath);
+          const providerResult = await runCodex({
             workspace,
-            prompt: promptFor(task, variant, cliPath),
+            prompt,
             model,
             schemaPath,
             answerPath,
           });
-          const answer = JSON.parse(await readFile(answerPath, "utf8"));
-          const usage = eventMetrics(run.stdout);
+          const durationMs = performance.now() - startedAt;
+          const transcriptFile = `${safeId(label)}.jsonl`;
+          await writeFile(
+            path.join(transcriptDirectory, transcriptFile),
+            providerResult.stdout,
+            "utf8",
+          );
+          transcriptEntries.push({
+            task_id: task.id,
+            variant,
+            repeat,
+            file: `transcripts/${transcriptFile}`,
+            sha256: transcriptSha256(providerResult.stdout),
+            bytes: Buffer.byteLength(providerResult.stdout, "utf8"),
+            prompt_sha256: transcriptSha256(prompt),
+          });
+          const answer = providerAnswerSchema.parse(JSON.parse(await readFile(answerPath, "utf8")));
+          const usage = eventMetrics(providerResult.stdout);
           observations.push({
             schema_version: 1,
             task_id: task.id,
             variant,
             repeat,
-            success: scoredSuccess(task, answer),
+            success: scoreProviderAnswer(task, answer),
             abstained: answer.abstained,
             evidence_files: answer.evidence_files.map(normalizeFile),
             answer_text: answer.answer_text,
@@ -261,7 +265,7 @@ try {
               context_tokens: usage.inputTokens,
               input_tokens: usage.inputTokens,
               output_tokens: usage.outputTokens,
-              duration_ms: Number(run.durationMs.toFixed(3)),
+              duration_ms: Number(durationMs.toFixed(3)),
               tool_calls: usage.toolCalls,
               cost_usd: null,
             },
@@ -286,21 +290,16 @@ try {
   }
 }
 
-const runId = `${safeId(suite.id)}-${new Date().toISOString().replace(/[:.]/gu, "-").toLowerCase()}`;
-const run = {
-  schema_version: 1,
-  evaluator_version: EVALUATION_HARNESS_VERSION,
-  id: runId,
-  suite_id: suite.id,
-  created_at: new Date().toISOString(),
-  model: { provider: "openai-codex", id: model, version: modelVersion },
-  harness: { id: "codeatlas-provider-runner", version: "1.0.0" },
-  cache_state: "cold",
-  repeats,
-  variants: ["native", "codeatlas"],
-};
-const runPath = path.join(outputDirectory, "run.json");
-const observationsPath = path.join(outputDirectory, "observations.jsonl");
 await writeFile(runPath, `${JSON.stringify(run, null, 2)}\n`, "utf8");
 await writeFile(observationsPath, `${observations.map((item) => JSON.stringify(item)).join("\n")}\n`, "utf8");
-console.log(JSON.stringify({ run: runPath, observations: observationsPath, count: observations.length }, null, 2));
+await writeFile(transcriptManifestPath, `${JSON.stringify({
+  schema_version: 1,
+  run_id: runId,
+  entries: transcriptEntries,
+}, null, 2)}\n`, "utf8");
+console.log(JSON.stringify({
+  run: runPath,
+  observations: observationsPath,
+  transcript_manifest: transcriptManifestPath,
+  count: observations.length,
+}, null, 2));

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const EVALUATION_SCHEMA_VERSION = 1 as const;
-export const EVALUATION_HARNESS_VERSION = "1.2.0";
+export const EVALUATION_HARNESS_VERSION = "1.3.0";
 
 export const evaluationVariantSchema = z.enum(["native", "codeatlas"]);
 export const evaluationTaskCategorySchema = z.enum([
@@ -127,6 +127,7 @@ export const evaluationRunSchema = z.object({
   evaluator_version: z.literal(EVALUATION_HARNESS_VERSION),
   id: z.string().regex(/^[a-z0-9][a-z0-9._-]{2,119}$/u),
   suite_id: z.string().min(1),
+  suite_sha256: z.string().regex(/^[0-9a-f]{64}$/u),
   created_at: z.string().datetime({ offset: true }),
   model: exactVersionSchema,
   harness: z.object({
