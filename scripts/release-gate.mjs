@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { validateStableReleaseEvidence } from "../dist/release/evidence.js";
+import { validateReleaseArtifact, validateStableReleaseEvidence } from "../dist/release/evidence.js";
 import { createPackageFingerprint } from "./package-fingerprint.mjs";
 
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
@@ -41,12 +41,17 @@ for (const [name, workflow] of [
 }
 
 const packageFingerprint = await createPackageFingerprint(process.cwd());
-const stableEvidence = validateStableReleaseEvidence(version, evidence, {
+const expectedArtifact = {
   codeAtlasVersion: version,
   ...packageFingerprint,
-});
+};
+const stableEvidence = validateStableReleaseEvidence(version, evidence, expectedArtifact);
 const stableRequested = process.argv.includes("--stable") || !version.includes("-");
-if (stableRequested && !stableEvidence.ready) errors.push(...stableEvidence.errors);
+if (stableRequested) {
+  errors.push(...stableEvidence.errors);
+} else {
+  errors.push(...validateReleaseArtifact(version, evidence.releaseArtifact, expectedArtifact));
+}
 
 if (errors.length > 0) {
   console.error(`Release gate failed:\n- ${errors.join("\n- ")}`);
@@ -55,6 +60,7 @@ if (errors.length > 0) {
   console.log(`Stable evidence ready: ${stableEvidence.repositoryCount} independent repositories.`);
 } else {
   console.log(
-    `Prerelease gate passed. Stable evidence remains incomplete (${stableEvidence.repositoryCount}/10 repositories).`,
+    `Prerelease gate passed. Stable evidence remains incomplete (${stableEvidence.repositoryCount}/10 repositories).\n` +
+    `Stable release blockers:\n- ${stableEvidence.errors.join("\n- ")}`,
   );
 }

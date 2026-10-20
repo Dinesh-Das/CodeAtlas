@@ -17,14 +17,23 @@ owned by an unrelated project. The installed executable is still `codeatlas`.
 
 ## Release checklist
 
-1. Update `package.json`, `package-lock.json`, `src/version.ts`, and `CHANGELOG.md` to the same
-   semantic version.
-2. Run `npm ci` followed by `npm run release:check`. For a stable version, populate
+1. Keep `package.json`, `package-lock.json`, `src/version.ts`, `server.json`, and
+   `compatibility.json` synchronized, and add the dated semantic version to `CHANGELOG.md`.
+2. Run `npm ci` followed by `npm run release:check`. Every release, including a prerelease,
+   must bind `releaseArtifact` to the current package version, tarball SHA-256, and file count.
+   After the final build and all consumer-facing edits, compute that identity with
+   `node --input-type=module -e "import('./scripts/package-fingerprint.mjs').then(async m => console.log(await m.createPackageFingerprint(process.cwd())))"`
+   and copy the result into `release-evidence.json` without changing historical repository records.
+   The gate rejects artifact drift before publishing; the registry artifact is checked again afterward.
+   For a stable version, populate
    `release-evidence.json` and run `npm run stable:check`; the stable gate requires at least ten
    independent repositories, all supported operating systems and languages, clean install/index/
    overview/agent-question paths, relationship-quality thresholds, a benchmark less than 90 days
-   old, and the large-repository budget. It also packs the current tree and verifies that the exact
-   tarball SHA-256 and file count match `releaseArtifact` in the evidence manifest.
+   old, and the large-repository budget. A paired held-out provider evaluation must cover at least
+   20 tasks with three repeats per variant, at least 90% required-file recall, at least 20% context
+   token reduction, no more than 2% task-success regression, and independent review. A development
+   suite or harness dry run does not satisfy that requirement. It also packs the current tree and
+   verifies the artifact identity.
    Generate each repository record from a clean committed checkout with
    `npm run validate:repository -- --repository /absolute/path --id UNIQUE_AUDIT_ID`, then review
    and append its JSON output to `independentRepositories`. The validator packs the current
@@ -62,6 +71,17 @@ uses pinned action commits. The package smoke test installs the exact npm tarbal
 Git repository, invokes the installed binary, initializes CodeAtlas, and verifies synchronized status.
 Prerelease versions publish under their prerelease identifier (`beta`, `rc`, and so on) rather
 than npm's `latest` dist-tag. Stable versions publish to `latest`.
+
+## Rollback
+
+Retain the previous known-good package version and dist-tag before publishing. If installation,
+indexing, evidence integrity, or MCP queries regress, restore the affected npm dist-tag to that
+version with `npm dist-tag add @dinesh-das/codeatlas@<previous-version> <dist-tag>` and verify a clean
+installation and the critical CLI/MCP workflows. Existing consumers can explicitly install the
+previous version with `npm install --global @dinesh-das/codeatlas@<previous-version>`.
+
+Moving a dist-tag does not replace versions already installed. Publish a corrected version after
+the regression has a test and passes the release checks; never overwrite or reuse an npm version.
 
 Before tagging, the latest push CI must show every Ubuntu/macOS/Windows and Node 22.12/24 check as
 green. Never treat the downstream package job being skipped as an independent defect: it is

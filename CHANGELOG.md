@@ -22,12 +22,20 @@ All notable changes follow semantic versioning.
 
 ### Fixed
 
+- Reject prerelease artifact checksum, version, and file-count drift before publishing, using the
+  same artifact identity checks as stable releases.
 - Preserved distinct evidence identities for overlapping source ranges and now verify that retained
   evidence covers each edit location's full range.
 - Resolved bare root filenames and documentation intent correctly, prevented prose capitalization
   from becoming accidental symbol references, and connected the review prompt to a valid current
   change resource with enforced fingerprint freshness.
 - Shared in-flight source reads so concurrent evidence hydration does not reopen the same file.
+
+### Security
+
+- Updated the MCP SDK to 1.32.1 and refreshed the vulnerable `fast-uri`, `hono`, `ip-address`,
+  `proxy-addr`, and `source-map-js` lockfile entries; the dependency audit reports no known
+  vulnerabilities as of 2026-10-21.
 
 ## 0.11.0-beta.1 - 2026-09-09
 
