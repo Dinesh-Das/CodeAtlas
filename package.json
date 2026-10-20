@@ -49,7 +49,7 @@
     "adapter:check": "node scripts/validate-adapter-fixture.mjs examples/adapter-kit/expected.json examples/adapter-kit/actual.json",
     "release:gate": "node scripts/release-gate.mjs",
     "validate:repository": "npm run build && node scripts/validate-release-repository.mjs",
-    "release:check": "npm run check && npm run distribution:check && npm run package:smoke && npm run release:gate",
+    "release:check": "npm audit --audit-level=high && npm run check && npm run distribution:check && npm run package:smoke && npm run release:gate",
     "stable:check": "npm run release:check && node scripts/release-gate.mjs --stable"
   },
   "engines": {
@@ -84,7 +84,7 @@
   },
   "license": "Apache-2.0",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "better-sqlite3": "12.8.0",
     "commander": "15.0.0",
     "ignore": "7.0.6",
