@@ -161,4 +161,47 @@ describe("stable release evidence", () => {
       ]),
     );
   });
+
+  it("requires both benchmark and held-out provider evidence", () => {
+    const evidence = validEvidence();
+    evidence.largeRepositoryBenchmark = null;
+    evidence.providerEvaluation = null;
+    expect(validate("1.0.0", evidence).errors).toEqual(expect.arrayContaining([
+      "A large-repository benchmark is required.",
+      "A paired held-out provider evaluation is required.",
+    ]));
+  });
+
+  it("blocks stale, incomplete provider experiments and failed outcome budgets", () => {
+    const evidence = validEvidence();
+    Object.assign(evidence.providerEvaluation!, {
+      validatedAt: "2020-01-01T00:00:00.000Z",
+      codeAtlasVersion: "2.0.0",
+      taskCount: 19,
+      observationCount: 1,
+      contextTokenReduction: 0.19,
+      taskSuccessRegression: 0.03,
+      requiredFileRecall: 0.89,
+    });
+    expect(validate("1.0.0", evidence).errors).toEqual(expect.arrayContaining([
+      expect.stringContaining("Provider evaluation is outside"),
+      expect.stringContaining("Provider evaluation used 2.0.0"),
+      expect.stringContaining("Provider evaluation task minimum failed"),
+      expect.stringContaining("Provider evaluation observations are incomplete"),
+      expect.stringContaining("Provider context-token reduction failed"),
+      expect.stringContaining("Provider task-success regression failed"),
+      expect.stringContaining("Provider required-file recall failed"),
+    ]));
+  });
+
+  it("fails closed on malformed evidence rather than counting its repository claims", () => {
+    const evidence = validEvidence();
+    expect(validateStableReleaseEvidence("1.0.0", {
+      ...evidence, schemaVersion: 3,
+    }, evidence.releaseArtifact)).toMatchObject({
+      ready: false,
+      repositoryCount: 0,
+      errors: [expect.stringContaining("schemaVersion")],
+    });
+  });
 });

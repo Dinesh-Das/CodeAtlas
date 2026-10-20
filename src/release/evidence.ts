@@ -110,6 +110,36 @@ function normalizedRepository(repository: string): string {
   return repository.toLowerCase().replace(/\.git$/u, "").replace(/\/$/u, "");
 }
 
+export function validateReleaseArtifact(
+  version: string,
+  input: unknown,
+  expectedArtifact: ReleaseArtifactIdentity,
+): string[] {
+  const parsed = releaseArtifactSchema.safeParse(input);
+  if (!parsed.success) {
+    return parsed.error.issues.map((issue) =>
+      `releaseArtifact.${issue.path.join(".")}: ${issue.message}`,
+    );
+  }
+  const artifact = parsed.data;
+  const errors: string[] = [];
+  if (artifact.codeAtlasVersion !== version) {
+    errors.push(`Release artifact reports ${artifact.codeAtlasVersion}, not ${version}.`);
+  }
+  if (expectedArtifact.codeAtlasVersion !== version) {
+    errors.push(`Produced package reports ${expectedArtifact.codeAtlasVersion}, not ${version}.`);
+  }
+  if (artifact.packageSha256 !== expectedArtifact.packageSha256) {
+    errors.push("Release artifact SHA-256 does not match the package produced by this source tree.");
+  }
+  if (artifact.packedFileCount !== expectedArtifact.packedFileCount) {
+    errors.push(
+      `Release artifact file count is ${artifact.packedFileCount}, not ${expectedArtifact.packedFileCount}.`,
+    );
+  }
+  return errors;
+}
+
 export function validateStableReleaseEvidence(
   version: string,
   input: unknown,
@@ -126,28 +156,10 @@ export function validateStableReleaseEvidence(
     };
   }
   const evidence = parsed.data;
-  const errors: string[] = [];
+  const errors = validateReleaseArtifact(version, evidence.releaseArtifact, expectedArtifact);
   if (evidence.targetVersion !== stableVersion(version)) {
     errors.push(
       `Evidence targets ${evidence.targetVersion}, but the release base version is ${stableVersion(version)}.`,
-    );
-  }
-  if (evidence.releaseArtifact.codeAtlasVersion !== version) {
-    errors.push(
-      `Release artifact reports ${evidence.releaseArtifact.codeAtlasVersion}, not ${version}.`,
-    );
-  }
-  if (expectedArtifact.codeAtlasVersion !== version) {
-    errors.push(
-      `Produced package reports ${expectedArtifact.codeAtlasVersion}, not ${version}.`,
-    );
-  }
-  if (evidence.releaseArtifact.packageSha256 !== expectedArtifact.packageSha256) {
-    errors.push("Release artifact SHA-256 does not match the package produced by this source tree.");
-  }
-  if (evidence.releaseArtifact.packedFileCount !== expectedArtifact.packedFileCount) {
-    errors.push(
-      `Release artifact file count is ${evidence.releaseArtifact.packedFileCount}, not ${expectedArtifact.packedFileCount}.`,
     );
   }
   const uniqueRepositories = new Set(
