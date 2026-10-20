@@ -39,15 +39,19 @@ it("blocks prerelease artifact drift while allowing incomplete stable evaluation
     const evidencePath = path.join(root, "release-evidence.json");
     await writeFile(evidencePath, JSON.stringify(evidence));
     await writeFile(path.join(root, "scripts/package-fingerprint.mjs"),
-      `export async function createPackageFingerprint() { return ${JSON.stringify({
-        packageSha256: "a".repeat(64), packedFileCount: 500,
-      })}; }`);
+      'export async function createPackageFingerprint() { return { packageSha256: "a".repeat(64), packedFileCount: 500 }; }');
     await mkdir(path.join(root, "dist/release"), { recursive: true });
     await writeFile(path.join(root, "dist/release/evidence.js"),
-      `export * from ${JSON.stringify(pathToFileURL(path.resolve("dist/release/evidence.js")).href)};`);
+      'const evidence = await import(process.env.CODEATLAS_TEST_EVIDENCE_MODULE);\n' +
+      'export const validateReleaseArtifact = evidence.validateReleaseArtifact;\n' +
+      'export const validateStableReleaseEvidence = evidence.validateStableReleaseEvidence;\n');
 
     const run = (...args: string[]) => execFile(process.execPath, ["scripts/release-gate.mjs", ...args], {
       cwd: root, windowsHide: true, timeout: 10_000,
+      env: {
+        ...process.env,
+        CODEATLAS_TEST_EVIDENCE_MODULE: pathToFileURL(path.resolve("dist/release/evidence.js")).href,
+      },
     });
     expect((await run()).stdout).toContain("Prerelease gate passed");
     await expect(run("--stable")).rejects.toMatchObject({

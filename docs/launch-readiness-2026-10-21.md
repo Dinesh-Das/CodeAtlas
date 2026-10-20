@@ -18,6 +18,10 @@ best competing tool or that it improves real agent task outcomes.
   and added direct and subprocess regression tests.
 - Included the high/critical dependency audit in `npm run release:check` itself, in addition to CI.
 - Documented artifact identity generation, held-out evaluation requirements, and npm rollback.
+- Fixed the subsequent PR CodeQL findings: replaced backtracking test-filename detection in the
+  canonical scope classifier, removed its duplicate planner regex, and removed interpolated
+  JavaScript from the release-gate test fixture. A timed subprocess regression demonstrates the
+  original classification timeout on repeated test markers.
 
 ## Verification
 
@@ -25,14 +29,14 @@ best competing tool or that it improves real agent task outcomes.
 | --- | --- |
 | Locked clean dependency installation | Passed in a disposable directory; SQLite and all six language parser bindings loaded |
 | Type checking and lint | Passed |
-| Full test and coverage run | 206 tests in 49 files passed; statements 84.03%, branches 71.32%, functions 84.42%, lines 86.59%; all existing thresholds passed |
+| Full test and coverage run | 214 tests in 50 files passed; statements 84.03%, branches 71.31%, functions 84.44%, lines 86.58%; all existing thresholds passed |
 | npm audit | Zero vulnerabilities across all reported severities |
 | Distribution validation | Six host configurations, ten pinned repository records, adapter precision/recall 1.00 |
 | Development evaluation validation | 30 tasks across six repositories; fixture/schema checks passed |
 | Provider harness dry run | Validated the 180-observation development run shape; no provider calls made |
-| Installed package smoke | CLI version, init, status, overview, ask, setup dry run, public API import, and local report passed; final first architecture answer in 11.4 seconds |
+| Installed package smoke | CLI version, init, status, overview, ask, setup dry run, public API import, and local report passed; final first architecture answer in 14.9 seconds |
 | Generated viewer | Built the architecture fixture in filesystem mode and loaded the HTML in the in-app browser; initial screen rendered with no warning/error console entries |
-| Artifact identity and prerelease gate | Passed; 618 files, SHA-256 `f19c6d94cbc06cc238d53830f3fb721a66b97194eab48632f0ff59ccc5bc4ca2` |
+| Artifact identity and prerelease gate | Passed; 618 files, SHA-256 `8d3adffde815713c8aeda317566e87bafdecce4661bd374a256ab0768172fc2d` |
 | Stable gate | Exited 1 as expected, with only the missing paired held-out provider evaluation reported |
 
 The package smoke uses a disposable consumer and the exact local tarball. Its first-answer time

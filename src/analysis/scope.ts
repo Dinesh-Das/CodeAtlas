@@ -17,6 +17,18 @@ export type ArchitecturalScope = (typeof ARCHITECTURAL_SCOPES)[number];
 
 const SEGMENT = "(?:^|/)";
 
+function isTestFileName(baseName: string): boolean {
+  for (const marker of [".spec.", ".test.", ".spec-d.", ".test-d."]) {
+    const index = baseName.indexOf(marker);
+    if (index >= 0 && index + marker.length < baseName.length) return true;
+  }
+  const extensionIndex = baseName.lastIndexOf(".");
+  if (extensionIndex <= 0 || extensionIndex === baseName.length - 1) return false;
+  const stem = baseName.slice(0, extensionIndex);
+  return ["test", "tests", "spec"].some((prefix) => stem === prefix ||
+    ["-", "_", "."].some((separator) => stem.startsWith(prefix + separator)));
+}
+
 export function classifyArchitecturalScope(filePath: string | null): ArchitecturalScope {
   if (filePath === null || filePath.trim() === "") return "unknown";
   const normalized = filePath.replaceAll("\\", "/").toLocaleLowerCase();
@@ -43,8 +55,7 @@ export function classifyArchitecturalScope(filePath: string | null): Architectur
     return "example";
   }
   if (new RegExp(`${SEGMENT}(?:tests?|__tests__|specs?)(?:/|$)`, "u").test(normalized) ||
-      /\.(?:spec|test)(?:-d)?\.[^/]+$/u.test(normalized) ||
-      /^(?:tests?|spec)(?:[-_.].*)?\.[^/]+$/u.test(baseName)) {
+      isTestFileName(baseName)) {
     return "test";
   }
   if (new RegExp(`${SEGMENT}(?:dist|build|coverage|generated|__generated__|vendor|node_modules)(?:/|$)`, "u").test(normalized)) {
