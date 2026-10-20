@@ -55,7 +55,6 @@ export interface ChangeContextResources {
   v2Config?: CodeAtlasV2Config;
 }
 
-const TEST_PATTERN = /(?:^|\/)(?:tests?|__tests__)(?:\/|$)|\.(?:spec|test)\.[^/]+$/iu;
 const GENERIC_TASK_TERMS = new Set([
   "bug", "code", "feature", "fix", "implement", "improve", "issue", "problem", "refactor",
   "something", "thing", "work",
@@ -615,8 +614,7 @@ export function compileChangeContextFromAtlas(
     relationshipScore: number;
   }> => {
     const testScope = symbolArchitecturalScope(symbol);
-    const executableTestSymbol = testScope === "test" && TEST_PATTERN.test(symbol.file ?? "") &&
-      ["function", "method", "class"].includes(symbol.kind);
+    const executableTestSymbol = ["function", "method", "class"].includes(symbol.kind);
     if (testScope !== "test" || symbolRef(symbol) === null ||
       (symbol.kind !== "test" && !executableTestSymbol)) {
       return [];

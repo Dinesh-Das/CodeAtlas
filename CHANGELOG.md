@@ -33,6 +33,8 @@ All notable changes follow semantic versioning.
 
 ### Security
 
+- Replaced backtracking test-filename detection with bounded string checks and reused canonical
+  test scope when selecting executable tests.
 - Updated the MCP SDK to 1.32.1 and refreshed the vulnerable `fast-uri`, `hono`, `ip-address`,
   `proxy-addr`, and `source-map-js` lockfile entries; the dependency audit reports no known
   vulnerabilities as of 2026-10-21.
