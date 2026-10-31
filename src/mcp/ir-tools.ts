@@ -5,6 +5,8 @@ import { rankSymbolSearch } from "../analysis/simplification.js";
 import { loadConfig } from "../core/config.js";
 import { CodeAtlasError } from "../core/errors.js";
 import { compileChangeContextFromAtlas } from "../context/planner.js";
+import { COMPACT_CONTEXT_FORMAT, compactChangeContext, expandCompactContext, type CompactChangeContext } from "../context/compact.js";
+import type { ContextEvidenceMode } from "../context/packet.js";
 import { loadTaskAtlas } from "../context/query-atlas.js";
 import { workspacePaths } from "../core/workspace.js";
 import { compareSnapshots, loadSnapshot } from "../git/snapshots.js";
@@ -586,7 +588,10 @@ export async function repositoryOverviewIr(repositoryPath: string) {
   }, runtime);
 }
 
-export async function changeContextIr(repositoryPath: string, task: string, budget: number) {
+export async function changeContextIr(
+  repositoryPath: string, task: string, budget: number,
+  options: { format?: "json" | "compact"; evidenceMode?: ContextEvidenceMode } = {},
+) {
   const runtime = await loadQueryRuntime(repositoryPath);
   const v2Config = await loadV2Config(runtime.repositoryRoot);
   const metricsBefore = runtime.queryStore.metrics();
@@ -597,6 +602,7 @@ export async function changeContextIr(repositoryPath: string, task: string, budg
     queryStore: runtime.queryStore,
     task,
     config: v2Config,
+    includeExcerpts: options.evidenceMode !== "references",
   });
   runtime.responseContext.timingsMs.retrieval += elapsed(retrievalStartedAt);
   const projectionStartedAt = performance.now();
@@ -612,14 +618,16 @@ export async function changeContextIr(repositoryPath: string, task: string, budg
     task,
     {
       budget,
-      format: "json",
-      envelopeReserve: 1_400,
+      format: options.format ?? "json",
+      envelopeReserve: options.format === "compact" ? 1_800 : 1_400,
+      ...(options.evidenceMode === undefined ? {} : { evidenceMode: options.evidenceMode }),
     },
     { projection, queryStore: runtime.queryStore, v2Config },
   );
   runtime.responseContext.timingsMs.projection += elapsed(projectionStartedAt);
   recordStorageMetrics(runtime.responseContext, metricsBefore, runtime.queryStore.metrics());
-  return withRuntime(packet as unknown as Record<string, unknown>, runtime);
+  const result = options.format === "compact" ? compactChangeContext(packet) : packet;
+  return withRuntime(result as unknown as Record<string, unknown>, runtime);
 }
 
 export async function neighborhoodIr(
@@ -1046,6 +1054,11 @@ function coverageEnvelope(value: Record<string, unknown>): CoverageEnvelope {
       "depth_limit" in record || "result_limit" in record
     ) bounded = true;
     if (record.has_more === true || record.truncated === true) truncated = true;
+    if (record.budget !== null && typeof record.budget === "object") {
+      bounded = true;
+      if (typeof record.continuation === "string") truncated = true;
+    }
+    if (record.code === "budget_truncated") truncated = true;
     if (record.analysis_kind === "structured_ast_approximation") structuredControlFlow = true;
     if (Array.isArray(record.unsupported_constructs)) {
       for (const construct of record.unsupported_constructs) {
@@ -1058,6 +1071,7 @@ function coverageEnvelope(value: Record<string, unknown>): CoverageEnvelope {
 
   const limitations: string[] = [];
   if (truncated) limitations.push("The response is partial; follow pagination cursors or narrow the query.");
+  if (value.evidence_mode === "references") limitations.push("Source excerpts are deferred; fetch current evidence before making source-level claims.");
   if (structuredControlFlow) {
     limitations.push("Control flow is a structured AST approximation, not compiler-level path analysis.");
   }
@@ -1086,11 +1100,11 @@ function uncertaintyEnvelope(value: Record<string, unknown>): UncertaintyEnvelop
     const record = candidate as Record<string, unknown>;
     const identity = typeof record.id === "string" ? record.id : `anonymous:${anonymous++}`;
     if (record.fact_class === "INFERRED" || record.provenance_category === "inferred") inferred.add(identity);
-    if (record.reason === "unresolved_reference") unresolved.add(identity);
-    if (record.reason === "multi_candidate" || record.target_resolution === "ambiguous") ambiguous.add(identity);
+    if (record.reason === "unresolved_reference" || record.code === "unresolved_reference") unresolved.add(identity);
+    if (record.reason === "multi_candidate" || record.target_resolution === "ambiguous" || record.code === "ambiguous_target") ambiguous.add(identity);
     if (
       record.reason === "dynamic_relationship" || record.target_resolution === "dynamic" ||
-      record.provenance_category === "dynamic"
+      record.provenance_category === "dynamic" || record.code === "dynamic_relationship"
     ) dynamic.add(identity);
     if (record.execution_semantics === "conditional") conditional.add(identity);
     for (const child of Object.values(record)) visit(child);
@@ -1106,6 +1120,9 @@ function uncertaintyEnvelope(value: Record<string, unknown>): UncertaintyEnvelop
 }
 
 function responseEnvelope(value: Record<string, unknown>, context?: CanonicalResponseContext) {
+  const facts = value.format === COMPACT_CONTEXT_FORMAT
+    ? expandCompactContext(value as unknown as CompactChangeContext) as unknown as Record<string, unknown>
+    : value;
   return {
     schema_version: context?.schemaVersion ?? null,
     snapshot_ids: context?.snapshotIds ?? [],
@@ -1117,8 +1134,8 @@ function responseEnvelope(value: Record<string, unknown>, context?: CanonicalRes
       repository_content: "untrusted" as const,
       answer_policy: "evidence_only" as const,
     },
-    coverage: coverageEnvelope(value),
-    uncertainty: uncertaintyEnvelope(value),
+    coverage: coverageEnvelope(facts),
+    uncertainty: uncertaintyEnvelope(facts),
     performance: context === undefined ? null : {
       timings_ms: context.timingsMs,
       storage: context.storage,

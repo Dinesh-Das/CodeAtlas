@@ -1,6 +1,10 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { compileChangeContext } from "../../src/context/planner.js";
-import { serializeChangeContext } from "../../src/context/packet.js";
+import { serializeChangeContext, validateChangeContextGrounding } from "../../src/context/packet.js";
+import { expandCompactContext } from "../../src/context/compact.js";
+import { EvidenceExcerptReader } from "../../src/ir/evidence.js";
+import { changeContextIr, evidenceIr } from "../../src/mcp/ir-tools.js";
+import type { CompactChangeContext } from "../../src/context/compact.js";
 import { initializeRepository } from "../../src/cli/init.js";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
 
@@ -73,6 +77,79 @@ async function contextRepository(): Promise<TestRepository> {
 }
 
 describe("task-context compiler", () => {
+  it("does not hydrate source during warm reference-mode MCP retrieval and fetches current proof", async () => {
+    const repository = await contextRepository();
+    // Building the canonical graph needs source; measure disclosure after that required work.
+    await changeContextIr(repository.root, "Change `authenticate`", 8_000, {
+      format: "compact", evidenceMode: "references",
+    });
+    const reads = vi.spyOn(EvidenceExcerptReader.prototype, "read");
+    try {
+      const result = await changeContextIr(repository.root, "Change `authenticate`", 8_000, {
+        format: "compact", evidenceMode: "references",
+      });
+      expect(reads).not.toHaveBeenCalled();
+      const packet = expandCompactContext(result as unknown as CompactChangeContext);
+      const proof = packet.evidence.find((item) => item.file === "src/auth/service.ts")!;
+      expect(proof.deferred).toBe(true);
+      expect(proof.excerpt).toBeNull();
+      await repository.write("src/auth/service.ts", "export function authenticate(password: string): boolean { return password.length >= 12; }\n");
+      const freshPacket = expandCompactContext(await changeContextIr(repository.root, "Change `authenticate`", 8_000, {
+        format: "compact", evidenceMode: "references",
+      }) as unknown as CompactChangeContext);
+      expect(freshPacket.snapshot.fingerprint).not.toBe(packet.snapshot.fingerprint);
+      const currentProof = freshPacket.evidence.find((item) => item.file === proof.file)!;
+      expect(currentProof.file_content_hash).not.toBe(proof.file_content_hash);
+      reads.mockClear();
+      const source = await evidenceIr(repository.root, currentProof.id);
+      expect(reads).toHaveBeenCalled();
+      expect(JSON.stringify(source)).toContain("password.length >= 12");
+    } finally {
+      reads.mockRestore();
+    }
+  });
+
+  it("provides a bounded compact brief with named paths and explicitly deferred source", async () => {
+    const repository = await contextRepository();
+    const packet = await compileChangeContext(
+      "Change `authenticate` and identify its callers and affected tests",
+      repository.root,
+      { budget: 8_000, format: "compact", evidenceMode: "references" },
+    );
+    expect(packet.evidence_mode).toBe("references");
+    expect(packet.change_candidates[0]?.symbol.name).toBe("authenticate");
+    expect(packet.relevant_tests.map((test) => test.symbol.file)).toContain("tests/auth.test.ts");
+    expect(packet.evidence.length).toBeGreaterThan(0);
+    expect(packet.evidence.every((item) => item.deferred && item.excerpt === null)).toBe(true);
+    expect(packet.evidence.every((item) => "file_content_hash" in item)).toBe(true);
+    expect(validateChangeContextGrounding(packet)).toEqual([]);
+    expect(packet.verified_paths.length).toBeGreaterThan(0);
+    const namedIds = new Set([
+      ...packet.change_candidates.map((item) => item.symbol.id),
+      ...packet.relevant_tests.map((item) => item.symbol.id),
+      ...packet.affected_contracts.map((item) => item.symbol.id),
+      ...(packet.path_symbols ?? []).map((item) => item.id),
+    ]);
+    expect(packet.verified_paths.every((item) => item.symbol_ids.every((id) => namedIds.has(id)))).toBe(true);
+    const serialized = serializeChangeContext(packet, "compact");
+    expect(Buffer.byteLength(serialized)).toBe(packet.budget.used);
+    expect(packet.budget.used).toBeLessThanOrEqual(8_000);
+    expect(expandCompactContext(JSON.parse(serialized))).toEqual(packet);
+  });
+
+  it("keeps ambiguity and unsupported coverage visible in compact briefs", async () => {
+    const repository = await contextRepository();
+    const ambiguous = await compileChangeContext("Rename `duplicate`", repository.root, {
+      budget: 5_000, format: "compact", evidenceMode: "references",
+    });
+    expect(ambiguous.gaps.some((gap) => gap.code === "ambiguous_target")).toBe(true);
+    const unsupported = await compileChangeContext("Change the quantum payroll reconciler", repository.root, {
+      budget: 3_000, format: "compact", evidenceMode: "references",
+    });
+    expect(unsupported.change_candidates).toEqual([]);
+    expect(unsupported.gaps.some((gap) => gap.code === "unsupported_coverage")).toBe(true);
+  });
+
   it("returns a grounded, diverse implementation brief inside a conservative budget", async () => {
     const repository = await contextRepository();
     const packet = await compileChangeContext(

@@ -30,6 +30,8 @@ import {
   type ChangeContextContract,
   type ChangeContextFlow,
   type ChangeContextFormat,
+  type ContextEvidenceMode,
+  type ChangeContextPathSymbol,
   type ChangeContextGap,
   type ChangeContextInvariant,
   type ChangeContextPath,
@@ -47,6 +49,7 @@ export interface CompileChangeContextOptions {
   format?: ChangeContextFormat;
   envelopeReserve?: number;
   gitBase?: string;
+  evidenceMode?: ContextEvidenceMode;
 }
 
 export interface ChangeContextResources {
@@ -763,6 +766,7 @@ export function compileChangeContextFromAtlas(
       limitations,
     },
     content_trust: "untrusted_repository_content",
+    ...(options.evidenceMode === "references" ? { evidence_mode: "references" as const } : {}),
   }, {
     change_candidates: candidates,
     edit_locations: editLocations,
@@ -781,6 +785,14 @@ export function compileChangeContextFromAtlas(
     requested: Math.max(1, options.budget ?? 6_000),
     format: options.format ?? "json",
     envelopeReserve: Math.max(0, options.envelopeReserve ?? 0),
+    ...(options.format !== "compact" ? {} : {
+      pathSymbols: new Map(atlas.symbols.map((symbol): [string, ChangeContextPathSymbol] =>
+        [symbol.id, {
+          id: symbol.id, name: symbol.name, qualified_name: symbol.qualified_name,
+          file: symbol.file, location: symbol.location,
+        }]
+      )),
+    }),
   });
   const groundingErrors = validateChangeContextGrounding(packet);
   if (groundingErrors.length > 0) {

@@ -58,6 +58,19 @@ afterAll(async () => {
 });
 
 describe("P0 agent context quality", () => {
+  it("spends a compact brief on distinct implementation boundaries before repeated detail", async () => {
+    const packet = await compileChangeContext(
+      "Add a new MCP query that explains how indexed retrieval becomes evidence-backed output",
+      repository.root,
+      { budget: 6_000, format: "compact", evidenceMode: "references" },
+    );
+    const files = new Set(packet.change_candidates.map((candidate) => candidate.symbol.file));
+    expect(files.has("src/mcp/server.ts")).toBe(true);
+    expect(files.has("src/mcp/ir-tools.ts")).toBe(true);
+    expect(files.has("src/storage/query-store.ts")).toBe(true);
+    expect(packet.budget.used).toBeLessThanOrEqual(6_000);
+  });
+
   it("explains an MCP query as evidence-linked retrieval and response paths", async () => {
     const answer = await askRepository(
       "How does an MCP find_symbol request become an evidence-backed response?",

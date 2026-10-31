@@ -27,6 +27,18 @@ codeatlas overview
 codeatlas setup
 ```
 
+For a coding agent, request a compact brief and retrieve source progressively:
+
+```bash
+codeatlas context "Explain login and locate the password policy" --format compact --evidence references --budget 6000
+```
+
+Compact briefs share symbol records, stable IDs, file paths, and table headers while retaining
+selected facts and uncertainty. MCP agents can use `prepare_change` with `format: "compact"`
+and `evidence: "references"`, then fetch current proof with `get_evidence` before editing.
+See the [compact context guide](docs/compact-context.md) for the wire format and reproducible
+token measurements.
+
 `setup` configures a detected Codex, Claude Code, Cursor, or Antigravity client to start the local
 CodeAtlas MCP server.
 

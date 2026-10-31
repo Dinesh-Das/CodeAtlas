@@ -1,11 +1,11 @@
 import { CodeAtlasError } from "../core/errors.js";
 import { compileChangeContext } from "../context/planner.js";
-import { serializeChangeContext, type ChangeContextFormat } from "../context/packet.js";
+import { serializeChangeContext, type ChangeContextFormat, type ContextEvidenceMode } from "../context/packet.js";
 
 export async function createChangeContext(
   task: string | undefined,
   startPath = process.cwd(),
-  options: { budget: number; format: ChangeContextFormat; gitBase?: string },
+  options: { budget: number; format: ChangeContextFormat; gitBase?: string; evidenceMode?: ContextEvidenceMode },
 ): Promise<string> {
   if (task === undefined && options.gitBase === undefined) {
     throw new CodeAtlasError("A task or --diff base is required.", {
@@ -18,6 +18,7 @@ export async function createChangeContext(
   const packet = await compileChangeContext(effectiveTask, startPath, {
     budget: options.budget,
     format: options.format,
+    ...(options.evidenceMode === undefined ? {} : { evidenceMode: options.evidenceMode }),
     ...(options.gitBase === undefined ? {} : { gitBase: options.gitBase }),
   });
   return serializeChangeContext(packet, options.format);
