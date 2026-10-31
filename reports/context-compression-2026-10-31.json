@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "codeatlas_version": "0.11.0-beta.1",
-  "source_sha256": "a0529ae5803378d4b962e165a75970765eb6514164da5831f3d60dafbad7a168",
+  "source_sha256": "c41782d6ce5b868d3ed9b9fefddc8517d853020a383f82bcb74846360a651227",
   "source_hash_scope": "All files under src/, benchmark script, and package-lock.json; sorted paths and contents separated by NUL.",
   "suite_id": "codeatlas-development-v1",
   "suite_sha256": "ff5ccd5c97893330e5aa0ca4c446b94e72d2a5fadf9932dafa865026bc1af1dc",
@@ -19,15 +19,15 @@
   "interpretation": "Development-fixture context measurements. Identical-facts compression is lossless. Reference-mode recall measures discovery of evidence files, not source understanding, task success, provider billing, or superiority over another tool.",
   "identical_facts": {
     "json": {
-      "utf8_bytes": 644023,
-      "tokens": 253753
+      "utf8_bytes": 644320,
+      "tokens": 252789
     },
     "compact": {
-      "utf8_bytes": 341372,
-      "tokens": 121391
+      "utf8_bytes": 341116,
+      "tokens": 121270
     },
-    "byte_reduction_fraction": 0.46993818543747656,
-    "token_reduction_fraction": 0.5216174784140484
+    "byte_reduction_fraction": 0.4705798361062826,
+    "token_reduction_fraction": 0.5202718472718354
   },
   "bounded_context": {
     "byte_budget": 6000,
@@ -40,7 +40,7 @@
         "candidates": 27,
         "tests": 5,
         "paths": 46,
-        "median_tokens": 2079.5,
+        "median_tokens": 2076,
         "median_utf8_bytes": 5878.5
       },
       "json_references": {
@@ -51,7 +51,7 @@
         "candidates": 25,
         "tests": 5,
         "paths": 42,
-        "median_tokens": 2107,
+        "median_tokens": 2105,
         "median_utf8_bytes": 5868
       },
       "compact_references": {
@@ -61,9 +61,9 @@
         "evidence_tasks_complete": 14,
         "candidates": 71,
         "tests": 4,
-        "paths": 29,
-        "median_tokens": 1974.5,
-        "median_utf8_bytes": 5920
+        "paths": 30,
+        "median_tokens": 1967,
+        "median_utf8_bytes": 5921
       }
     }
   },
@@ -73,18 +73,18 @@
       "repository_id": "architecture-typescript",
       "identical_facts": {
         "json": {
-          "utf8_bytes": 56541,
-          "tokens": 23696
+          "utf8_bytes": 56547,
+          "tokens": 23779
         },
         "compact": {
-          "utf8_bytes": 23478,
-          "tokens": 8566
+          "utf8_bytes": 23485,
+          "tokens": 8572
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5889,
-          "tokens": 2062,
+          "tokens": 2008,
           "evidence_file_recall": 0,
           "candidate_count": 1,
           "test_count": 1,
@@ -95,7 +95,7 @@
         },
         "json_references": {
           "utf8_bytes": 5876,
-          "tokens": 2097,
+          "tokens": 2055,
           "evidence_file_recall": 0,
           "candidate_count": 1,
           "test_count": 1,
@@ -124,17 +124,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 37737,
-          "tokens": 15012
+          "tokens": 15141
         },
         "compact": {
           "utf8_bytes": 19131,
-          "tokens": 6988
+          "tokens": 7026
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5955,
-          "tokens": 2056,
+          "tokens": 2095,
           "evidence_file_recall": 0,
           "candidate_count": 1,
           "test_count": 1,
@@ -145,7 +145,7 @@
         },
         "json_references": {
           "utf8_bytes": 5798,
-          "tokens": 2014,
+          "tokens": 2063,
           "evidence_file_recall": 0,
           "candidate_count": 1,
           "test_count": 1,
@@ -155,8 +155,8 @@
           ]
         },
         "compact_references": {
-          "utf8_bytes": 5976,
-          "tokens": 1974,
+          "utf8_bytes": 5977,
+          "tokens": 1979,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 1,
@@ -172,18 +172,18 @@
       "repository_id": "architecture-typescript",
       "identical_facts": {
         "json": {
-          "utf8_bytes": 59826,
-          "tokens": 24881
+          "utf8_bytes": 59832,
+          "tokens": 24937
         },
         "compact": {
-          "utf8_bytes": 25782,
-          "tokens": 9408
+          "utf8_bytes": 25789,
+          "tokens": 9401
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5780,
-          "tokens": 2006,
+          "tokens": 1974,
           "evidence_file_recall": 0.3333333333333333,
           "candidate_count": 1,
           "test_count": 1,
@@ -194,7 +194,7 @@
         },
         "json_references": {
           "utf8_bytes": 5928,
-          "tokens": 2138,
+          "tokens": 2106,
           "evidence_file_recall": 0.3333333333333333,
           "candidate_count": 1,
           "test_count": 1,
@@ -205,7 +205,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5920,
-          "tokens": 2004,
+          "tokens": 1994,
           "evidence_file_recall": 0.6666666666666666,
           "candidate_count": 3,
           "test_count": 0,
@@ -221,18 +221,18 @@
       "repository_id": "architecture-typescript",
       "identical_facts": {
         "json": {
-          "utf8_bytes": 56587,
-          "tokens": 23709
+          "utf8_bytes": 56593,
+          "tokens": 23792
         },
         "compact": {
-          "utf8_bytes": 23517,
-          "tokens": 8579
+          "utf8_bytes": 23524,
+          "tokens": 8585
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5945,
-          "tokens": 2075,
+          "tokens": 2021,
           "evidence_file_recall": 0,
           "candidate_count": 1,
           "test_count": 1,
@@ -243,7 +243,7 @@
         },
         "json_references": {
           "utf8_bytes": 5932,
-          "tokens": 2110,
+          "tokens": 2068,
           "evidence_file_recall": 0,
           "candidate_count": 1,
           "test_count": 1,
@@ -255,7 +255,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5874,
-          "tokens": 2039,
+          "tokens": 2036,
           "evidence_file_recall": 0.5,
           "candidate_count": 2,
           "test_count": 1,
@@ -271,18 +271,18 @@
       "repository_id": "architecture-typescript",
       "identical_facts": {
         "json": {
-          "utf8_bytes": 40768,
-          "tokens": 16207
+          "utf8_bytes": 40774,
+          "tokens": 16189
         },
         "compact": {
-          "utf8_bytes": 20821,
-          "tokens": 7583
+          "utf8_bytes": 20827,
+          "tokens": 7609
         }
       },
       "bounded_context": {
         "json_inline": {
-          "utf8_bytes": 5936,
-          "tokens": 2135,
+          "utf8_bytes": 5940,
+          "tokens": 2097,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 1,
@@ -293,7 +293,7 @@
         },
         "json_references": {
           "utf8_bytes": 5979,
-          "tokens": 2139,
+          "tokens": 2113,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 1,
@@ -305,7 +305,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5887,
-          "tokens": 1984,
+          "tokens": 1968,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 1,
@@ -321,18 +321,18 @@
       "repository_id": "relationships-typescript",
       "identical_facts": {
         "json": {
-          "utf8_bytes": 26967,
-          "tokens": 10025
+          "utf8_bytes": 27241,
+          "tokens": 10283
         },
         "compact": {
-          "utf8_bytes": 16043,
-          "tokens": 5710
+          "utf8_bytes": 15760,
+          "tokens": 5612
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5882,
-          "tokens": 2106,
+          "tokens": 2133,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -343,7 +343,7 @@
         },
         "json_references": {
           "utf8_bytes": 5927,
-          "tokens": 2202,
+          "tokens": 2230,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -354,7 +354,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5990,
-          "tokens": 2058,
+          "tokens": 2083,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 0,
@@ -371,17 +371,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 25343,
-          "tokens": 9568
+          "tokens": 9663
         },
         "compact": {
           "utf8_bytes": 14442,
-          "tokens": 5110
+          "tokens": 5138
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5877,
-          "tokens": 2143,
+          "tokens": 2166,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -392,7 +392,7 @@
         },
         "json_references": {
           "utf8_bytes": 5811,
-          "tokens": 2169,
+          "tokens": 2200,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -403,7 +403,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5998,
-          "tokens": 2053,
+          "tokens": 2069,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 0,
@@ -421,17 +421,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 14554,
-          "tokens": 5299
+          "tokens": 5352
         },
         "compact": {
           "utf8_bytes": 9557,
-          "tokens": 3289
+          "tokens": 3314
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5797,
-          "tokens": 1990,
+          "tokens": 1987,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -443,7 +443,7 @@
         },
         "json_references": {
           "utf8_bytes": 5872,
-          "tokens": 2091,
+          "tokens": 2084,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -454,7 +454,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5890,
-          "tokens": 1917,
+          "tokens": 1912,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 0,
@@ -471,18 +471,18 @@
       "repository_id": "relationships-typescript",
       "identical_facts": {
         "json": {
-          "utf8_bytes": 26139,
-          "tokens": 9956
+          "utf8_bytes": 26138,
+          "tokens": 9982
         },
         "compact": {
-          "utf8_bytes": 14549,
-          "tokens": 5123
+          "utf8_bytes": 14548,
+          "tokens": 5115
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5947,
-          "tokens": 2161,
+          "tokens": 2189,
           "evidence_file_recall": null,
           "candidate_count": 1,
           "test_count": 0,
@@ -504,7 +504,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5818,
-          "tokens": 1927,
+          "tokens": 1943,
           "evidence_file_recall": null,
           "candidate_count": 3,
           "test_count": 0,
@@ -522,17 +522,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 13076,
-          "tokens": 4731
+          "tokens": 4811
         },
         "compact": {
           "utf8_bytes": 8843,
-          "tokens": 3057
+          "tokens": 3090
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5996,
-          "tokens": 2060,
+          "tokens": 2080,
           "evidence_file_recall": null,
           "candidate_count": 1,
           "test_count": 0,
@@ -543,7 +543,7 @@
         },
         "json_references": {
           "utf8_bytes": 5777,
-          "tokens": 2030,
+          "tokens": 2048,
           "evidence_file_recall": null,
           "candidate_count": 1,
           "test_count": 0,
@@ -554,7 +554,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5980,
-          "tokens": 1958,
+          "tokens": 1966,
           "evidence_file_recall": null,
           "candidate_count": 3,
           "test_count": 0,
@@ -571,17 +571,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 14760,
-          "tokens": 5431
+          "tokens": 5420
         },
         "compact": {
           "utf8_bytes": 9309,
-          "tokens": 3170
+          "tokens": 3177
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5991,
-          "tokens": 2150,
+          "tokens": 2178,
           "evidence_file_recall": 1,
           "candidate_count": 2,
           "test_count": 0,
@@ -592,7 +592,7 @@
         },
         "json_references": {
           "utf8_bytes": 5816,
-          "tokens": 2102,
+          "tokens": 2139,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -604,7 +604,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5844,
-          "tokens": 1924,
+          "tokens": 1934,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 0,
@@ -622,17 +622,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 10441,
-          "tokens": 3793
+          "tokens": 3755
         },
         "compact": {
           "utf8_bytes": 7272,
-          "tokens": 2501
+          "tokens": 2510
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5774,
-          "tokens": 2068,
+          "tokens": 2054,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -643,7 +643,7 @@
         },
         "json_references": {
           "utf8_bytes": 5974,
-          "tokens": 2121,
+          "tokens": 2120,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -655,7 +655,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5974,
-          "tokens": 1987,
+          "tokens": 1985,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 0,
@@ -672,17 +672,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 11906,
-          "tokens": 4342
+          "tokens": 4305
         },
         "compact": {
           "utf8_bytes": 7988,
-          "tokens": 2737
+          "tokens": 2747
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5807,
-          "tokens": 2114,
+          "tokens": 2103,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -693,7 +693,7 @@
         },
         "json_references": {
           "utf8_bytes": 5843,
-          "tokens": 2103,
+          "tokens": 2104,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -704,7 +704,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5850,
-          "tokens": 1904,
+          "tokens": 1906,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 0,
@@ -722,17 +722,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 5882,
-          "tokens": 2040
+          "tokens": 2072
         },
         "compact": {
           "utf8_bytes": 4730,
-          "tokens": 1510
+          "tokens": 1530
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5880,
-          "tokens": 2040,
+          "tokens": 2072,
           "evidence_file_recall": 0.5,
           "candidate_count": 2,
           "test_count": 0,
@@ -743,7 +743,7 @@
         },
         "json_references": {
           "utf8_bytes": 5838,
-          "tokens": 2048,
+          "tokens": 2082,
           "evidence_file_recall": 0.5,
           "candidate_count": 1,
           "test_count": 0,
@@ -755,7 +755,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5233,
-          "tokens": 1737,
+          "tokens": 1757,
           "evidence_file_recall": 0.5,
           "candidate_count": 2,
           "test_count": 0,
@@ -772,17 +772,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 10484,
-          "tokens": 3809
+          "tokens": 3771
         },
         "compact": {
           "utf8_bytes": 7315,
-          "tokens": 2517
+          "tokens": 2526
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5820,
-          "tokens": 2084,
+          "tokens": 2070,
           "evidence_file_recall": null,
           "candidate_count": 1,
           "test_count": 0,
@@ -793,7 +793,7 @@
         },
         "json_references": {
           "utf8_bytes": 5790,
-          "tokens": 2067,
+          "tokens": 2059,
           "evidence_file_recall": null,
           "candidate_count": 1,
           "test_count": 0,
@@ -804,7 +804,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5787,
-          "tokens": 1868,
+          "tokens": 1867,
           "evidence_file_recall": null,
           "candidate_count": 3,
           "test_count": 0,
@@ -822,17 +822,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 24506,
-          "tokens": 9703
+          "tokens": 9579
         },
         "compact": {
-          "utf8_bytes": 12799,
-          "tokens": 4697
+          "utf8_bytes": 12800,
+          "tokens": 4673
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5809,
-          "tokens": 2167,
+          "tokens": 2102,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -843,7 +843,7 @@
         },
         "json_references": {
           "utf8_bytes": 5911,
-          "tokens": 2181,
+          "tokens": 2125,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -854,7 +854,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5948,
-          "tokens": 1998,
+          "tokens": 1987,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 0,
@@ -871,17 +871,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 20884,
-          "tokens": 8212
+          "tokens": 8130
         },
         "compact": {
           "utf8_bytes": 11258,
-          "tokens": 4089
+          "tokens": 4076
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5938,
-          "tokens": 2092,
+          "tokens": 2139,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -892,7 +892,7 @@
         },
         "json_references": {
           "utf8_bytes": 5938,
-          "tokens": 2070,
+          "tokens": 2132,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -903,15 +903,14 @@
           ]
         },
         "compact_references": {
-          "utf8_bytes": 5997,
-          "tokens": 1975,
+          "utf8_bytes": 5922,
+          "tokens": 1960,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 0,
-          "path_count": 1,
+          "path_count": 2,
           "gaps": [
-            "validation_unavailable",
-            "budget_truncated"
+            "validation_unavailable"
           ]
         }
       }
@@ -922,17 +921,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 24531,
-          "tokens": 9710
+          "tokens": 9586
         },
         "compact": {
           "utf8_bytes": 12829,
-          "tokens": 4704
+          "tokens": 4680
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5862,
-          "tokens": 2174,
+          "tokens": 2109,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -943,7 +942,7 @@
         },
         "json_references": {
           "utf8_bytes": 5964,
-          "tokens": 2188,
+          "tokens": 2132,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -954,7 +953,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5989,
-          "tokens": 1980,
+          "tokens": 1972,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 0,
@@ -971,17 +970,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 24509,
-          "tokens": 9695
+          "tokens": 9579
         },
         "compact": {
           "utf8_bytes": 12807,
-          "tokens": 4694
+          "tokens": 4674
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5823,
-          "tokens": 2139,
+          "tokens": 2088,
           "evidence_file_recall": null,
           "candidate_count": 1,
           "test_count": 0,
@@ -992,7 +991,7 @@
         },
         "json_references": {
           "utf8_bytes": 5933,
-          "tokens": 2159,
+          "tokens": 2117,
           "evidence_file_recall": null,
           "candidate_count": 1,
           "test_count": 0,
@@ -1003,7 +1002,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5943,
-          "tokens": 1977,
+          "tokens": 1964,
           "evidence_file_recall": null,
           "candidate_count": 3,
           "test_count": 0,
@@ -1020,17 +1019,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 16097,
-          "tokens": 6228
+          "tokens": 6081
         },
         "compact": {
           "utf8_bytes": 9588,
-          "tokens": 3475
+          "tokens": 3458
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5840,
-          "tokens": 2114,
+          "tokens": 2054,
           "evidence_file_recall": null,
           "candidate_count": 1,
           "test_count": 0,
@@ -1041,7 +1040,7 @@
         },
         "json_references": {
           "utf8_bytes": 5972,
-          "tokens": 2182,
+          "tokens": 2128,
           "evidence_file_recall": null,
           "candidate_count": 1,
           "test_count": 0,
@@ -1052,7 +1051,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5936,
-          "tokens": 2015,
+          "tokens": 1998,
           "evidence_file_recall": null,
           "candidate_count": 2,
           "test_count": 0,
@@ -1069,17 +1068,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 23752,
-          "tokens": 9429
+          "tokens": 9195
         },
         "compact": {
           "utf8_bytes": 12498,
-          "tokens": 4484
+          "tokens": 4455
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5942,
-          "tokens": 2165,
+          "tokens": 2118,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -1090,7 +1089,7 @@
         },
         "json_references": {
           "utf8_bytes": 5922,
-          "tokens": 2176,
+          "tokens": 2133,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -1101,7 +1100,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5945,
-          "tokens": 1987,
+          "tokens": 1968,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 0,
@@ -1118,17 +1117,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 22277,
-          "tokens": 8962
+          "tokens": 8743
         },
         "compact": {
           "utf8_bytes": 11606,
-          "tokens": 4202
+          "tokens": 4179
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5979,
-          "tokens": 2139,
+          "tokens": 2094,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -1140,7 +1139,7 @@
         },
         "json_references": {
           "utf8_bytes": 5863,
-          "tokens": 2162,
+          "tokens": 2120,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -1151,7 +1150,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5978,
-          "tokens": 2017,
+          "tokens": 2005,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 0,
@@ -1168,17 +1167,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 22316,
-          "tokens": 8958
+          "tokens": 8739
         },
         "compact": {
           "utf8_bytes": 11659,
-          "tokens": 4202
+          "tokens": 4179
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5928,
-          "tokens": 2063,
+          "tokens": 2020,
           "evidence_file_recall": null,
           "candidate_count": 1,
           "test_count": 0,
@@ -1190,7 +1189,7 @@
         },
         "json_references": {
           "utf8_bytes": 5850,
-          "tokens": 2104,
+          "tokens": 2065,
           "evidence_file_recall": null,
           "candidate_count": 1,
           "test_count": 0,
@@ -1201,7 +1200,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5919,
-          "tokens": 1972,
+          "tokens": 1952,
           "evidence_file_recall": null,
           "candidate_count": 3,
           "test_count": 0,
@@ -1218,17 +1217,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 23748,
-          "tokens": 9441
+          "tokens": 9207
         },
         "compact": {
           "utf8_bytes": 12480,
-          "tokens": 4496
+          "tokens": 4467
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5884,
-          "tokens": 2159,
+          "tokens": 2112,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -1239,7 +1238,7 @@
         },
         "json_references": {
           "utf8_bytes": 5864,
-          "tokens": 2170,
+          "tokens": 2127,
           "evidence_file_recall": 1,
           "candidate_count": 1,
           "test_count": 0,
@@ -1250,7 +1249,7 @@
         },
         "compact_references": {
           "utf8_bytes": 5933,
-          "tokens": 1997,
+          "tokens": 1985,
           "evidence_file_recall": 1,
           "candidate_count": 3,
           "test_count": 0,
@@ -1267,17 +1266,17 @@
       "identical_facts": {
         "json": {
           "utf8_bytes": 22444,
-          "tokens": 8989
+          "tokens": 8771
         },
         "compact": {
           "utf8_bytes": 11773,
-          "tokens": 4233
+          "tokens": 4210
         }
       },
       "bounded_context": {
         "json_inline": {
           "utf8_bytes": 5946,
-          "tokens": 2065,
+          "tokens": 2022,
           "evidence_file_recall": null,
           "candidate_count": 1,
           "test_count": 0,
@@ -1289,7 +1288,7 @@
         },
         "json_references": {
           "utf8_bytes": 5906,
-          "tokens": 2116,
+          "tokens": 2077,
           "evidence_file_recall": null,
           "candidate_count": 1,
           "test_count": 0,
@@ -1299,8 +1298,8 @@
           ]
         },
         "compact_references": {
-          "utf8_bytes": 5920,
-          "tokens": 1959,
+          "utf8_bytes": 5995,
+          "tokens": 2006,
           "evidence_file_recall": null,
           "candidate_count": 3,
           "test_count": 0,

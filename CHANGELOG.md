@@ -43,6 +43,10 @@ All notable changes follow semantic versioning.
 
 ### Security
 
+- Updated Zod to 4.6.7 and Vitest/coverage to 4.1.12, and refreshed affected transitive
+  HTTP and Vite dependencies. The October 31, 2026 dependency audit reports no known
+  vulnerabilities, including the Zod collection-exhaustion and body-parser decompression
+  advisories that blocked the merge gate.
 - Replaced backtracking test-filename detection with bounded string checks and reused canonical
   test scope when selecting executable tests.
 - Updated the MCP SDK to 1.32.1 and refreshed the vulnerable `fast-uri`, `hono`, `ip-address`,

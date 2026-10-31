@@ -97,15 +97,15 @@
     "tree-sitter-rust": "0.23.1",
     "tree-sitter-typescript": "0.23.2",
     "typescript-compiler": "npm:typescript@5.9.2",
-    "zod": "4.4.3"
+    "zod": "4.6.7"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "26.3.0",
     "@types/picomatch": "4.0.3",
-    "@vitest/coverage-v8": "4.1.11",
+    "@vitest/coverage-v8": "4.1.12",
     "oxlint": "1.80.0",
     "typescript": "7.0.2",
-    "vitest": "4.1.11"
+    "vitest": "4.1.12"
   }
 }
