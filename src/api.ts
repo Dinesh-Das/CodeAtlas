@@ -54,7 +54,14 @@ export {
   validateChangeContextGrounding,
   type ChangeContext,
   type ChangeContextFormat,
+  type ContextEvidenceMode,
 } from "./context/packet.js";
+export {
+  COMPACT_CONTEXT_FORMAT,
+  compactChangeContext,
+  expandCompactContext,
+  type CompactChangeContext,
+} from "./context/compact.js";
 export {
   EVALUATION_HARNESS_VERSION,
   EVALUATION_SCHEMA_VERSION,

@@ -4,6 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
+import { expandCompactContext } from "../../src/context/compact.js";
 
 const execFile = promisify(execFileCallback);
 const repositories: TestRepository[] = [];
@@ -54,7 +55,11 @@ describe("compiled CLI", () => {
     });
     await expect(runCli("context", "Fix the bug", ".", "--format", "yaml")).rejects.toMatchObject({
       code: 1,
-      stderr: expect.stringContaining("context format must be markdown or json"),
+      stderr: expect.stringContaining("context format must be markdown, json, or compact"),
+    });
+    await expect(runCli("context", "Fix the bug", ".", "--evidence", "guess")).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("context evidence must be inline or references"),
     });
   });
 
@@ -89,6 +94,12 @@ describe("compiled CLI", () => {
       expect.objectContaining({ symbol: expect.objectContaining({ name: "ready" }) }),
     ]));
     expect(context.budget.used).toBeLessThanOrEqual(context.budget.requested);
+    const compactResult = await runCli("context", "Change `ready` behavior", repository.root,
+      "--format", "compact", "--evidence", "references", "--budget", "5000");
+    const compact = expandCompactContext(JSON.parse(compactResult.stdout));
+    expect(compact.change_candidates[0]?.symbol.name).toBe("ready");
+    expect(compact.evidence.every((item) => item.deferred && item.excerpt === null)).toBe(true);
+    expect(Buffer.byteLength(compactResult.stdout.trim())).toBeLessThanOrEqual(5_000);
 
     const statusResult = await runCli("status", repository.root, "--json");
     const status = JSON.parse(statusResult.stdout) as { synchronized: boolean; files: number };

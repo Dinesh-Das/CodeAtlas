@@ -5,12 +5,15 @@ import {
   type ChangeContext,
   type ChangeContextEvidence,
   type ChangeContextFormat,
+  type ContextEvidenceMode,
+  type ChangeContextPathSymbol,
 } from "./packet.js";
 
 export interface ContextBudgetInput {
   requested: number;
   format: ChangeContextFormat;
   envelopeReserve: number;
+  pathSymbols?: ReadonlyMap<string, ChangeContextPathSymbol>;
 }
 
 export function estimatedContextBytes(serialized: string): number {
@@ -29,7 +32,7 @@ function updateUsed(packet: ChangeContext): number {
   return packet.budget.used;
 }
 
-function contextEvidence(evidence: AtlasEvidence): ChangeContextEvidence {
+function contextEvidence(evidence: AtlasEvidence, mode?: ContextEvidenceMode): ChangeContextEvidence {
   return {
     id: evidence.id,
     file: evidence.file,
@@ -38,9 +41,14 @@ function contextEvidence(evidence: AtlasEvidence): ChangeContextEvidence {
     end_line: evidence.end_line,
     end_column: evidence.end_column,
     kind: evidence.kind,
-    excerpt: evidence.excerpt,
+    excerpt: mode === "references" ? null : evidence.excerpt,
     excerpt_status: evidence.excerpt_status,
     trust: "untrusted_repository_content",
+    ...(mode !== "references" ? {} : {
+      deferred: true as const,
+      file_content_hash: evidence.file_content_hash,
+      range_content_hash: evidence.range_content_hash,
+    }),
   };
 }
 
@@ -48,6 +56,7 @@ function canonicalizeEvidence(
   item: unknown,
   evidenceById: ReadonlyMap<string, AtlasEvidence>,
   selected: readonly ChangeContextEvidence[],
+  mode?: ContextEvidenceMode,
 ): { item: unknown; additions: ChangeContextEvidence[] } {
   const additions: ChangeContextEvidence[] = [];
   const value = structuredClone(item);
@@ -66,7 +75,7 @@ function canonicalizeEvidence(
         if (evidence === undefined) continue;
         const existing = [...selected, ...additions].find((selectedEvidence) => selectedEvidence.id === id);
         if (!canonicalIds.includes(id)) canonicalIds.push(id);
-        if (existing === undefined) additions.push(contextEvidence(evidence));
+        if (existing === undefined) additions.push(contextEvidence(evidence, mode));
       }
       record.evidence_ids = canonicalIds;
     }
@@ -86,16 +95,34 @@ function tryAdd<K extends keyof Pick<
   key: K,
   item: ChangeContext[K][number],
   evidenceById: ReadonlyMap<string, AtlasEvidence>,
+  pathSymbols?: ReadonlyMap<string, ChangeContextPathSymbol>,
 ): boolean {
   const collection = packet[key] as ChangeContext[K][number][];
-  const normalized = canonicalizeEvidence(item, evidenceById, packet.evidence);
+  const normalized = canonicalizeEvidence(item, evidenceById, packet.evidence, packet.evidence_mode);
   const additions = normalized.additions;
+  const previousPathSymbols = packet.path_symbols?.length ?? 0;
+  if (packet.path_symbols !== undefined && pathSymbols !== undefined &&
+      (key === "verified_paths" || key === "potential_paths" || key === "relevant_flows")) {
+    const known = new Set([
+      ...packet.path_symbols.map((symbol) => symbol.id),
+      ...packet.change_candidates.map((candidate) => candidate.symbol.id),
+      ...packet.relevant_tests.map((test) => test.symbol.id),
+      ...packet.affected_contracts.map((contract) => contract.symbol.id),
+    ]);
+    for (const id of (item as ChangeContext["verified_paths"][number]).symbol_ids) {
+      const symbol = pathSymbols.get(id);
+      if (symbol === undefined || known.has(id)) continue;
+      packet.path_symbols.push(symbol);
+      known.add(id);
+    }
+  }
   collection.push(normalized.item as ChangeContext[K][number]);
   packet.evidence.push(...additions);
   const used = updateUsed(packet);
   if (used <= packet.budget.requested) return true;
   collection.pop();
   packet.evidence.splice(packet.evidence.length - additions.length, additions.length);
+  packet.path_symbols?.splice(previousPathSymbols);
   updateUsed(packet);
   return false;
 }
@@ -126,6 +153,7 @@ export function fitChangeContextToBudget(
 ): ChangeContext {
   const packet: ChangeContext = {
     ...base,
+    ...(budget.format === "compact" ? { path_symbols: [] } : {}),
     change_candidates: [],
     edit_locations: [],
     verified_paths: [],
@@ -147,7 +175,9 @@ export function fitChangeContextToBudget(
       envelope_reserved: budget.envelopeReserve,
       format: budget.format,
     },
-    continuation: "Read candidate resource_links, then use trace between stable IDs and get_evidence for source proof.",
+    continuation: budget.format === "compact"
+      ? "Expand aliases, then read codeatlas://symbol/{id}, trace between full IDs, or use get_evidence for source proof."
+      : "Read candidate resource_links, then use trace between stable IDs and get_evidence for source proof.",
   };
   const evidenceById = new Map(evidence.map((item) => [item.id, item]));
   if (updateUsed(packet) > budget.requested) {
@@ -180,18 +210,23 @@ export function fitChangeContextToBudget(
       };
   const priorityChecklist = [editChecklist, commandChecklist]
     .filter((item): item is ChangeContext["verification_checklist"][number] => item !== undefined);
+  // A compact brief should establish the cross-file boundary before elaborating one candidate.
+  // Candidates are already diversified by file by the planner.
+  const compact = budget.format === "compact";
+  const initialCandidates = compact ? 2 : 1;
   const ordered: Array<[keyof typeof collections, readonly unknown[]]> = [
-    ["change_candidates", collections.change_candidates.slice(0, 1).map(compactCandidate)],
+    ["change_candidates", collections.change_candidates.slice(0, initialCandidates).map(compactCandidate)],
     ["edit_locations", collections.edit_locations.slice(0, 1)],
     ["validation_commands", collections.validation_commands.slice(0, 1)],
     ["gaps", priorityGaps],
     ["relevant_tests", collections.relevant_tests.slice(0, 1)],
+    ["change_candidates", compact ? collections.change_candidates.slice(2, 3).map(compactCandidate) : []],
     ["verification_checklist", priorityChecklist],
     ["verified_paths", collections.verified_paths.slice(0, 1)],
     ["edit_locations", collections.edit_locations.slice(1, 2)],
     ["validation_commands", collections.validation_commands.slice(1)],
     ["verified_paths", collections.verified_paths.slice(1, 2)],
-    ["change_candidates", collections.change_candidates.slice(1, 4).map(compactCandidate)],
+    ["change_candidates", collections.change_candidates.slice(compact ? 3 : 1, 4).map(compactCandidate)],
     ["affected_contracts", collections.affected_contracts],
     ["invariants", collections.invariants],
     ["constraints", collections.constraints],
@@ -207,7 +242,7 @@ export function fitChangeContextToBudget(
   ];
   for (const [key, items] of ordered) {
     for (const item of items) {
-      if (tryAdd(packet, key, item as never, evidenceById)) continue;
+      if (tryAdd(packet, key, item as never, evidenceById, budget.pathSymbols)) continue;
       if (key === "change_candidates") {
         const candidate = item as ChangeContext["change_candidates"][number];
         const compact = compactCandidate(candidate);

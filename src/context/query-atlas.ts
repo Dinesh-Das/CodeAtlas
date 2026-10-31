@@ -23,6 +23,7 @@ export interface TaskAtlasOptions {
   config?: CodeAtlasV2Config;
   maxSymbols?: number;
   maxRelationships?: number;
+  includeExcerpts?: boolean;
 }
 
 const FILE_REFERENCE = /\b([\w@.+-]+(?:[/\\][\w@.+-]+)*\.[A-Za-z][A-Za-z0-9]*)\b/gu;
@@ -148,6 +149,7 @@ export async function loadTaskAtlas(options: TaskAtlasOptions): Promise<Atlas> {
   const selectedEvidence = [...new Map([...supportingFileEvidence, ...persistedEvidence]
     .map((item) => [item.id, item])).values()];
   const evidence = await Promise.all(selectedEvidence.map(async (item) => {
+    if (options.includeExcerpts === false) return { ...item, excerpt: null };
     const excerpt = await reader.read(item.file, item.start_line, item.end_line);
     return { ...item, excerpt: excerpt.excerpt, excerpt_status: excerpt.status };
   }));

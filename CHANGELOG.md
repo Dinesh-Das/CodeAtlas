@@ -6,6 +6,12 @@ All notable changes follow semantic versioning.
 
 ### Added
 
+- Added an opt-in compact context format with shared symbol/identity/path dictionaries,
+  columnar fact tables, lossless expansion helpers, and named intermediate path symbols.
+- Added explicit source-reference briefs to the CLI and MCP. Warm reference-mode MCP
+  projections skip excerpt hydration; current source remains available through `get_evidence`.
+- Added a pinned-fixture context benchmark with optional exact tokenizer counts, file-discovery
+  recall, evidence-closure checks, and source-free per-task results.
 - Added bounded SQLite task projections for change preparation, source evidence, symbol context,
   path tracing, repository overview, execution tours, and current-change resources, with query and
   resident-memory telemetry in canonical MCP responses.
@@ -14,6 +20,8 @@ All notable changes follow semantic versioning.
 
 ### Changed
 
+- Compact briefs prioritize distinct implementation boundaries and an affected test before
+  repeated detail. Existing JSON and Markdown defaults remain compatible.
 - Reordered default-budget change packets around an edit anchor and a runnable validation step or
   an explicit validation gap, while keeping omitted context progressively accessible through the
   default MCP tools and resources.
@@ -22,6 +30,8 @@ All notable changes follow semantic versioning.
 
 ### Fixed
 
+- Compute compact MCP coverage and uncertainty from expanded facts so table encoding preserves
+  truncation and resolution diagnostics in the canonical response envelope.
 - Reject prerelease artifact checksum, version, and file-count drift before publishing, using the
   same artifact identity checks as stable releases.
 - Preserved distinct evidence identities for overlapping source ranges and now verify that retained

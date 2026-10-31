@@ -96,19 +96,24 @@ export function createProgram(): Command {
       boundedIntegerOption("budget", 512, 100_000),
       6_000,
     )
-    .option("--format <format>", "Output format: markdown or json", "markdown")
+    .option("--format <format>", "Output format: markdown, json, or compact", "markdown")
+    .option("--evidence <mode>", "Source evidence: inline or references (fetch source progressively)", "inline")
     .action(async (
       task: string | undefined,
       targetPath: string,
-      options: { repository?: string; diff?: string; budget: number; format: string },
+      options: { repository?: string; diff?: string; budget: number; format: string; evidence: string },
     ) => {
-      if (options.format !== "markdown" && options.format !== "json") {
-        throw new CodeAtlasError("Error: context format must be markdown or json.");
+      if (options.format !== "markdown" && options.format !== "json" && options.format !== "compact") {
+        throw new CodeAtlasError("Error: context format must be markdown, json, or compact.");
+      }
+      if (options.evidence !== "inline" && options.evidence !== "references") {
+        throw new CodeAtlasError("Error: context evidence must be inline or references.");
       }
       const { createChangeContext } = await import("./context.js");
       console.log(await createChangeContext(task, options.repository ?? targetPath, {
         budget: options.budget,
         format: options.format,
+        evidenceMode: options.evidence,
         ...(options.diff === undefined ? {} : { gitBase: options.diff }),
       }));
     });

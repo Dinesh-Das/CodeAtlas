@@ -3,10 +3,14 @@ import type {
   AtlasLocation,
   AtlasProvenanceCategory,
   AtlasTargetResolution,
+  AtlasSymbol,
 } from "../ir/models.js";
+import { compactChangeContext } from "./compact.js";
 
 export const CHANGE_CONTEXT_SCHEMA_VERSION = "1.2" as const;
-export type ChangeContextFormat = "json" | "markdown";
+export type ChangeContextFormat = "json" | "markdown" | "compact";
+export type ContextEvidenceMode = "inline" | "references";
+export type ChangeContextPathSymbol = Pick<AtlasSymbol, "id" | "name" | "qualified_name" | "file" | "location">;
 export type ChangeIntentKind =
   | "architecture"
   | "bug_fix"
@@ -135,6 +139,9 @@ export interface ChangeContextEvidence extends Pick<
   "kind" | "excerpt" | "excerpt_status"
 > {
   trust: "untrusted_repository_content";
+  deferred?: true;
+  file_content_hash?: string | null;
+  range_content_hash?: string | null;
 }
 
 export interface ChangeContext {
@@ -189,6 +196,8 @@ export interface ChangeContext {
   };
   continuation: string | null;
   content_trust: "untrusted_repository_content";
+  evidence_mode?: ContextEvidenceMode;
+  path_symbols?: ChangeContextPathSymbol[];
 }
 
 export interface ContextPlannerSnapshot {
@@ -260,7 +269,7 @@ export function renderChangeContextMarkdown(packet: ChangeContext): string {
     ...packet.evidence.flatMap((item) => [
       `### ${item.id} — ${evidenceLabel(item)}`,
       "```",
-      item.excerpt ?? `[${item.excerpt_status}]`,
+      item.deferred ? "[deferred: use get_evidence with this evidence ID]" : item.excerpt ?? `[${item.excerpt_status}]`,
       "```",
     ]),
     "",
@@ -274,6 +283,7 @@ export function serializeChangeContext(
   packet: ChangeContext,
   format: ChangeContextFormat,
 ): string {
+  if (format === "compact") return JSON.stringify(compactChangeContext(packet));
   return format === "json" ? JSON.stringify(packet) : renderChangeContextMarkdown(packet);
 }
 

@@ -9,6 +9,7 @@ import { workspacePaths } from "../../src/core/workspace.js";
 import { answerPacketSchema, canonicalResultSchema } from "../../src/mcp/schemas.js";
 import { openDatabase } from "../../src/storage/database.js";
 import { createTestRepository, type TestRepository } from "../helpers/repository.js";
+import { expandCompactContext, type CompactChangeContext } from "../../src/context/compact.js";
 
 const repositories: TestRepository[] = [];
 const defaultMcpEnvironment = Object.fromEntries(
@@ -389,6 +390,19 @@ describe("MCP stdio contract", () => {
         expect(changeContextContent.budget.used).toBeLessThanOrEqual(6_000);
         expect(Buffer.byteLength(JSON.stringify(changeContext.structuredContent), "utf8"))
           .toBeLessThanOrEqual(6_000);
+
+        const compactResult = await client.callTool({
+          name: "prepare_change",
+          arguments: { task: "Change `runCheckout` and identify its callers", budget: 6_000, format: "compact", evidence: "references" },
+        });
+        expect(compactResult.isError).not.toBe(true);
+        const compactPacket = expandCompactContext(compactResult.structuredContent as unknown as CompactChangeContext);
+        expect(compactPacket.change_candidates[0]?.symbol.id).toBe(runCheckoutId);
+        expect(compactPacket.evidence.every((item) => item.deferred && item.excerpt === null)).toBe(true);
+        expect(Buffer.byteLength(JSON.stringify(compactResult.structuredContent))).toBeLessThanOrEqual(6_000);
+        const proof = await client.callTool({ name: "get_evidence", arguments: { target: compactPacket.evidence[0]!.id } });
+        expect(proof.isError).not.toBe(true);
+        expect(JSON.stringify(proof.structuredContent)).toContain("runCheckout");
 
         const undersizedContext = await client.callTool({
           name: "get_change_context",

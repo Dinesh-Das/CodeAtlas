@@ -118,11 +118,11 @@ try {
     [
       "--input-type=module",
       "--eval",
-      "import('@dinesh-das/codeatlas').then(api => process.stdout.write(String(typeof api.buildRepository)))",
+      "import('@dinesh-das/codeatlas').then(api => process.stdout.write(String(['buildRepository', 'compactChangeContext', 'expandCompactContext'].every(name => typeof api[name] === 'function'))))",
     ],
     fixtureRoot,
   );
-  if (apiOutput !== "function") throw new Error("Installed package did not expose the public API.");
+  if (apiOutput !== "true") throw new Error("Installed package did not expose the public API.");
   const { stdout: versionOutput } = await execute("--version");
   if (versionOutput.trim() !== packageMetadata.version) {
     throw new Error(
@@ -155,6 +155,16 @@ try {
   const firstAnswerMs = Date.now() - firstAnswerStartedAt;
   if (firstAnswerMs > 180_000) {
     throw new Error(`Install-to-first-answer exceeded three minutes: ${firstAnswerMs} ms.`);
+  }
+  const { stdout: compactOutput } = await execute(
+    "context", "Change checkout behavior", fixtureRoot,
+    "--format", "compact", "--evidence", "references", "--budget", "6000",
+  );
+  const compactContext = JSON.parse(compactOutput);
+  if (compactContext.format !== "codeatlas.compact.v1" ||
+      compactContext.context?.evidence_mode !== "references" ||
+      Buffer.byteLength(compactOutput.trim()) > 6_000 || compactOutput.includes("function checkout")) {
+    throw new Error("Installed CLI did not produce a bounded compact source-reference brief.");
   }
   const { stdout: answerOutput } = await execute(
     "ask",

@@ -24,3 +24,9 @@ build metadata no longer matches.
 
 Writers emit only `1.2`. New code should consume the scoped hash and excerpt-status fields and
 must inspect `analysis_kind` before treating a control-flow diagram as a path claim.
+
+Task context also supports the separately versioned `codeatlas.compact.v1` transport. Its
+dictionaries and columnar tables expand into the selected change-context facts; it does not
+change stored IR or snapshot versions. Optional `path_symbols`, `evidence_mode`, and deferred
+evidence/hash fields are additive context metadata. A deferred excerpt has not been read for
+the response; inspect its `deferred` flag and fetch current source before relying on its content.
