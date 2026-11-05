@@ -1,5 +1,7 @@
 # CodeAtlas
 
+[Interview case study, verification and remaining evidence](INTERVIEW.md)
+
 [![npm version](https://img.shields.io/npm/v/@dinesh-das/codeatlas?label=npm&color=cb3837)](https://www.npmjs.com/package/@dinesh-das/codeatlas)
 [![npm downloads](https://img.shields.io/npm/dm/@dinesh-das/codeatlas?color=cb3837)](https://www.npmjs.com/package/@dinesh-das/codeatlas)
 [![CI](https://github.com/Dinesh-Das/CodeAtlas/actions/workflows/ci.yml/badge.svg)](https://github.com/Dinesh-Das/CodeAtlas/actions/workflows/ci.yml)
