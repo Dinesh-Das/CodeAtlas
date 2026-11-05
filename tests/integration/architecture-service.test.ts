@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildRepository } from "../../src/compiler/build.js";
-import { loadCurrentAtlas } from "../../src/cli/v2-query.js";
+import { findSymbols, loadCurrentAtlas } from "../../src/cli/v2-query.js";
 import { clearFastStatusCache, getStatus } from "../../src/cli/status.js";
 import { workspaceExists } from "../../src/core/workspace.js";
 import { controlFlowIr, evidenceIr, findSymbolIr, irResult } from "../../src/mcp/ir-tools.js";
@@ -29,6 +29,26 @@ async function committedRepository(source: string): Promise<TestRepository> {
 }
 
 describe("ArchitectureService", () => {
+  it("preserves canonical ranking for evidence matches and tied lexical scores", async () => {
+    const repository = await createTestRepository();
+    repositories.push(repository);
+    await repository.write("src/module-0.ts", "export function checkoutFeature0() { return 0; }\n");
+    for (let index = 1; index < 30; index += 1) {
+      await repository.write(`src/module-${index}.ts`,
+        'import { checkoutFeature0 } from "./module-0.js";\n' +
+        `export function checkoutFeature${index}() { return checkoutFeature0() + ${index}; }\n`);
+    }
+    await repository.git("add", ".");
+    await repository.git("commit", "-m", "search ranking parity fixture");
+    const atlas = await loadCurrentAtlas(repository.root);
+
+    for (const query of ["checkoutFeature0", "src/module-0.ts", "checkout feature", "outFeat"]) {
+      const indexed = await findSymbolIr(repository.root, query, 20);
+      expect(indexed.results.map((symbol) => symbol.id), query)
+        .toEqual(findSymbols(atlas, query, 20).map((symbol) => symbol.id));
+    }
+  }, 60_000);
+
   it("automatically initializes a repository for canonical CLI queries", async () => {
     const repository = await committedRepository(
       "export function initializeMe(): boolean { return true; }\n",

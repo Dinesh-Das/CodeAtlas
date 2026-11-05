@@ -9,6 +9,7 @@ import type {
 } from "../ir/models.js";
 import { ftsQueryFromText, searchNodeCandidates, type SearchResult } from "./search.js";
 import { performance } from "node:perf_hooks";
+import { symbolSearchTerms } from "../analysis/simplification.js";
 
 export interface SymbolCandidateProjection {
   items: SearchResult[];
@@ -299,6 +300,7 @@ export class SqliteQueryStore implements QueryStore {
            nodes.name,
            nodes.qualified_name AS qualifiedName,
            nodes.file_path AS filePath,
+           atlas_symbol_search.text AS searchText,
            bm25(atlas_symbol_search) AS rank,
            'fts' AS match
          FROM atlas_symbol_search
@@ -307,10 +309,24 @@ export class SqliteQueryStore implements QueryStore {
          ORDER BY rank
          LIMIT ?`,
       ).all(ftsQuery, requested + 1) as SearchResult[];
+      // FTS token matches alone omit the substring/camel-case matches accepted
+      // by the canonical ranker. Scan precomputed text with bounded hydration.
+      // https://www.sqlite.org/lang_corefunc.html#instr
+      const needle = query.trim().toLocaleLowerCase();
+      const terms = [...new Set([needle, ...symbolSearchTerms(needle)])].filter(Boolean);
+      const partial = terms.length === 0 ? [] : database.prepare(
+        `SELECT s.id, nodes.name, nodes.qualified_name AS qualifiedName,
+                nodes.file_path AS filePath, s.text AS searchText, 0 AS rank, 'fts' AS match
+         FROM atlas_symbol_search AS s JOIN nodes ON nodes.id = s.id
+         WHERE ${terms.map(() => "instr(s.text, ?) > 0").join(" OR ")}
+         ORDER BY s.id LIMIT ?`,
+      ).all(...terms, requested + 1) as SearchResult[];
       const merged = new Map<string, SearchResult>();
-      for (const item of [...basic, ...enriched]) {
+      for (const item of [...basic, ...enriched, ...partial]) {
         const current = merged.get(item.id);
-        if (current === undefined || item.rank < current.rank) merged.set(item.id, item);
+        const best = current === undefined || item.rank < current.rank ? item : current;
+        const searchText = item.searchText ?? current?.searchText;
+        merged.set(item.id, searchText === undefined ? best : { ...best, searchText });
       }
       const items = [...merged.values()]
         .sort((left, right) => left.rank - right.rank || left.id.localeCompare(right.id));
