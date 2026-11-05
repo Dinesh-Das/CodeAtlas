@@ -451,28 +451,16 @@ export async function findSymbolIr(repositoryPath: string, query: string, limit:
   const indexed = runtime.queryStore.searchSymbols(query, 10_000);
   const hydrated = runtime.queryStore.getSymbols(indexed.items.map((item) => item.id), 10_000);
   runtime.responseContext.timingsMs.retrieval += elapsed(retrievalStartedAt);
-  const indexedPosition = new Map(indexed.items.map((item, position) => [item.id, position]));
-  const indexedMatch = new Map(indexed.items.map((item) => [item.id, item.match]));
+  const indexedText = new Map(indexed.items.map((item) => [item.id, item.searchText]));
   const projectionStartedAt = performance.now();
   const matches = hydrated.items
     .map((symbol) => ({
       symbol,
-      score: (() => {
-        const normalized = query.trim().toLocaleLowerCase();
-        const name = symbol.name.toLocaleLowerCase();
-        const qualifiedName = symbol.qualified_name?.toLocaleLowerCase() ?? "";
-        const file = symbol.file?.replaceAll("\\", "/").toLocaleLowerCase() ?? "";
-        const normalizedPath = normalized.replaceAll("\\", "/");
-        const lexical = rankSymbolSearch(symbol, query);
-        const position = indexedPosition.get(symbol.id) ?? 10_000;
-        if (symbol.id === query) return 1_000_000;
-        if (name === normalized) return 900_000 + lexical;
-        if (qualifiedName === normalized) return 850_000 + lexical;
-        if (file === normalizedPath || indexedMatch.get(symbol.id) === "exact") return 800_000 + lexical;
-        if (lexical > 0) return 100_000 + lexical - position;
-        return Math.max(1, 10_000 - position);
-      })(),
+      // FTS selects candidates; the shared lexical ranker determines ordering.
+      // Keep indexed evidence text so bounded hydration has canonical semantics.
+      score: symbol.id === query ? 1_000_000 : rankSymbolSearch(symbol, query, indexedText.get(symbol.id)),
     }))
+    .filter((item) => item.score > 0)
     .sort((left, right) => right.score - left.score || left.symbol.id.localeCompare(right.symbol.id))
     .map((item) => item.symbol);
   runtime.responseContext.timingsMs.projection += elapsed(projectionStartedAt);

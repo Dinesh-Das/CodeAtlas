@@ -7,6 +7,7 @@ export interface SearchResult {
   filePath: string | null;
   rank: number;
   match: "exact" | "fts";
+  searchText?: string;
 }
 
 export function searchNodes(database: AtlasDatabase, query: string, limit = 50): SearchResult[] {
