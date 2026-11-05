@@ -160,6 +160,7 @@ const extractionMeasurementSchema = z.object({
   verified_reported_edges: z.number().int().nonnegative(),
 }).strict().refine(
   (measurement) => measurement.found_expected_edges <= measurement.expected_edges &&
+    measurement.found_expected_edges <= measurement.reported_edges &&
     measurement.verified_reported_edges <= measurement.reported_edges,
   "Extraction counts cannot exceed their denominators.",
 );

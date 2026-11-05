@@ -577,6 +577,14 @@ export function evaluateRun(
       errors.push(`${key} exceeds its ${task.context_token_budget}-token context budget.`);
     }
     if (task !== undefined && observation.success) {
+      if (task.answerability === "answerable" &&
+        (observation.abstained || evidenceRecall(task, observation.evidence_files) < 1)) {
+        errors.push(`${key} is marked successful without complete required source evidence.`);
+      }
+      if (task.answerability === "unanswerable" &&
+        (!observation.abstained || observation.evidence_files.length > 0)) {
+        errors.push(`${key} is marked successful without evidence-free abstention.`);
+      }
       const failures = expectationFailures(task, observation);
       if (failures.length > 0) {
         errors.push(`${key} is marked successful but misses ${failures.join("; ")}.`);
