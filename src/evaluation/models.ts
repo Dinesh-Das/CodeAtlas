@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 export const EVALUATION_SCHEMA_VERSION = 1 as const;
-export const EVALUATION_HARNESS_VERSION = "1.3.0";
+export const EVALUATION_HARNESS_VERSION = "1.4.0";
 
 export const evaluationVariantSchema = z.enum(["native", "codeatlas"]);
 export const evaluationTaskCategorySchema = z.enum([
@@ -185,6 +185,12 @@ const knowledgeTransferMeasurementSchema = z.object({
   flow_explanation_correct: z.boolean(),
 }).strict();
 
+export const answerReviewSchema = z.object({
+  reviewer: z.string().trim().min(1),
+  answer_sha256: z.string().regex(/^[0-9a-f]{64}$/u),
+  accepted: z.boolean(),
+}).strict();
+
 export const evaluationObservationSchema = z.object({
   schema_version: z.literal(EVALUATION_SCHEMA_VERSION),
   task_id: z.string().min(1),
@@ -197,6 +203,7 @@ export const evaluationObservationSchema = z.object({
   concepts: z.array(z.string().min(1)).optional(),
   relationship_types: z.array(z.string().min(1)).optional(),
   starting_files: z.array(z.string().min(1)).optional(),
+  answer_review: answerReviewSchema.nullable().optional(),
   metrics: metricsSchema,
   extraction: z.array(extractionMeasurementSchema).nullable(),
   explanation: explanationMeasurementSchema.nullable(),
@@ -209,3 +216,4 @@ export type EvaluationTask = z.infer<typeof evaluationTaskSchema>;
 export type EvaluationSuite = z.infer<typeof evaluationSuiteSchema>;
 export type EvaluationRun = z.infer<typeof evaluationRunSchema>;
 export type EvaluationObservation = z.infer<typeof evaluationObservationSchema>;
+export type AnswerReview = z.infer<typeof answerReviewSchema>;

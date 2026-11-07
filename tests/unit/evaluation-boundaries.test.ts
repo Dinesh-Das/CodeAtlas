@@ -7,7 +7,7 @@ import {
   type EvaluationRun,
   type EvaluationSuite,
 } from "../../src/evaluation/models.js";
-import { evaluationSuiteSha256 } from "../../src/evaluation/provider.js";
+import { answerReviewDigest, evaluationSuiteSha256 } from "../../src/evaluation/provider.js";
 import { evaluateRun } from "../../src/evaluation/runner.js";
 
 function pairedFixture() {
@@ -50,6 +50,9 @@ function pairedFixture() {
         success: true,
         abstained: task.answerability === "unanswerable",
         evidence_files: task.acceptable_evidence[0]?.files ?? [],
+        answer_text: task.answerability === "answerable"
+          ? "The authentication service checks whitespace and password length before accepting the user."
+          : "This fixture does not contain enough evidence to answer that question.",
         metrics: {
           context_tokens: variant === "native" ? 500 : 300,
           input_tokens: 700,
@@ -65,6 +68,15 @@ function pairedFixture() {
       }))
     )
   );
+  for (const observation of observations) {
+    const task = suite.tasks.find((item) => item.id === observation.task_id)!;
+    observation.answer_review = {
+      reviewer: "synthetic-boundary-review", accepted: true,
+      answer_sha256: answerReviewDigest(task, { answer_text: observation.answer_text!,
+        abstained: observation.abstained, evidence_files: observation.evidence_files,
+        concepts: [], relationship_types: [], starting_files: [] }),
+    };
+  }
   return { suite, run, observations, answerableId: answerable.id, unanswerableId: unanswerable.id };
 }
 
@@ -120,5 +132,37 @@ describe("evaluation observation trust boundaries", () => {
 
     expect(report.complete).toBe(false);
     expect(report.launch_gate.status).toBe("incomplete");
+  });
+
+  it("rejects claimed success with evidence but no substantive answer", () => {
+    const { suite, run, observations, answerableId } = pairedFixture();
+    for (const observation of observations.filter((item) => item.task_id === answerableId)) {
+      observation.answer_text = "";
+    }
+    const report = evaluateRun(suite, run, observations);
+    expect(report.complete).toBe(false);
+    expect(report.variants.codeatlas.task_success_rate).toBe(0.5);
+  });
+
+  it("reports evidence retrieval while leaving unreviewed answer success incomplete", () => {
+    const { suite, run, observations } = pairedFixture();
+    for (const observation of observations) {
+      observation.answer_review = null;
+      observation.success = false;
+    }
+    const report = evaluateRun(suite, run, observations);
+    expect(report.complete).toBe(false);
+    expect(report.launch_gate.status).toBe("incomplete");
+    expect(report.variants.codeatlas.mean_required_file_recall).toBe(1);
+    expect(report.variants.codeatlas.evidence_retrieval_success_rate).toBe(1);
+    expect(report.variants.codeatlas.task_success_rate).toBe(0);
+    expect(report.outcome_scope).toBe("reviewed_repository_answer");
+  });
+
+  it("rejects a review that no longer matches the actual answer", () => {
+    const { suite, run, observations, answerableId } = pairedFixture();
+    const observation = observations.find((item) => item.task_id === answerableId)!;
+    observation.answer_text = "A different unsupported story is now being claimed.";
+    expect(evaluateRun(suite, run, observations).complete).toBe(false);
   });
 });

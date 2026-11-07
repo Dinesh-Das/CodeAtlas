@@ -6,6 +6,9 @@ import {
   providerEvaluationPrompt,
   providerVariantOrder,
   scoreProviderAnswer,
+  scoreProviderEvidence,
+  answerReviewDigest,
+  applyAnswerReviews,
   transcriptSha256,
 } from "../../src/evaluation/provider.js";
 
@@ -54,13 +57,100 @@ describe("provider evaluation protocol", () => {
       starting_files: ["./src/app.ts"],
     });
 
-    expect(scoreProviderAnswer(task, answer)).toBe(true);
+    expect(scoreProviderAnswer(task, answer, {
+      reviewer: "synthetic-unit-test", accepted: true, answer_sha256: answerReviewDigest(task, answer),
+    })).toBe(true);
     expect(providerAnswerSchema.safeParse({ ...answer, success: true }).success).toBe(false);
+  });
+
+  it("rejects empty answers even when all expected metadata and evidence are supplied", () => {
+    const answer = {
+      answer_text: " \n ", abstained: false, evidence_files: ["src/app.ts", "src/auth.ts"],
+      concepts: ["authenticate"], relationship_types: ["CALLS"], starting_files: ["src/app.ts"],
+    };
+    expect(scoreProviderAnswer(task, answer, {
+      reviewer: "synthetic-unit-test", accepted: true, answer_sha256: answerReviewDigest(task, answer),
+    })).toBe(false);
+    const withoutExpectations = { ...task, expectations: undefined };
+    expect(scoreProviderAnswer(withoutExpectations, answer, {
+      reviewer: "synthetic-unit-test", accepted: true, answer_sha256: answerReviewDigest(withoutExpectations, answer),
+    })).toBe(false);
+  });
+
+  it("does not count metadata concepts as a substantive answer", () => {
+    const answer = {
+      answer_text: "The files contain some code.", abstained: false,
+      evidence_files: ["src/app.ts", "src/auth.ts"], concepts: ["authenticate"],
+      relationship_types: ["CALLS"], starting_files: ["src/app.ts"],
+    };
+    expect(scoreProviderAnswer(task, answer, {
+      reviewer: "synthetic-unit-test", accepted: true, answer_sha256: answerReviewDigest(task, answer),
+    })).toBe(false);
+    expect(scoreProviderEvidence(task, answer)).toBe(true);
+  });
+
+  it("rejects a stale review after the answer or task rubric changes", () => {
+    const answer = {
+      answer_text: "src/app.ts calls authenticate.", abstained: false,
+      evidence_files: ["src/app.ts", "src/auth.ts"], concepts: ["authenticate"],
+      relationship_types: ["CALLS"], starting_files: ["src/app.ts"],
+    };
+    const review = { reviewer: "synthetic-unit-test", accepted: true, answer_sha256: answerReviewDigest(task, answer) };
+    expect(scoreProviderAnswer(task, { ...answer, answer_text: "authenticate does nothing." }, review)).toBe(false);
+    expect(scoreProviderAnswer({ ...task, expected_behavior: "Different independent rubric" }, answer, review)).toBe(false);
+  });
+
+  it("keeps review digests stable when the runner normalizes Windows evidence paths", () => {
+    const answer = {
+      answer_text: "src/app.ts calls authenticate in src/auth.ts.", abstained: false,
+      evidence_files: [".\\src\\app.ts", "src\\auth.ts"], concepts: ["authenticate"],
+      relationship_types: ["CALLS"], starting_files: [".\\src\\app.ts"],
+    };
+    const stored = { ...answer, evidence_files: ["src/app.ts", "src/auth.ts"], starting_files: ["src/app.ts"] };
+    expect(answerReviewDigest(task, answer)).toBe(answerReviewDigest(task, stored));
+    expect(scoreProviderAnswer(task, stored, { reviewer: "synthetic-unit-test", accepted: true,
+      answer_sha256: answerReviewDigest(task, answer) })).toBe(true);
+  });
+
+  it("keeps evidence retrieval separate from independently reviewed answer success", () => {
+    const answer = {
+      answer_text: "src/app.ts calls authenticate in src/auth.ts.", abstained: false,
+      evidence_files: ["src/app.ts", "src/auth.ts"], concepts: ["authenticate"],
+      relationship_types: ["CALLS"], starting_files: ["src/app.ts"],
+    };
+    expect(scoreProviderAnswer(task, answer)).toBe(false);
   });
 
   it("binds suites and transcripts to deterministic SHA-256 digests", () => {
     expect(evaluationSuiteSha256({ id: "suite", tasks: [1, 2] })).toHaveLength(64);
     expect(transcriptSha256("event\n")).toBe(transcriptSha256("event\n"));
     expect(transcriptSha256("event\n")).not.toBe(transcriptSha256("changed\n"));
+  });
+
+  it("applies independent review files without accepting duplicates, unknown targets, or stale answers", () => {
+    const answer = {
+      answer_text: "src/app.ts calls authenticate in src/auth.ts.", abstained: false,
+      evidence_files: ["src/app.ts", "src/auth.ts"], concepts: ["authenticate"],
+      relationship_types: ["CALLS"], starting_files: ["src/app.ts"],
+    };
+    const observation = {
+      schema_version: 1, task_id: task.id, variant: "native", repeat: 1, success: false, ...answer,
+      metrics: { context_tokens: 100, input_tokens: 100, output_tokens: 20, duration_ms: 10,
+        tool_calls: 1, cost_usd: null },
+      extraction: null, explanation: null, patch: null, knowledge_transfer: null,
+    };
+    const review = { task_id: task.id, variant: "native", repeat: 1, reviewer: "synthetic-unit-test",
+      accepted: true, answer_sha256: answerReviewDigest(task, answer) };
+    const suite = { tasks: [task] };
+
+    expect(applyAnswerReviews(suite, [observation], [review])[0]!.success).toBe(true);
+    expect(observation.success).toBe(false);
+    expect(applyAnswerReviews(suite, [observation], [{ ...review, accepted: false }])[0]!.success).toBe(false);
+    expect(() => applyAnswerReviews(suite, [observation], [review, review])).toThrow(/Duplicate/u);
+    expect(() => applyAnswerReviews(suite, [observation], [{ ...review, repeat: 2 }])).toThrow(/Unknown/u);
+    expect(() => applyAnswerReviews(suite, [observation], [{ ...review, answer_sha256: "0".repeat(64) }]))
+      .toThrow(/does not match/u);
+    expect(() => applyAnswerReviews(suite, [observation], [{ ...review, accepted: null, reviewer: "" }])).toThrow();
+    expect(providerAnswerSchema.safeParse({ ...answer, answer_review: review }).success).toBe(false);
   });
 });

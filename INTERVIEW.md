@@ -1,6 +1,6 @@
 # Interview case study
 
-Verified upgrade: 2026-11-05. Scope: job-switch and interview readiness.
+Verified upgrades: 2026-11-05 and 2026-11-07. Scope: job-switch and interview readiness.
 
 AI Engineer: code intelligence, evidence retrieval and honest agent evaluation.
 
@@ -9,6 +9,12 @@ AI Engineer: code intelligence, evidence retrieval and honest agent evaluation.
 The tool indexes repository symbols/relationships into canonical IR and SQLite, exposes bounded context through MCP, and compares agent runs through an evaluation harness.
 
 Claimed success now requires source evidence for answerable tasks and calibrated abstention for unanswerable tasks. Extracted expected edges cannot exceed reported edges. Indexed search retains enriched evidence text and substring candidates, then uses the shared canonical ranker with stable tie ordering.
+
+The 2026-11-07 scoring repair also requires actual answer text and independent review
+bound to the task and structured answer. Evidence retrieval is a separate metric;
+unreviewed runs stay incomplete. Read-only fix/refactoring fixtures evaluate answers
+and change plans, not executed patches. The Windows provider launcher preserves argv
+through Node or a native executable without a batch shell.
 
 ## Five-minute walkthrough
 
@@ -27,6 +33,10 @@ npm run benchmark -- --output docs/evidence/2026-11-05/search-benchmark.json
 ## Recorded evidence
 
 233 tests passed, with type checks, lint and build passing. The generated 10,000-line / 100-file smoke benchmark passed all three canonical ordering checks after the ranking repair. Cold indexing took 1.078 s; warm canonical search p50/p95 was 144.75/151.80 ms. These timings include freshness checks; retrieval p95 was 7 ms. Full artifact: docs/evidence/2026-11-05/search-benchmark.json.
+
+The 2026-11-07 repairs passed 245 tests plus type checks, lint, build, pinned-fixture
+validation, and provider dry-run. Offline probes verified Windows argv preservation
+and the separate unreviewed/reviewed report paths. No real provider calls were made.
 
 Behavioral regressions were reproduced before their fixes. Passing contract tests demonstrate the named behavior; they are not an AI accuracy rating.
 

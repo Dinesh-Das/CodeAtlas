@@ -5,6 +5,7 @@ import {
   validatePinnedFixtures,
 } from "../dist/evaluation/runner.js";
 import { evaluationSuiteSchema } from "../dist/evaluation/models.js";
+import { applyAnswerReviews } from "../dist/evaluation/provider.js";
 
 function optionsFrom(arguments_) {
   const options = new Map();
@@ -81,10 +82,15 @@ if (runPath === undefined) {
   if (!summary.valid) process.exitCode = 1;
 } else {
   const run = JSON.parse(await readFile(path.resolve(String(runPath)), "utf8"));
-  const observations = parseJsonLines(
+  let observations = parseJsonLines(
     await readFile(path.resolve(String(observationsPath)), "utf8"),
     String(observationsPath),
   );
+  const reviewsPath = options.get("--reviews");
+  if (reviewsPath !== undefined) {
+    const reviews = parseJsonLines(await readFile(path.resolve(String(reviewsPath)), "utf8"), String(reviewsPath));
+    observations = applyAnswerReviews(evaluationSuiteSchema.parse(suite), observations, reviews);
+  }
   const report = evaluateRun(suite, run, observations);
   report.errors.unshift(...fixtureErrors);
   if (fixtureErrors.length > 0) {

@@ -8,10 +8,10 @@ import { runCodex } from "./provider-launch.mjs";
 import { evaluationSuiteSchema, EVALUATION_HARNESS_VERSION } from "../dist/evaluation/models.js";
 import {
   evaluationSuiteSha256,
+  answerReviewDigest,
   providerAnswerSchema,
   providerEvaluationPrompt,
   providerVariantOrder,
-  scoreProviderAnswer,
   transcriptSha256,
 } from "../dist/evaluation/provider.js";
 
@@ -168,6 +168,7 @@ const transcriptDirectory = path.join(outputDirectory, "transcripts");
 await mkdir(transcriptDirectory, { recursive: true });
 const observations = [];
 const transcriptEntries = [];
+const pendingReviews = [];
 const runId = `${safeId(suite.id)}-${new Date().toISOString().replace(/[:.]/gu, "-").toLowerCase()}`;
 const run = {
   schema_version: 1,
@@ -227,12 +228,17 @@ try {
           });
           const answer = providerAnswerSchema.parse(JSON.parse(await readFile(answerPath, "utf8")));
           const usage = eventMetrics(providerResult.stdout);
+          pendingReviews.push({
+            task_id: task.id, variant, repeat, answer_sha256: answerReviewDigest(task, answer),
+            reviewer: "", accepted: null,
+          });
           observations.push({
             schema_version: 1,
             task_id: task.id,
             variant,
             repeat,
-            success: scoreProviderAnswer(task, answer),
+            success: false,
+            answer_review: null,
             abstained: answer.abstained,
             evidence_files: answer.evidence_files.map(normalizeFile),
             answer_text: answer.answer_text,
@@ -270,6 +276,8 @@ try {
 
 await writeFile(runPath, `${JSON.stringify(run, null, 2)}\n`, "utf8");
 await writeFile(observationsPath, `${observations.map((item) => JSON.stringify(item)).join("\n")}\n`, "utf8");
+const reviewsPath = path.join(outputDirectory, "reviews.pending.jsonl");
+await writeFile(reviewsPath, `${pendingReviews.map((item) => JSON.stringify(item)).join("\n")}\n`, "utf8");
 await writeFile(transcriptManifestPath, `${JSON.stringify({
   schema_version: 1,
   run_id: runId,
@@ -279,5 +287,6 @@ console.log(JSON.stringify({
   run: runPath,
   observations: observationsPath,
   transcript_manifest: transcriptManifestPath,
+  pending_answer_reviews: reviewsPath,
   count: observations.length,
 }, null, 2));

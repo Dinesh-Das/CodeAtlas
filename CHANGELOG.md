@@ -30,6 +30,10 @@ All notable changes follow semantic versioning.
 
 ### Fixed
 
+- Require independently reviewed task answers before outcome gates can pass, check required
+  concepts in answer text, and report evidence retrieval separately from reviewed answer success.
+- Launch Windows provider evaluations through the installed Codex JavaScript entry point or
+  native executable without sending prompts through a batch shell.
 - Compute compact MCP coverage and uncertainty from expanded facts so table encoding preserves
   truncation and resolution diagnostics in the canonical response envelope.
 - Reject prerelease artifact checksum, version, and file-count drift before publishing, using the
