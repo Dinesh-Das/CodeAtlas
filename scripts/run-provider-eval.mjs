@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
+import { runCodex } from "./provider-launch.mjs";
 import { evaluationSuiteSchema, EVALUATION_HARNESS_VERSION } from "../dist/evaluation/models.js";
 import {
   evaluationSuiteSha256,
@@ -121,30 +122,6 @@ async function initializeCodeAtlas(cliPath, workspace) {
   });
 }
 
-async function runCodex({ workspace, prompt, model, schemaPath, answerPath }) {
-  const executable = process.platform === "win32" ? "codex.cmd" : "codex";
-  const { stdout } = await execFile(executable, [
-    "exec",
-    "--ephemeral",
-    "--json",
-    "--color", "never",
-    "--sandbox", "read-only",
-    "--skip-git-repo-check",
-    "--model", model,
-    "--output-schema", schemaPath,
-    "--output-last-message", answerPath,
-    "--cd", workspace,
-    prompt,
-  ], {
-    cwd: workspace,
-    encoding: "utf8",
-    windowsHide: true,
-    maxBuffer: 50 * 1024 * 1024,
-    timeout: 15 * 60_000,
-  });
-  return { stdout };
-}
-
 const options = optionsFrom(process.argv.slice(2));
 const workspaceRoot = process.cwd();
 const suitePath = path.resolve(String(options.get("--suite") ?? "evals/development.json"));
@@ -230,6 +207,7 @@ try {
             model,
             schemaPath,
             answerPath,
+            cliJs: options.get("--codex-cli-js"),
           });
           const durationMs = performance.now() - startedAt;
           const transcriptFile = `${safeId(label)}.jsonl`;
