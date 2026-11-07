@@ -73,7 +73,8 @@ export function answerReviewDigest(task: EvaluationTask, answer: ProviderAnswer)
 export function scoreProviderAnswer(
   task: EvaluationTask, answer: ProviderAnswer, review?: AnswerReview | null,
 ): boolean {
-  return answer.answer_text.trim().length > 0 && scoreProviderEvidence(task, answer) &&
+  return (task.answerability === "unanswerable" || answer.answer_text.trim().length > 0) &&
+    scoreProviderEvidence(task, answer) &&
     providerExpectationFailures(task, answer).length === 0 && review?.accepted === true &&
     review.answer_sha256 === answerReviewDigest(task, answer);
 }

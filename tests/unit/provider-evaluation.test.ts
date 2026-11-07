@@ -121,6 +121,24 @@ describe("provider evaluation protocol", () => {
     expect(scoreProviderAnswer(task, answer)).toBe(false);
   });
 
+  it("accepts reviewed empty abstentions unless the task explicitly requires an explanation", () => {
+    const unanswerable: EvaluationTask = { ...task, answerability: "unanswerable", acceptable_evidence: [] };
+    delete unanswerable.expectations;
+    const answer = { answer_text: "", abstained: true, evidence_files: [], concepts: [],
+      relationship_types: [], starting_files: [] };
+    expect(scoreProviderAnswer(unanswerable, answer, {
+      reviewer: "synthetic-unit-test", accepted: true, answer_sha256: answerReviewDigest(unanswerable, answer),
+    })).toBe(true);
+
+    const explanatory: EvaluationTask = { ...unanswerable, expectations: {
+      required_concepts: ["insufficient evidence"], required_relationship_types: [],
+      allowed_starting_files: [], forbidden_distractors: [],
+    } };
+    expect(scoreProviderAnswer(explanatory, answer, {
+      reviewer: "synthetic-unit-test", accepted: true, answer_sha256: answerReviewDigest(explanatory, answer),
+    })).toBe(false);
+  });
+
   it("binds suites and transcripts to deterministic SHA-256 digests", () => {
     expect(evaluationSuiteSha256({ id: "suite", tasks: [1, 2] })).toHaveLength(64);
     expect(transcriptSha256("event\n")).toBe(transcriptSha256("event\n"));

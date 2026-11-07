@@ -35,8 +35,10 @@ packet. Both variants use the same read-only model, output schema, task, and col
 The runner never sends `expected_behavior` or other rubric fields to the model, alternates which
 variant runs first, and includes CodeAtlas initialization in its duration. Automatic evidence
 retrieval success checks required files and abstention; it is reported separately from reviewed
-answer success. An answer must contain nonblank text, satisfy task expectations, and receive an
-independent accepted review before it can count as successful. Required concepts must appear in
+answer success. An answerable response must contain nonblank text, satisfy task expectations,
+and receive an independent accepted review before it can count as successful. A reviewed
+unanswerable response may be empty when it abstains without evidence and the task does not
+explicitly require explanatory concepts. Required concepts must appear in
 the actual answer text; a list of metadata concepts cannot substitute for the answer.
 
 The runner writes `reviews.pending.jsonl` with each task/variant/repeat and its task-and-answer
