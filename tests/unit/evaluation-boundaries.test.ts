@@ -7,7 +7,7 @@ import {
   type EvaluationRun,
   type EvaluationSuite,
 } from "../../src/evaluation/models.js";
-import { answerReviewDigest, evaluationSuiteSha256 } from "../../src/evaluation/provider.js";
+import { answerFromObservation, answerReviewDigest, evaluationSuiteSha256 } from "../../src/evaluation/provider.js";
 import { evaluateRun } from "../../src/evaluation/runner.js";
 
 function pairedFixture() {
@@ -164,5 +164,19 @@ describe("evaluation observation trust boundaries", () => {
     const observation = observations.find((item) => item.task_id === answerableId)!;
     observation.answer_text = "A different unsupported story is now being claimed.";
     expect(evaluateRun(suite, run, observations).complete).toBe(false);
+  });
+
+  it("retains independently reviewed empty abstentions in a complete passing run", () => {
+    const { suite, run, observations, unanswerableId } = pairedFixture();
+    const task = suite.tasks.find((item) => item.id === unanswerableId)!;
+    for (const observation of observations.filter((item) => item.task_id === unanswerableId)) {
+      observation.answer_text = "";
+      observation.answer_review = { reviewer: "synthetic-boundary-review", accepted: true,
+        answer_sha256: answerReviewDigest(task, answerFromObservation(observation)) };
+    }
+    const report = evaluateRun(suite, run, observations);
+    expect(report.complete).toBe(true);
+    expect(report.launch_gate.status).toBe("passed");
+    expect(report.variants.codeatlas.task_success_rate).toBe(1);
   });
 });
