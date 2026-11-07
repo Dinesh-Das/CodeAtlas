@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import type { EvaluationTask, EvaluationVariant } from "./models.js";
+import {
+  answerReviewSchema, evaluationObservationSchema, evaluationVariantSchema,
+  type AnswerReview, type EvaluationObservation, type EvaluationSuite, type EvaluationTask, type EvaluationVariant,
+} from "./models.js";
 
 export const providerAnswerSchema = z.object({
   answer_text: z.string(),
@@ -25,25 +28,86 @@ function evidenceRecall(task: EvaluationTask, files: readonly string[]): number 
   ));
 }
 
-function expectationPassed(task: EvaluationTask, answer: ProviderAnswer): boolean {
+export function providerExpectationFailures(task: EvaluationTask, answer: ProviderAnswer): string[] {
   const expectations = task.expectations;
-  if (expectations === undefined) return true;
-  const text = `${answer.answer_text}\n${answer.concepts.join("\n")}`.toLowerCase();
+  if (expectations === undefined) return [];
+  const text = answer.answer_text.toLowerCase();
   const relationships = new Set(answer.relationship_types.map((item) => item.toUpperCase()));
   const starts = new Set(answer.starting_files.map(normalizeFile));
-  return expectations.required_concepts.every((concept) => text.includes(concept.toLowerCase())) &&
-    expectations.required_relationship_types.every((type) => relationships.has(type.toUpperCase())) &&
-    (expectations.allowed_starting_files.length === 0 ||
-      expectations.allowed_starting_files.some((file) => starts.has(normalizeFile(file)))) &&
-    expectations.forbidden_distractors.every((value) => !text.includes(value.toLowerCase()));
+  const missingConcepts = expectations.required_concepts.filter((concept) => !text.includes(concept.toLowerCase()));
+  const missingRelationships = expectations.required_relationship_types.filter((type) => !relationships.has(type.toUpperCase()));
+  const startsAllowed = expectations.allowed_starting_files.length === 0 ||
+    expectations.allowed_starting_files.some((file) => starts.has(normalizeFile(file)));
+  const combinedText = `${text}\n${answer.concepts.join("\n").toLowerCase()}`;
+  const distractors = expectations.forbidden_distractors.filter((value) => combinedText.includes(value.toLowerCase()));
+  return [
+    ...(missingConcepts.length === 0 ? [] : [`required concepts: ${missingConcepts.join(", ")}`]),
+    ...(missingRelationships.length === 0 ? [] : [`required relationship types: ${missingRelationships.join(", ")}`]),
+    ...(startsAllowed ? [] : [`allowed starting file: ${expectations.allowed_starting_files.join(" or ")}`]),
+    ...(distractors.length === 0 ? [] : [`forbidden distractors present: ${distractors.join(", ")}`]),
+  ];
 }
 
-export function scoreProviderAnswer(task: EvaluationTask, answer: ProviderAnswer): boolean {
+export function scoreProviderEvidence(task: EvaluationTask, answer: ProviderAnswer): boolean {
   if (task.answerability === "unanswerable") {
     return answer.abstained && answer.evidence_files.length === 0;
   }
-  return !answer.abstained && evidenceRecall(task, answer.evidence_files) === 1 &&
-    expectationPassed(task, answer);
+  return !answer.abstained && evidenceRecall(task, answer.evidence_files) === 1;
+}
+
+export function answerFromObservation(observation: EvaluationObservation): ProviderAnswer {
+  return {
+    answer_text: observation.answer_text ?? "", abstained: observation.abstained,
+    evidence_files: observation.evidence_files, concepts: observation.concepts ?? [],
+    relationship_types: observation.relationship_types ?? [], starting_files: observation.starting_files ?? [],
+  };
+}
+
+export function answerReviewDigest(task: EvaluationTask, answer: ProviderAnswer): string {
+  const canonical = providerAnswerSchema.parse(answer);
+  canonical.evidence_files = canonical.evidence_files.map(normalizeFile);
+  canonical.starting_files = canonical.starting_files.map(normalizeFile);
+  return createHash("sha256").update(JSON.stringify({ task, answer: canonical })).digest("hex");
+}
+
+export function scoreProviderAnswer(
+  task: EvaluationTask, answer: ProviderAnswer, review?: AnswerReview | null,
+): boolean {
+  return answer.answer_text.trim().length > 0 && scoreProviderEvidence(task, answer) &&
+    providerExpectationFailures(task, answer).length === 0 && review?.accepted === true &&
+    review.answer_sha256 === answerReviewDigest(task, answer);
+}
+
+const reviewEntrySchema = answerReviewSchema.extend({
+  task_id: z.string().min(1), variant: evaluationVariantSchema, repeat: z.number().int().positive(),
+}).strict();
+
+export function applyAnswerReviews(
+  suite: Pick<EvaluationSuite, "tasks">, observationInputs: readonly unknown[], reviewInputs: readonly unknown[],
+): EvaluationObservation[] {
+  const observations = observationInputs.map((input) => evaluationObservationSchema.parse(input));
+  const tasks = new Map(suite.tasks.map((task) => [task.id, task]));
+  const keyFor = (item: { task_id: string; variant: string; repeat: number }) =>
+    `${item.task_id}:${item.variant}:${item.repeat}`;
+  const byKey = new Map(observations.map((item) => [keyFor(item), item]));
+  if (byKey.size !== observations.length) throw new Error("Duplicate observation keys cannot be reviewed.");
+  const seen = new Set<string>();
+  for (const input of reviewInputs) {
+    const { task_id, variant, repeat, ...review } = reviewEntrySchema.parse(input);
+    const key = keyFor({ task_id, variant, repeat });
+    if (seen.has(key)) throw new Error(`Duplicate answer review ${key}.`);
+    seen.add(key);
+    const observation = byKey.get(key);
+    const task = tasks.get(task_id);
+    if (observation === undefined || task === undefined) throw new Error(`Unknown answer review target ${key}.`);
+    const answer = answerFromObservation(observation);
+    if (review.answer_sha256 !== answerReviewDigest(task, answer)) {
+      throw new Error(`Answer review ${key} does not match its task and answer.`);
+    }
+    observation.answer_review = review;
+    observation.success = scoreProviderAnswer(task, answer, review);
+  }
+  return observations;
 }
 
 export function providerEvaluationPrompt(

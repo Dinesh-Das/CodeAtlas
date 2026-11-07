@@ -9,7 +9,10 @@ import {
   evaluationRunSchema,
   evaluationSuiteSchema,
 } from "./models.js";
-import { evaluationSuiteSha256 } from "./provider.js";
+import {
+  answerFromObservation, answerReviewDigest, evaluationSuiteSha256,
+  providerExpectationFailures, scoreProviderAnswer, scoreProviderEvidence,
+} from "./provider.js";
 
 interface ConfidenceInterval {
   low: number;
@@ -22,6 +25,7 @@ interface VariantReport {
   task_success_rate: number;
   task_success_rate_95ci: ConfidenceInterval;
   mean_required_file_recall: number;
+  evidence_retrieval_success_rate: number;
   calibrated_abstention_rate: number;
   median_context_tokens: number;
   median_input_tokens: number;
@@ -62,6 +66,7 @@ interface ExtractionReport {
 
 export interface EvaluationReport {
   schema_version: 1;
+  outcome_scope: "reviewed_repository_answer";
   suite_id: string;
   run_id: string;
   configuration: {
@@ -111,6 +116,7 @@ interface TaskAggregate {
   success: boolean;
   successRate: number;
   evidenceRecall: number;
+  evidenceSuccess: number;
   calibratedAbstention: number;
   contextTokens: number;
   inputTokens: number;
@@ -248,36 +254,7 @@ function expectationFailures(
   task: EvaluationTask,
   observation: EvaluationObservation,
 ): string[] {
-  const expected = task.expectations;
-  if (expected === undefined) return [];
-  const answer = observation.answer_text?.toLocaleLowerCase() ?? "";
-  const concepts = new Set((observation.concepts ?? []).map((value) => value.toLocaleLowerCase()));
-  const relationships = new Set((observation.relationship_types ?? [])
-    .map((value) => value.toLocaleUpperCase()));
-  const startingFiles = new Set((observation.starting_files ?? []).map(normalizeFile));
-  const missingConcepts = expected.required_concepts.filter((concept) => {
-    const normalized = concept.toLocaleLowerCase();
-    return !concepts.has(normalized) && !answer.includes(normalized);
-  });
-  const missingRelationships = expected.required_relationship_types.filter((type) =>
-    !relationships.has(type.toLocaleUpperCase())
-  );
-  const startsAllowed = expected.allowed_starting_files.length === 0 ||
-    expected.allowed_starting_files.some((file) => startingFiles.has(normalizeFile(file)));
-  const combinedText = `${answer}\n${[...concepts].join("\n")}`;
-  const distractors = expected.forbidden_distractors.filter((value) =>
-    combinedText.includes(value.toLocaleLowerCase())
-  );
-  return [
-    ...(missingConcepts.length === 0 ? [] : [`required concepts: ${missingConcepts.join(", ")}`]),
-    ...(missingRelationships.length === 0
-      ? []
-      : [`required relationship types: ${missingRelationships.join(", ")}`]),
-    ...(startsAllowed ? [] : [
-      `allowed starting file: ${expected.allowed_starting_files.join(" or ")}`,
-    ]),
-    ...(distractors.length === 0 ? [] : [`forbidden distractors present: ${distractors.join(", ")}`]),
-  ];
+  return providerExpectationFailures(task, answerFromObservation(observation));
 }
 
 function evidenceRecall(task: EvaluationTask, evidenceFiles: readonly string[]): number {
@@ -344,6 +321,9 @@ function taskAggregate(
     success: successRate >= 0.5,
     successRate,
     evidenceRecall: median(observations.map((observation) => evidenceRecall(task, observation.evidence_files))),
+    evidenceSuccess: mean(observations.map((observation) =>
+      Number(scoreProviderEvidence(task, answerFromObservation(observation)))
+    )),
     calibratedAbstention: median(observations.map((observation) =>
       Number(task.answerability === "answerable" ? !observation.abstained : observation.abstained)
     )),
@@ -440,6 +420,7 @@ function variantReport(aggregates: readonly TaskAggregate[]): VariantReport {
     task_success_rate: rounded(successes / Math.max(1, aggregates.length)),
     task_success_rate_95ci: wilson(successes, aggregates.length),
     mean_required_file_recall: rounded(mean(aggregates.map((aggregate) => aggregate.evidenceRecall))),
+    evidence_retrieval_success_rate: rounded(mean(aggregates.map((aggregate) => aggregate.evidenceSuccess))),
     calibrated_abstention_rate: rounded(mean(aggregates.map((aggregate) => aggregate.calibratedAbstention))),
     median_context_tokens: rounded(median(aggregates.map((aggregate) => aggregate.contextTokens))),
     median_input_tokens: rounded(median(aggregates.map((aggregate) => aggregate.inputTokens))),
@@ -514,6 +495,7 @@ export function evaluateRun(
   if (!suiteResult.success || !runResult.success) {
     return {
       schema_version: 1,
+      outcome_scope: "reviewed_repository_answer",
       suite_id: suiteResult.success ? suiteResult.data.id : "invalid",
       run_id: runResult.success ? runResult.data.id : "invalid",
       configuration: null,
@@ -576,6 +558,18 @@ export function evaluateRun(
     if (task !== undefined && observation.metrics.context_tokens > task.context_token_budget) {
       errors.push(`${key} exceeds its ${task.context_token_budget}-token context budget.`);
     }
+    if (task !== undefined) {
+      const answer = answerFromObservation(observation);
+      const review = observation.answer_review;
+      if (review === undefined || review === null) {
+        errors.push(`${key} has no independent answer review; evidence retrieval is measured separately.`);
+      } else if (review.answer_sha256 !== answerReviewDigest(task, answer)) {
+        errors.push(`${key} has an answer review that does not match its task and answer.`);
+      }
+      if (observation.success !== scoreProviderAnswer(task, answer, review)) {
+        errors.push(`${key} claimed success disagrees with its reviewed answer outcome.`);
+      }
+    }
     if (task !== undefined && observation.success) {
       if (task.answerability === "answerable" &&
         (observation.abstained || evidenceRecall(task, observation.evidence_files) < 1)) {
@@ -589,6 +583,9 @@ export function evaluateRun(
       if (failures.length > 0) {
         errors.push(`${key} is marked successful but misses ${failures.join("; ")}.`);
       }
+    }
+    if (task !== undefined) {
+      observation.success = scoreProviderAnswer(task, answerFromObservation(observation), observation.answer_review);
     }
     observations.push(observation);
   }
@@ -673,6 +670,7 @@ export function evaluateRun(
   });
   return {
     schema_version: 1,
+    outcome_scope: "reviewed_repository_answer",
     suite_id: suite.id,
     run_id: run.id,
     configuration: {

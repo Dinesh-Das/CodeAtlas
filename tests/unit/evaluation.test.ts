@@ -4,11 +4,12 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   evaluationSuiteSchema,
+  EVALUATION_HARNESS_VERSION,
   type EvaluationObservation,
   type EvaluationRun,
   type EvaluationSuite,
 } from "../../src/evaluation/models.js";
-import { evaluationSuiteSha256 } from "../../src/evaluation/provider.js";
+import { answerFromObservation, answerReviewDigest, evaluationSuiteSha256 } from "../../src/evaluation/provider.js";
 import {
   evaluateRun,
   fixtureContentSha256,
@@ -67,7 +68,7 @@ function suite(): EvaluationSuite {
 function run(): EvaluationRun {
   return {
     schema_version: 1,
-    evaluator_version: "1.3.0",
+    evaluator_version: EVALUATION_HARNESS_VERSION,
     id: "evaluation-run-v1",
     suite_id: "evaluation-test-v1",
     suite_sha256: evaluationSuiteSha256(suite()),
@@ -87,7 +88,7 @@ function observation(
 ): EvaluationObservation {
   const answerable = taskId === "answerable-task";
   const codeAtlas = variant === "codeatlas";
-  return {
+  const result: EvaluationObservation = {
     schema_version: 1,
     task_id: taskId,
     variant,
@@ -95,6 +96,8 @@ function observation(
     success: answerable || codeAtlas,
     abstained: !answerable && codeAtlas,
     evidence_files: answerable ? ["src/a.ts"] : [],
+    answer_text: answerable ? "The requested behavior is implemented in src/a.ts."
+      : "The fixture provides no evidence about that missing subsystem.",
     metrics: {
       context_tokens: codeAtlas ? 600 : 1_000,
       input_tokens: codeAtlas ? 800 : 1_200,
@@ -108,6 +111,12 @@ function observation(
     patch: null,
     knowledge_transfer: null,
   };
+  const task = suite().tasks.find((item) => item.id === taskId)!;
+  result.answer_review = {
+    reviewer: "synthetic-evaluation-review", accepted: result.success,
+    answer_sha256: answerReviewDigest(task, answerFromObservation(result)),
+  };
+  return result;
 }
 
 function completeObservations(): EvaluationObservation[] {
