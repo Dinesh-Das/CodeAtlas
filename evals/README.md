@@ -44,6 +44,12 @@ usage fields.
 Use `--dry-run` to validate the model metadata and observation count without making provider calls.
 Run artifacts can contain model answers and file names; review them before publishing.
 
+On Windows the runner launches the installed npm package's JavaScript entry point
+with Node, or a native `codex.exe`; it never sends prompts through a batch shell.
+For a nonstandard installation, pass `--codex-cli-js <path-to-codex.js>` (or set
+`CODEX_CLI_JS`). Paths containing spaces and prompt punctuation remain separate
+process arguments. The launcher tests use offline fixtures and make no provider calls.
+
 An experiment has two inputs in addition to the suite. The run manifest pins the exact provider, model ID and model version, harness ID and version, cache state, and repeat count. The observations file is JSON Lines with one result per task, variant, and repeat. Both `native` and `codeatlas` must run with the same run manifest and at least three repeats.
 
 ```json
